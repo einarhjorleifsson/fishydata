@@ -1,0 +1,2 @@
+# fishydata
+Daði og gagnamagnið
