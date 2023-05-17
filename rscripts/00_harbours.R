@@ -115,5 +115,5 @@ hb.po <-
 # 4. Output: harbours/gpkg/harbours.gpkg ---------------------------------------
 hb.po |> 
   mutate(hid_std = ifelse(hid_std == "BGJ0", "BGJ", hid_std)) |> 
-  write_sf("harbours/gpkg/harbours.gpkg")
+  write_sf("gpkg/harbours.gpkg")
                        

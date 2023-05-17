@@ -1,6 +1,6 @@
 # ------------------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < rscripts/01_stk-trails.R --vanilla > lgs/01_stk-trails_YYYY_MM-DD.log &
+#  nohup R < rscripts/01_trails.R --vanilla > lgs/01_trails_YYYY_MM-DD.log &
 
 lubridate::now()
 
@@ -15,10 +15,15 @@ library(ramb)
 library(omar)
 library(argosfilter)
 
-island <- read_sf("data-raw/island.gpkg")
-harbour <- read_sf("data-raw/harbours-hidstd.gpkg")
+island <- 
+  read_sf("gpkg/island.gpkg") |> 
+  st_transform(crs = 3057) |> 
+  st_buffer(dist = -100) |> 
+  st_transform(crs = 4326)
+
+harbours <- read_sf("gpkg/harbours.gpkg")
 harbours.standards <- 
-  read_csv("data-raw/stk_harbours.csv") |> 
+  readxl::read_excel("data-raw/harbours.xlsx") |> 
   select(hid, hid_std)
 
 con <- connect_mar()
@@ -81,7 +86,7 @@ for(v in 1:length(VID)) {
     st_as_sf(coords = c("lon", "lat"),
              crs = 4326,
              remove = FALSE) |> 
-    st_join(harbour) |> 
+    st_join(harbours) |> 
     st_join(island) |> 
     st_drop_geometry() |> 
     # 2023-05-12: 
@@ -116,7 +121,10 @@ for(v in 1:length(VID)) {
     ungroup() |> 
     filter(between(year(time), 2007, 2023)) |> 
     select(vid, time, .cid, lon, lat, speed, hid_dep, hid_arr, .rid, trip.n) |> 
-    # filter(.cid > 0) |> 
+    # check for whackies irrespective of trips
+    group_by(vid) |> 
+    mutate(v0 = vmask(lat, lon, time, vmax = rb_kn2ms(30))) |> 
+    # whackies by trip
     group_by(vid, .cid) |> 
     mutate(pings = n()) |> 
     mutate(v = ifelse(pings > 5 & .cid > 0,
@@ -124,7 +132,9 @@ for(v in 1:length(VID)) {
                       vmask(lat, lon, time, vmax = rb_kn2ms(30)),
                       "short")) |> 
     ungroup() |> 
-    mutate(v = as.character(v)) |> 
+    # to ensure downstream binding
+    mutate(v0 = as.character(v0),
+           v = as.character(v)) |> 
     select(-pings)
   
   trailv <-
@@ -132,18 +142,18 @@ for(v in 1:length(VID)) {
               removed |> 
                 mutate(v = case_when(on_land == TRUE ~ "removed on land",
                                      .default = "removed time duplicate")) |> 
-                select(vid, time, lon, lat, speed, .rid, v)) |> 
-              arrange(.rid)
-              
-              
-              # split the data by year, because downstream we want to collate the data by
-              #  year for all vessels
-              YEARS <- year(min(trailv$time)):year(max(trailv$time))
-              for(y in 1:length(YEARS)) {
-                pth <- paste0("trails/stk-trails_y", YEARS[y], "_v", str_pad(VIDv, width = 4, pad = "0"), ".rds") 
-                tmp <- trailv |> filter(year(time) == YEARS[y]) 
-                if(nrow(tmp) > 0) tmp |> write_rds(pth)
-              }
+                select(vid, time, lon, lat, speed, .rid)) |> 
+    arrange(.rid)
+  
+  
+  # split the data by year, because downstream we want to collate the data by
+  #  year for all vessels
+  YEARS <- year(min(trailv$time)):year(max(trailv$time))
+  for(y in 1:length(YEARS)) {
+    pth <- paste0("data/trails/stk-trails_y", YEARS[y], "_v", str_pad(VIDv, width = 4, pad = "0"), ".rds") 
+    tmp <- trailv |> filter(year(time) == YEARS[y]) 
+    if(nrow(tmp) > 0) tmp |> write_rds(pth)
+  }
 }
 
 
