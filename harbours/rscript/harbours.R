@@ -1,78 +1,73 @@
+# Inputs:
+#  stk.trail
+#  data-raw/stk_harbours.xlsx
+# Processing:
+#  1. Extract all points from stk were variable io is defined as "I"
+#  2. Add standardized harbour-id and name
+#     some minor corrections also done
+#  3. Create shape
+#   3.1. A simple convex hull - because that does not work do:
+#   3.3. Calculate the median lon-lat point for each point assigned to harbour
+#   3.3. Create convex hull conditional on point within 10km from median
+#         Sufficent in this specific case, could probably be less
+#         Add a 100 buffer on the convex hull
+#   4. Output: harbours/gpkg/harbours.gpkg
+
 library(omar)
 library(tidyverse)
-library(mapdeck)
 library(sf)
-source("~/R/Pakkar2/ramb/TOPSECRET.R")
-set_token(key)
 con <- connect_mar()
 
-# 2023-05-11: Harbour buffer increased from 100 to 150 meters
-
-# Split Borgarfjordur eystri into two harbours if possible
-
-# Main objective is to get rid of labelled hid points that are whacky, i.e.
-#  the hid-id is not in "synch" with the actual harbour position
-# Merge harbour points with a lookup table containing hid_std
-# Create a 10K buffer around the median value of each hid_std
-# 
-
-# Standardized harbour character acronym
+# Get standardized harbour character acronym
 harbours.lookup <- 
-  readxl::read_excel("~/stasi/gis/harbours/data-raw/stk_harbours.xlsx") |> 
-  select(hid:harbour, hid_channel) |> 
+  readxl::read_excel("harbours/data-raw/stk_harbours.xlsx") |> 
+  select(hid, hid_std, harbour) |> 
   filter(!is.na(hid_std))
 
-# only points were io is "I" (defined as when entering harbour) ---------------
+# 1. Extract all points from stk were variable io is defined as "I" ------------
+#  In the oracle stk.trail tail table the orginal variable names are:
+#    io: "in_out_of_harbor"
+#    hid: "harborid"
 hb <-
   stk_trail(con) %>%
   filter(!is.na(hid)) %>%
   collect(n = Inf) %>%
   filter(io == "I") %>%
   select(hid, lon, lat) |>
-  distinct() |> 
+  distinct()
+#  2. Add standardized harbour-id and name
+hb <- 
+  hb |> 
   # Thorlaksofn vs Thorshofn
   mutate(hid = case_when(hid == "THH" & lat < 65 ~ "THH",
                          hid == "THH" & lat > 65 ~ "THO",
                          hid == "THO" & lat < 65 ~ "THH",
                          hid == "THO" & lat > 65 ~ "THO",
                          .default = hid)) |> 
-  inner_join(harbours.lookup |> select(hid, hid_std, harbour)) |> 
+  inner_join(harbours.lookup |> select(hid, hid_std, harbour),
+             multiple = "all") |> 
   # Split Borgarfjordur eystri - (only for creating the harbour shapes)
   mutate(hid_std = ifelse(hid_std == "BGJ" & lon < -13.78, "BGJ0", hid_std))
 
-hb |> 
-  filter(hid %in% c("THH", "THO")) |> 
-  ggplot(aes(lon, lat)) +
-  geom_point() +
-  facet_wrap(~ hid)
-
-hb |> 
-  filter(hid %in% c("THH", "THO")) |> 
-  ggplot(aes(lon, lat)) +
-  geom_point() +
-  facet_wrap(~ hid_std)
-
-
-
+#  3. Create shape -------------------------------------------------------------
 hb.pt <-
   hb |> 
   st_as_sf(coords = c("lon", "lat"),
            crs = 4326)
-# hb.pt |> write_sf("gpkg/harbour-ioI_points.gpkg")
-
-# convex hull ------------------------------------------------------------------
+## 3.1. A simple convex hull ---------------------------------------------------
 hb.po <- 
   hb.pt |> 
   select(hid_std) |> 
   group_by(hid_std) |> 
   summarise(do_union = FALSE) |> 
   st_convex_hull()
-mapview::mapview(hb.po)
+# mapview::mapview(hb.po)
 # because of things above:
 # generate a convex hull around the io == "I" points
 #  because there are some cases were the hid is totally wrong, if done directly
 #  the polygon will include the wrong coordinats. hence this Kriskuvikurleid
-# Find the median lon/lat for each hid_std
+
+## 3.3. Calculate the median lon-lat point for each point assigned to harbour ---
 hb.hid_std.median <- 
   hb |> 
   group_by(hid_std) |>
@@ -85,10 +80,11 @@ hb.hid_std.median <-
   st_buffer(dist = 10000) |> 
   st_transform(crs = 4326) |> 
   mutate(within10K = TRUE)
-hb.hid_std.median |> mapview::mapview()
+# hb.hid_std.median |> mapview::mapview()
 
+## 3.3. Create convex hull conditional on point within 10km from median --------
 # Loop through each harbour (hid_std)
-HID_STD <-hb.hid_std.median$hid_std |> unique()
+HID_STD <- hb.hid_std.median$hid_std |> unique()
 res <- list()
 for(p in 1:length(HID_STD)) {
   print(p)
@@ -101,21 +97,23 @@ for(p in 1:length(HID_STD)) {
     filter(within10K) |> 
     select(-within10K)
 }
-hb.pt.tidy <- 
+hb.pt <- 
   res |> 
-  bind_rows() 
-hb.po.tidy <-
-  hb.pt.tidy |> 
+  bind_rows()
+hb.po <-
+  hb.pt |> 
   group_by(hid_std, harbour) |> 
   summarise(do_union = FALSE,
             .groups = "drop") |> 
   st_convex_hull() |> 
   st_transform(crs = 3857) |> 
-  st_buffer(dist = 150) |> 
+  st_buffer(dist = 100) |> 
   st_transform(crs = 4326)
-tmp <- hb.po.tidy |> select(hid_std)
-mapview::mapview(tmp)
-hb.po.tidy |> 
+# tmp <- hb.po |> select(hid_std)
+# mapview::mapview(tmp)
+
+# 4. Output: harbours/gpkg/harbours.gpkg ---------------------------------------
+hb.po |> 
   mutate(hid_std = ifelse(hid_std == "BGJ0", "BGJ", hid_std)) |> 
-  write_sf("~/stasi/gis/harbours/gpkg/harbours-hidstd_2023-05-11.gpkg")
+  write_sf("harbours/gpkg/harbours.gpkg")
                        
