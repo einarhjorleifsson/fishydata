@@ -98,6 +98,8 @@ for(v in 1:length(VID)) {
     # The order matters
     arrange(vid, time, hid_std.x, io) |> 
     mutate(.rid = 1:n())
+  
+  
   tmp <- 
     trailv |> 
     filter(!on_land) |> 
@@ -105,7 +107,6 @@ for(v in 1:length(VID)) {
   removed <- 
     trailv |> 
     filter(!.rid %in% tmp$.rid)
-  
   trailv <- 
     tmp |> 
     # cruise id (aka tripid), negative values: in harbour
@@ -140,9 +141,10 @@ for(v in 1:length(VID)) {
   trailv <-
     bind_rows(trailv,
               removed |> 
-                mutate(v = case_when(on_land == TRUE ~ "removed on land",
-                                     .default = "removed time duplicate")) |> 
-                select(vid, time, lon, lat, speed, .rid)) |> 
+                mutate(v0 = case_when(on_land == TRUE ~ "removed on land",
+                                     .default = "removed time duplicate"),
+                       v = v0) |> 
+                select(vid, time, lon, lat, speed, .rid, v, v0)) |> 
     arrange(.rid)
   
   
@@ -150,7 +152,7 @@ for(v in 1:length(VID)) {
   #  year for all vessels
   YEARS <- year(min(trailv$time)):year(max(trailv$time))
   for(y in 1:length(YEARS)) {
-    pth <- paste0("data/trails/stk-trails_y", YEARS[y], "_v", str_pad(VIDv, width = 4, pad = "0"), ".rds") 
+    pth <- paste0("data/trails/trails_y", YEARS[y], "_v", str_pad(VIDv, width = 4, pad = "0"), ".rds") 
     tmp <- trailv |> filter(year(time) == YEARS[y]) 
     if(nrow(tmp) > 0) tmp |> write_rds(pth)
   }
