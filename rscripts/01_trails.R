@@ -4,16 +4,34 @@
 
 lubridate::now()
 
-library(data.table)
+# library(data.table)
 library(sf)
-library(mapdeck)
-source("~/R/Pakkar2/ramb/TOPSECRET.R")
 library(tidyverse)
-options(ggplot2.continuous.colour = "viridis")
-options(ggplot2.continuous.fill = "viridis")
 library(ramb)
 library(omar)
 library(argosfilter)
+
+# function 
+#  use because want to retain more info
+stk_trail0 <- function(con) {
+  q <- 
+    tbl_mar(con, "stk.trail") %>% 
+    dplyr::mutate(lon = poslon * 
+                    180/pi, lat = poslat * 180/pi, heading = heading * 180/pi, 
+                  speed = speed * 3600/1852)
+  q %>% 
+    dplyr::select(.id = trailid,
+                  mid = mobileid, 
+                  time = posdate, 
+                  lon, 
+                  lat, 
+                  speed, 
+                  heading, 
+                  hid = harborid, 
+                  io = in_out_of_harbor, 
+                  rectime = recdate)
+}
+
 
 island <- 
   read_sf("gpkg/island.gpkg") |> 
@@ -21,10 +39,12 @@ island <-
   st_buffer(dist = -100) |> 
   st_transform(crs = 4326)
 
-harbours <- read_sf("gpkg/harbours.gpkg")
+harbours <- 
+  read_sf("gpkg/harbours.gpkg") |> 
+  select(hid_std_geo = hid_std)
 harbours.standards <- 
   readxl::read_excel("data-raw/harbours.xlsx") |> 
-  select(hid, hid_std)
+  select(hid, hid_std_tbl = hid_std)
 
 con <- connect_mar()
 
@@ -56,7 +76,7 @@ trail <-
   select(vid, mid, t1, t2) |> 
   mutate(t1 = to_date(t1, "YYYY:MM:DD"),
          t2 = to_date(t2, "YYYY:MM:DD")) |> 
-  left_join(omar::stk_trail(con),
+  left_join(stk_trail0(con),
             by = "mid") |> 
   filter(time >= t1 & time <= t2)
 
@@ -92,14 +112,12 @@ for(v in 1:length(VID)) {
     # 2023-05-12: 
     #             if point in harbour, then not on land
     # mutate(on_land = replace_na(on_land, FALSE)) |> 
-    mutate(on_land = case_when(!is.na(hid_std.y)  & on_land == TRUE ~ FALSE,
-                               is.na(hid_std.y)   & on_land == TRUE ~ TRUE,
+    mutate(on_land = case_when(!is.na(hid_std_geo)  & on_land == TRUE ~ FALSE,
+                               is.na(hid_std_geo)   & on_land == TRUE ~ TRUE,
                                .default = FALSE)) |> 
     # The order matters
-    arrange(vid, time, hid_std.x, io) |> 
+    arrange(vid, time, hid_std_tbl, io) |> 
     mutate(.rid = 1:n())
-  
-  
   tmp <- 
     trailv |> 
     filter(!on_land) |> 
@@ -110,18 +128,17 @@ for(v in 1:length(VID)) {
   trailv <- 
     tmp |> 
     # cruise id (aka tripid), negative values: in harbour
-    mutate(.cid = ramb::rb_trip(!is.na(hid_std.y))) |>
+    mutate(.cid = ramb::rb_trip(!is.na(hid_std_geo))) |>
     group_by(vid, .cid) |> 
     mutate(trip.n = 1:n()) |> 
     ungroup() |> 
-    mutate(hid_dep = hid_std.y,
-           hid_arr = hid_std.y) |> 
+    mutate(hid_dep = hid_std_geo,
+           hid_arr = hid_std_geo) |> 
     group_by(vid) |> 
     fill(hid_dep, .direction = "down") |> 
     fill(hid_arr, .direction = "up") |> 
     ungroup() |> 
     filter(between(year(time), 2007, 2023)) |> 
-    select(vid, time, .cid, lon, lat, speed, hid_dep, hid_arr, .rid, trip.n) |> 
     # check for whackies irrespective of trips
     group_by(vid) |> 
     mutate(v0 = vmask(lat, lon, time, vmax = rb_kn2ms(30))) |> 
@@ -143,8 +160,7 @@ for(v in 1:length(VID)) {
               removed |> 
                 mutate(v0 = case_when(on_land == TRUE ~ "removed on land",
                                      .default = "removed time duplicate"),
-                       v = v0) |> 
-                select(vid, time, lon, lat, speed, .rid, v, v0)) |> 
+                       v = v0)) |> 
     arrange(.rid)
   
   
