@@ -5,9 +5,14 @@ website:
   title: "fishy data"
   navbar:
     left:
-      - href: index.qmd
-        text: Home
-      - match.qmd
+      - text: Documents
+        menu:
+          - match_landings.qmd
+          - match_logbooks.qmd
+      - text: Backgrounds
+        menu:
+          - adb_mess.qmd
+          - harbours.qmd
 
 format:
   html:

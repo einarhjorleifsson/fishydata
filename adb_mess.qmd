@@ -1,0 +1,585 @@
+---
+title: "The adb mess"
+code-fold: true
+message: FALSE
+warning: FALSE
+echo: TRUE
+format:
+  html:
+    code-fold: false
+    code-summary: "Show the code"
+    toc: true
+    toc-depth: 4
+---
+
+## Preamble
+
+This space contains some exploration of the new adb-schema, mostly related to various errors and data discrepancies.
+
+```{r}
+library(sf)
+library(rnaturalearth)
+library(tidyverse)
+library(mar)
+grade <- function (x, dx) {
+    if (dx > 1) 
+        warning("Not tested for grids larger than one")
+    brks <- seq(floor(min(x)), ceiling(max(x)), dx)
+    ints <- findInterval(x, brks, all.inside = TRUE)
+    x <- (brks[ints] + brks[ints + 1])/2
+    return(x)
+}
+con <- connect_mar()
+ne <- 
+  ne_coastline(returnclass = "sf", scale = 50) |> 
+  st_coordinates() |> 
+  as_tibble() |> 
+  unite("g", L1, L2, ) |> 
+  janitor::clean_names()
+ST <- 
+  st <- 
+  tbl_mar(con, "adb.trip_v") |> 
+  select(trip_id, source, D1 = departure, D2 = landing) |> 
+  left_join(tbl_mar(con, "adb.station_v") |> 
+               select(trip_id, station_id, gid = gear_no,
+                      t1 = fishing_start,
+                      t2 = fishing_end,
+                      lon = longitude, lat = latitude) |> 
+               mutate(child = "yes")) |> 
+  collect(n = Inf) |> 
+  mutate(child = replace_na(child, "no"))
+```
+
+## On source
+
+```{r}
+top11 <- 
+  ST |> 
+  count(source) |> 
+  arrange(-n) |> 
+  slice(1:11) |> 
+  pull(source)
+ST |> 
+  mutate(source = ifelse(source %in% top11, source, "other"),
+         date = floor_date(t1, "month")) |> 
+  count(date, source) |> 
+  filter(between(date, ymd("2020-01-01"), today())) |> 
+  ggplot() +
+  geom_col(aes(date, n, fill = source)) +
+  ggmisc::scale_fill_crayola() +
+  labs(x = NULL, y = "Number of stations")
+```
+
+It is of interest to note that over time there has been quite a development in the source data, whatever that may mean. And begs the question what all these sources really mean????
+
+## On trips
+
+### Trips without a child
+
+```{r}
+ST |> 
+  count(child) |> 
+  mutate(p = n / sum(n))
+```
+
+Around 5% of the trips have no associated stations. This may be by design, these trip-records being trips where no fish haul opertion took place. But it could possibly be an error. One may glean further into this by looking at this statistic by also including the data source:
+
+```{r}
+ST |> 
+  count(source, child) |> 
+  spread(child, n, fill = 0) |> 
+  mutate(p_no_child = round(no / (yes + no), 3)) |> 
+  arrange(-p_no_child)
+```
+
+
+### On trip timings
+
+```{r}
+ST |> 
+  mutate(dep_hour = ifelse(hour(D1) == 0, "00", "other"),
+         arr_hour = ifelse(hour(D2) == 0, "00", "other")) |> 
+  count(dep_hour, arr_hour, fill = 0) |> 
+  mutate(p = round(n / sum(n), 1)) |> 
+  knitr::kable(caption = "List of departure and arrival hours, midnight (00) or not.")
+```
+
+So in most cases departure and arrival hour is "00", effectively meaning that these metrics are deprature and arrival dates not time. By source we have:
+
+```{r}
+ST |> 
+  mutate(dep_hour = hour(D1)) |> 
+  group_by(source) |>
+  summarise(n = n(),
+            n_00 = sum(dep_hour == 0),
+            p_00 = round(n_00/n, 3),
+            .groups = "drop") |> 
+  filter(p_00 > (1/24 + 0.01)) |>  
+  knitr::kable(caption = "List of source where depature at hour 00 is higher than expected")
+```
+ 
+Table indicates that the case of 00-hour-records is associated particular sources, sources that may have been temporary while crossover from old to new logbooks took place.
+
+
+## On lon and lat
+
+### Mirror
+
+When plotting the lon and lat from the adb (ignore the aspect ratio in the plot) one gets:
+
+```{r}
+whacks <-
+  tribble(~x, ~y,
+          10, 61.5,
+          10, 67.7,
+          30, 67.7,
+          30, 61.5,
+          10, 61.5)
+ST |> 
+  filter(!is.na(lon), !is.na(lat)) |> 
+  mutate(lon = case_when(lon < -30 ~ -30,
+                         lon >  40 ~  40,
+                         .default = lon),
+         lat = case_when(lat <  60 ~  60,
+                         lat >  75 ~  75,
+                         .default = lat)) |> 
+  mutate(lon = grade(lon, 0.25),
+         lat = grade(lat, 0.25 / 2)) |> 
+  count(lon, lat) |> 
+  mutate(n = ifelse(n > quantile(n, 0.95), 
+                    quantile(n, 0.95),
+                    n)) |> 
+  ggplot() +
+  geom_polygon(data = ne, aes(x, y, group = g), fill = "grey") +
+  geom_path(data = whacks, aes(x, y), colour = "red") +
+  geom_tile(aes(lon, lat, fill = n)) +
+  scale_fill_viridis_c() +
+  labs(x = NULL, y = NULL) +
+  coord_cartesian(xlim = c(-31, 41), ylim = c(60, 75)) +
+  scale_x_continuous(breaks = seq(-40, 50, by = 5)) +
+  scale_y_continuous(breaks = seq(60, 75, by = 2.5))
+```
+
+So, there seems to be some mirror effect, the reason being is the endless issue of the "W" vs "E" longitude. 
+
+Let's correct for "mirrors" within a set of functions that takes into account the most obvious correction:
+
+```{r}
+# the function flow results in slow excecution
+lb_trip_new <- function(con) {
+  tbl_mar(con, "adb.trip_v") |> 
+    select(trip_id, 
+           vid = vessel_no,
+           d1 = departure,
+           hid1 = departure_port_no,
+           d2 = landing,
+           hid2 = landing_port_no,
+           source)
+}
+lb_station_new0 <- function(con) {
+  tbl_mar(con, "adb.station_v") |> 
+    select(trip_id,
+           station_id,
+           gid = gear_no,
+           t1 = fishing_start,
+           t2 = fishing_end,
+           lon = longitude,
+           lat = latitude,
+           lon2 = longitude_end,
+           lat2 = latitude_end,
+           z1 = depth,
+           z2 = depth_end,
+           tow_start,
+           everything())
+}
+
+lb_base_new <- function(con) {
+  lb_trip_new(con) |> 
+    left_join(lb_station_new0(con) |> 
+                 select(trip_id:tow_start),
+               by = "trip_id") |> 
+    select(vid, gid, t1:tow_start, everything()) |> 
+    mutate(whack = case_when(between(lon, 10, 30) & between(lat, 61.5, 67.7) ~ "mirror",
+                             .default = "ok"),
+           lon = ifelse(whack == "mirror",
+                        -lon,
+                        lon),
+           lon2 = ifelse(whack == "mirror",
+                         -lon,
+                         lon))
+}
+```
+
+Let's use the function that corrects for the mirror and replot:
+
+```{r}
+ST <- 
+  lb_base_new(con) |> 
+  collect(n = Inf)
+ST |> 
+  filter(!is.na(lon), !is.na(lat)) |> 
+  mutate(lon = gisland::grade(lon, 0.25),
+         lat = gisland::grade(lat, 0.25 / 2)) |> 
+  count(lon, lat) |> 
+  mutate(n = ifelse(n > quantile(n, 0.95), 
+                    quantile(n, 0.95),
+                    n)) |> 
+  ggplot() +
+  geom_polygon(data = ne, aes(x, y, group = g), fill = "grey") +
+  geom_tile(aes(lon, lat, fill = n)) +
+  scale_fill_viridis_c() +
+  labs(x = NULL, y = NULL) +
+  coord_cartesian(xlim = c(-31, 41), ylim = c(60, 75)) +
+  scale_x_continuous(breaks = seq(-40, 50, by = 5)) +
+  scale_y_continuous(breaks = seq(60, 75, by = 2.5))
+```
+
+Looking a little better.
+
+### Mirrors: Does data-source matter?
+
+```{r}
+ST |> 
+  count(source, whack) |> 
+  spread(whack, n, fill = 0) |> 
+  mutate(total = mirror + ok,
+         p.mirror = (mirror / total) |> round(2)) |> 
+  arrange(desc(p.mirror), desc(mirror)) |> 
+  knitr::kable(caption = "Number of mirrored records by source")
+```
+
+So, in some cases all records are "mirrored" (particularily the numerous records (so far) from source "STOKKUR") and in some cases we have mixtures (particularily numerious sorce "Trackwell raun").
+
+### Whacky-track: A ghost from the past
+
+Now let's ignore gear 7 and replot (with some plot boundaries):
+
+```{r}
+p <- 
+  ST |> 
+  filter(!is.na(lon), !is.na(lat),
+         !gid %in% c(7)) |> 
+  mutate(lon = gisland::grade(lon, 0.25),
+         lat = gisland::grade(lat, 0.25 / 2)) |> 
+  count(lon, lat) |> 
+  mutate(n = ifelse(n > quantile(n, 0.95), 
+                    quantile(n, 0.95),
+                    n)) |> 
+  ggplot() +
+  geom_polygon(data = ne, aes(x, y, group = g), fill = "grey") +
+  geom_tile(aes(lon, lat, fill = n)) +
+  scale_fill_viridis_c() +
+  labs(x = NULL, y = NULL) +
+  scale_x_continuous(breaks = seq(-40, 50, by = 5)) +
+  scale_y_continuous(breaks = seq(60, 75, by = 2.5))
+p +
+  coord_quickmap(xlim = c(-31, 5), ylim = c(62.5, 68))
+```
+
+Here we are observing substantial number of records around the meridian (that are not pelagic gear) that should absolutely not be there. Let's zoom in on the bastards around the meridian:
+
+```{r}
+p +
+  coord_cartesian(xlim = c(-3, 3), ylim = c(63, 67.5)) +
+  scale_x_continuous(breaks = seq(-3, 3, by = 0.5))
+```
+
+This looks eerie, and we have the following "cluster":
+
+* longitude < -1.0: points that schould be in the range of -30 to -10??
+* longitude >  1.0: "mirror" points that schould be in the nage of -30 to -10?
+* +/- 0.5: some other multiplier
+
+These data points can not be corrected by some algorithm and the search for the mess must be chased upstream. But lets ammend the function above to add one more messy data-class:
+
+```{r}
+lb_base_new <- function(con) {
+  lb_trip_new(con) |> 
+    inner_join(lb_station_new0(con) |> 
+                 select(trip_id:tow_start),
+               by = "trip_id") |> 
+    select(vid, gid, t1:tow_start, everything()) |> 
+    mutate(whack = case_when(between(lon, 10, 30) & between(lat, 62.5, 67.6) ~ "mirror",
+                             between(lon, -3, 3) & gid != 7 ~ "ghost",
+                             .default = "ok"),
+           lon = ifelse(whack == "mirror",
+                        -lon,
+                        lon),
+           lon2 = ifelse(whack == "mirror",
+                         -lon,
+                         lon))
+}
+```
+
+So, who is deliverying these ghosts?:
+
+```{r}
+ST <- 
+  lb_base_new(con) |> 
+  collect(n = Inf)
+ST |> 
+  filter(gid != 7) |> 
+  count(source, gid, whack) |> 
+  spread(whack, n, fill = 0) |> 
+  filter(ghost > 0) |> 
+  mutate(total = ghost + mirror + ok,
+         p.ghost = (ghost / total) |> round(2)) |> 
+  arrange(desc(ghost)) |> 
+  knitr::kable(caption = "Data source sorted by the most number of ghost records (between -3 and 3 longitude.")
+```
+
+The above table indicates that substantial proportion of "ghost" (and "mirror") records come from source "Trackwell raun" although we observe these to be coming from other sources as well (where these just experimentals??). The critical point here is that "Trackwell raun" is the stuff that is overtaking as the predominant data-source.
+
+### On geographical resolution in some sources
+
+```{r}
+ST |> 
+  filter(source %in% c("APP TÖFLUR", "STOKKUR")) |> 
+  filter(between(lon, -30, -10),
+         between(lat, 62, 78)) |> 
+  count(source, whack, lon, lat) |> 
+  ggplot() +
+  geom_path(data = geo::island, aes(lon, lat)) +
+  geom_point(aes(lon, lat), colour = "blue", size = 2) +
+  geom_text(aes(lon, lat, label = n),
+            angle = 45, colour = "red") +
+  facet_wrap(~ source + whack) +
+  scale_fill_viridis_c() +
+  labs(x = NULL, y = NULL)
+```
+
+So at least in these data-sources, all lon and lat are reported to a whole degree (this may also be the case in other sources but may be masked) as well as being mirrored.
+
+
+## On adb.catch
+
+### on the view (adb.catch_v)
+
+In adb.catch_v there is a variable `condition` with nothing in it (this has now been corrected):
+
+```{r}
+tbl_mar(con, "adb.catch_v") |> 
+  count(condition)
+```
+
+### on the table (adb:catch)
+
+We can check what it is supposed to be there when looking at the adb.catch
+
+```{r}
+tbl_mar(con, "adb.catch") |> 
+  count(condition)
+```
+
+Unsure what "RELE" stands for but "GUTT" and "UNGU" stand most certainly to gutted and ungutted. Lets inspect adb.catch further.
+
+```{r}
+catch <- 
+  tbl_mar(con, "adb.catch") |> 
+  collect(n = Inf) |> 
+  mutate(w = ifelse(!is.na(weight), "yes", "no"),
+         q = ifelse(!is.na(quantity), "yes", "no")) |> 
+  select(.id = fishing_station_id, w, q, 
+         sid = species_no, weight, quantity, condition, 
+         catch_type = source_type)
+
+catch |> 
+  count(q, w, condition, w)
+```
+
+So `quantity` is always reported except in cases when `condition` is NA. Let's just focus on the guttend and ungutted records:
+
+```{r}
+catch <-
+  catch |> 
+  filter(condition %in% c("GUTT", "UNGU"))
+catch |> 
+  count(q, condition, w)
+```
+
+Lets look at 10 records for `condition` "GUTT" and "UNGU" when `weight` is not reported:
+
+```{r}
+catch |> 
+  filter(w == "no") |> 
+  arrange(condition) |> 
+  group_by(condition) |> 
+  slice(1:10) |> 
+  ungroup()
+```
+
+So `quantity` can either be gutted or ungutted weight.
+
+What is in store when `weight` is reported?:
+
+```{r}
+catch |> 
+  filter(w == "yes") |> 
+  arrange(condition) |> 
+  group_by(condition) |> 
+  slice(1:10) |> 
+  ungroup()
+```
+
+So here we seem to have:
+
+* When `condition` is "GUTT" then `quantity` stands for gutted
+* When `condition` is "UNGU" then `quantity` stands for ungutted
+
+Lets test if this holds for all the data:
+
+```{r}
+catch |> 
+  filter(w == "yes") |> 
+  mutate(r = ifelse(weight != 0, quantity / weight, 0)) |> 
+  group_by(condition) |> 
+  summarise(n.na = sum(is.na(r)),
+            n = n(),
+            mean = mean(r),
+            median = median(r),
+            min = min(r),
+            max = max(r),
+            sd = sd(r))
+```
+
+So overall things are as expected but there are some outliers and/or rounding issues:
+
+```{r}
+catch |> 
+  filter(w == "yes") |> 
+  mutate(r = ifelse(weight != 0, quantity / weight, 0)) |> 
+  filter(!between(r, 0.775, 1.225),
+         r != 0)
+```
+
+That aside an algorithm that could be cooked up is something like this:
+
+```{r}
+ln_catch_new <- function(con) {
+  catch |> 
+    mutate(catch = case_when(condition == "GUTT" ~ quantity / 0.8,
+                             condition == "UNGU" ~ quantity,
+                             .default = NA))
+}
+```
+
+This aside the condition factor of 0.8 is something to look into. The offical ones used in landings in recent years are:
+
+```{r}
+tbl_mar(con, "kvoti.studlar") |> 
+  collect(n = Inf) |> 
+  filter(i_slaegt < 1,
+         year(i_gildi) == 2018) |> 
+  select(sid = ftegund, i_slaegt, i_oslaegt) |> 
+  arrange(sid) |> 
+  knitr::kable()
+```
+
+
+
+## On gear, yet again
+
+If we look at the gear in the adb and link it with two lookup-tables we get this:
+
+```{r}
+ST |> 
+  count(gid) |> 
+  full_join(tbl_mar(con, "adb.fishing_gear") |> 
+              select(gid = fishing_gear_no,
+                     fiskistofa_id = fishing_gear_id,
+                     fiskistofa_name = name,
+                     sample_name,
+                     fishing_gear_id) |> 
+              collect()) |> 
+  left_join(mar::les_veidarfaeri(con) |> 
+              select(gid = veidarfaeri_nr,
+                     hafro_heiti = heiti,
+                     isscfg_nr) |> 
+              collect(n = Inf)) |> 
+  select(fiskistofa_id, fiskistofa_name, gid, everything()) |> 
+  arrange(fiskistofa_id, gid) |> 
+  knitr::kable()
+```
+
+The reasons for the muliple matches (e.g gid 6 could be any of otterboad fishtraw, otterboard nephropstrawl or otterboard shrimptrawl) is because the although these details of gears are in the orignal data send from Fiskistofa, separations of these gears are deemed unworthy by some non-understandable decree. While e.g. separation of gillnets by target species are retained (Þorskfisknet, Grásleppunet, Rauðmaganet, Skötuselsnet and Grálúðunet). The logic of the decision in lumping the otterboard benthic gears defies all common sense. The only potiential reason may be that some time back recorded gear 9 and 14 were wrongly deemed to mean some standard survey/research trawl (equivalent to 73, 77 and 78) - something which they are definively not. Let's clarify this by looking at history of reporting of some gears and synaflokkur in the fish-database:
+
+```{r}
+d <- 
+  les_stod(con) |> 
+  left_join(les_syni(con)) |> 
+  select(year = ar, 
+         gid = veidarfaeri,
+         sclass = synaflokkur_nr) |> 
+  filter(gid %in% c(9, 14, 15, 18, 46, 172, 214, 254),
+         year >= 1950) |> 
+  left_join(les_synaflokk(con) |> 
+              select(sclass = synaflokkur_nr,
+                     sample_class = heiti))
+d |> 
+  count(sclass, sample_class, gid) |> 
+  collect() |> 
+  spread(gid, n, fill = 0) |> 
+  knitr::kable()
+```
+
+
+## on adb auxillary files
+
+There are quite a lot of "childless" records in the station table, meaning that no auxillary information is available in the "effort" tables (Which means that if one does an inner join on those auxillary tables one "looses" station records).
+
+```{r}
+lh <- function(con, table = "diving") {
+  t <- paste0("adb.", table, "_v")
+  tbl_mar(con, t) |> 
+    select(station_id) |> 
+    mutate(table = table) |> 
+    collect(n = Inf)
+}
+aux <-
+  bind_rows(lh(con, "diving"),
+            lh(con, "dredge"),
+            lh(con, "line_and_net"),
+            lh(con, "surrounding_net"),
+            lh(con, "trap"),
+            lh(con, "trawl_and_seine_net"))
+
+d <- 
+  tbl_mar(con, "adb.trip_v") |> 
+  select(trip_id, source) |> 
+  left_join(tbl_mar(con, "adb.station_v") |> 
+              select(trip_id, station_id)) |> 
+  collect(n = Inf) |> 
+  left_join(aux)
+d |> 
+  mutate(table = replace_na(table, "orphan")) |> 
+  count(source, table) |> 
+  spread(table, n, fill = 0) |> 
+  select(source, orphan, everything()) |> 
+  arrange(desc(orphan)) |> 
+  knitr::kable(caption = "Number of records in auxillary files. Orphan means that there is no record to be found.")
+```
+
+## My view of a view
+
+The gear auxillary tables are a bit of a nuisance. The most frequent variable used that comes from these tables is a measure of effort. Effort for different gears are within the institute traditionally as follows:
+
+```
+Gear                 Unit
+line                hooks
+net             netnights
+jiggers         hookhours
+trawl         towing time
+dredge        towing time
+traps           traphours
+rods             rodhours
+diving
+```
+
+
+
+## Appendix
+
+```{r}
+devtools::session_info()
+```
+

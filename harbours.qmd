@@ -1,0 +1,17 @@
+---
+title: "Harbours"
+code-fold: true
+message: FALSE
+warning: FALSE
+---
+
+## Harbour names and keys
+
+
+## Harbour polygons
+
+```{r}
+hb <- sf::read_sf("gpkg/harbours.gpkg")
+mapview::mapview(hb)
+```
+

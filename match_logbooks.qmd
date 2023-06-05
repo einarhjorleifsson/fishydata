@@ -1,0 +1,364 @@
+---
+title: "Trail-logbook match"
+code-fold: true
+message: FALSE
+warning: FALSE
+---
+
+TODO:
+
+* check why combined lb_mobile and lb_static returns about 1000 fewer records than lb_base
+
+## Preamble
+
+Currently this document is largely dealing with how to merge the old and the new logbook databases.
+
+First thing first: The logbooks are now in two different sources, old and new. The overlap period is from 2020 onwards. The only way to make a match between the two is vessel id and date.
+
+```{r}
+library(tidyverse)
+# remotes::install_github("einarhjorleifsson/omar")
+library(omar)
+con <- connect_mar()
+
+```
+
+## Time fishing in the new data
+
+Lets first just look at the new logbook with the focus what hour fishing start (t1) and fishing end (t2) returns.
+
+```{r}
+new <- 
+  lb_base_new(con) |> 
+  filter(year(t1) %in% 2020:2023) |> 
+  collect(n = Inf) |> 
+  mutate(lon = as.numeric(lon),
+         lat = as.numeric(lat),
+         lon2 = as.numeric(lon2),
+         lat2 = as.numeric(lat2),
+         date = as_date(t1))
+old <- 
+  lb_base(con) |> 
+  filter(year(date) %in% 2020:2023) |> 
+  collect(n = Inf) |> 
+  mutate(date = as_date(date))
+
+mob <- lb_mobile(con) |> filter(year %in% 2020:2023) |> collect(n = Inf) |> mutate(date = as_date(date))
+sta <- lb_static(con) |> filter(year %in% 2020:2023) |> collect(n = Inf) |> mutate(date = as_date(date))
+# bind_rows(mob, sta) |> nrow() missing some 1000 records compared with using lb_base
+old <- bind_rows(mob, sta)
+```
+
+
+```{r}
+#| fig.cap = "Number of records by source."
+new |> 
+  count(source) |> 
+  ggplot() +
+  geom_point(aes(reorder(source, n), n)) +
+  labs(x = NULL, y = "Number of records") +
+  coord_flip()
+```
+
+```{r}
+#| fig.cap = "Proportions of hours reported at fishing start. Legends for hour not shown but where the bars are light-blue means that hour 0 is reported in the time column."
+new |> 
+  mutate(h1 = hour(t1)) |> 
+  count(source, h1) |> 
+  ggplot(aes(source, n, fill = factor(h1))) +
+  geom_col(position = "fill") +
+  ggmisc::scale_fill_crayola(guide = "none") +
+  coord_flip() +
+  labs(x = NULL, y = NULL)
+```
+
+```{r}
+#| fig.cap = "Proportions of hours reported at fishing end. Here grey bars mean that no date-time is reported." 
+new |> 
+  mutate(h1 = hour(t2)) |> 
+  count(source, h1) |> 
+  ggplot(aes(source, n, fill = factor(h1))) +
+  geom_col(position = "fill") +
+  ggmisc::scale_fill_crayola(guide = "none") +
+  coord_flip() +
+  labs(x = NULL, y = NULL)
+```
+
+So basically source "TRACKWELL BAEKUR", "TRACKWELL - GAFL AUTO" and "TRACKWELL" are not returning any hour for start of fishing and those in addition to "STOKKUR", "APP TÖFLUR" no time-date for end of fishing is reported.
+
+```{r}
+#| fig.cap = "Number of records per month by different source."
+new |> 
+  mutate(h1 = hour(t1)) |> 
+  mutate(date = floor_date(date, "1 month")) |> 
+  count(date, h1, source) |> 
+  ggplot(aes(date, n, fill = factor(h1))) +
+  geom_col() +
+  facet_wrap(~ source, scales = "free_y") +
+  ggmisc::scale_fill_crayola(guide = "none") +
+  labs(x = NULL, y = NULL)
+```
+
+So the problem with time at start and end of fishing seem to be a historical problem. The question is if the reporting of time were made and if the records can be reovered.
+
+Downstream we will try to merge the old and the new logbook data. To do so we need to make comparisons by date for each vessel. Lets first check if there are different source of records within the same date by vessel:
+
+```{r}
+new2 <-
+  new |> 
+  group_by(vid, date, source) |> 
+  summarise(n.new = n(),
+            gid.new = min(gid),
+            .groups = "drop")
+```
+
+Do we have more than one sources per day by vessel?
+
+```{r}
+new2 |> 
+  group_by(vid, date) |> 
+  mutate(n = n()) |> 
+  filter(n > 1)
+```
+
+A bit peculiar, lets view few records:
+
+```{r}
+base <- 
+  new2 |> 
+  group_by(vid, date) |> 
+  mutate(n = n()) |> 
+  ungroup() |> 
+  filter(n > 1) |> 
+  select(vid:source) 
+base |> 
+  slice(1:2) |> 
+  left_join(new) |> 
+  glimpse()
+base |> 
+  slice(5:6) |> 
+  left_join(new) |> 
+  glimpse()
+
+base |> 
+  slice(7:8) |> 
+  left_join(new) |> 
+  glimpse()
+base |> 
+  slice(9:10) |> 
+  left_join(new) |> 
+  glimpse()
+base |> 
+  slice(11:12) |> 
+  left_join(new) |> 
+  glimpse()
+```
+
+Hmmm ..., the data source is either a total mess or I am totally misunderstanding the structure of the database. Since the records are not that many those will for now be ignored in the merger downstream.
+
+
+## Approach for matching old and new database
+
+... in progress (read: Incomplete)
+
+The objective here is to merge the old and the new datasources. As of now one could try two different approaches, that may actually end of being synonymous:
+
+1. Use the old database if both the new and the old are available by vessel and date
+2. Use the source classifier
+
+First let's look at the matching of the two datasources over time.
+
+```{r}
+old2 <- 
+  old |> 
+  group_by(vid, date) |> 
+  summarise(n.old = n(),
+            gid.old = min(gid),
+            .groups = "drop")
+match <- 
+  full_join(old2, 
+            new2 |> 
+              group_by(vid, date) |> 
+              mutate(n.source = n()) |> 
+              ungroup() |> 
+              filter(n.source == 1) |> 
+              select(-n.source)) |> 
+  mutate(what = case_when(!is.na(n.old) &  is.na(n.new) ~ "old only",
+                           is.na(n.old) & !is.na(n.new) ~ "new only",
+                          !is.na(n.old) & !is.na(n.new) ~ "both",
+                          .default = NA))
+```
+
+
+```{r}
+#| fig.cap = "Number of montly date-matched records."
+match |> 
+  mutate(date = floor_date(date, "1 month")) |> 
+  count(date, what) |> 
+  ggplot(aes(date, n, fill = what)) +
+  geom_col() +
+  scale_fill_brewer(palette = "Set1") +
+  labs(x = NULL, y = NULL)
+```
+
+```{r}
+#| fig.cap = "Number of monthly date-matched records. Bottom trawl only"
+match |> 
+  filter(gid.new %in% c(6) | gid.old %in% c(6, 9, 14)) |> 
+  mutate(date = floor_date(date, "1 month")) |> 
+  count(date, what) |> 
+  ggplot(aes(date, n, fill = what)) +
+  geom_col() +
+  scale_fill_brewer(palette = "Set1") +
+  labs(x = NULL, y = "Number of daily match by month")
+```
+
+```{r}
+#| fig.cap = "Number of monthly date-matched records. Longline only"
+match |> 
+  filter(gid.new %in% c(1) | gid.old %in% c(1)) |> 
+  mutate(date = floor_date(date, "1 month")) |> 
+  count(date, what) |> 
+  ggplot(aes(date, n, fill = what)) +
+  geom_col() +
+  scale_fill_brewer(palette = "Set1") +
+  labs(x = NULL, y = "Number of daily match by month")
+```
+
+Lets look at the match classification (both, new only, old only) by source:
+
+```{r}
+match |> 
+  count(what, source) |> 
+  spread(what, n)
+```
+
+So the source of the data is kind of linked with the if records by date are appearing in both and the new database. New records are with some couple of exceptions associated with the following sources:
+
+```
+source                              both `new only` `old only`
+" Marína raun"                        NA         10         NA
+"APP TÖFLUR"                          NA        324         NA
+"Fontos raun"                         NA        106         NA
+"Fontos raun - GAFL AUTO"             NA          1         NA
+"FRA TAKTIKAL"                        NA       6746         NA
+"FRA TAKTIKAL - GAFL AUTO"            NA          9         NA
+"GAFL BÓK UPPFÆRÐ FRÁ TAKTIKAL"       NA          2         NA
+"Jóhann Gíslason raun"                NA       1380         NA
+"Jóhann Gíslason raun - GAFL AUTO"    NA          3         NA
+"STOKKUR"                              1      20287         NA
+"Trackwell raun"                       2      36090         NA
+"Trackwell raun - GAFL AUTO"          NA        291         NA
+```
+
+Now the question becomes which records to use when we have records in both. Lets first look at what gears are prevalently reported within the different souces:
+
+```{r}
+match |> 
+  filter(what == "both",
+         source %in% c("PAPPÍR", "TRACKWELL",
+                       "TRACKWELL BAEKUR")) |> 
+  count(source, gid.old) |> 
+  spread(source, n)
+```
+
+Lets look at when we have records in "both", what time recordings we have in the old database. 
+
+```{r}
+match |> 
+  filter(what == "both",
+         source %in% c("PAPPÍR", "TRACKWELL",
+                       "TRACKWELL BAEKUR")) |> 
+  select(vid, date, source) |> 
+  left_join(old,
+            multiple = "all") |> 
+  mutate(has.t1 = !is.na(t1),
+         has.t2 = !is.na(t2)) |> 
+  count(source, has.t1, has.t2) |> 
+  spread(source, n)
+```
+
+As suspected where the source is "PAPPÍR", which is largely from the jiggers we generally do not have time. One thing is to have time entered but another thing is if it represents hour and minutes or not:
+
+```{r}
+match |> 
+  filter(what == "both",
+         source %in% c("PAPPÍR", "TRACKWELL",
+                       "TRACKWELL BAEKUR")) |> 
+  select(vid, date, source) |> 
+  left_join(old,
+            multiple = "all") |> 
+  mutate(hour = hour(t1)) |>
+  count(source, gid, hour) |> 
+  ggplot(aes(source, n, fill = factor(hour))) +
+  geom_col(position = "fill") +
+  ggmisc::scale_fill_crayola(guide = "none") +
+  coord_flip()
+match |> 
+  filter(what == "both",
+         source %in% c("PAPPÍR", "TRACKWELL",
+                       "TRACKWELL BAEKUR")) |> 
+  select(vid, date, source) |> 
+  left_join(old,
+            multiple = "all") |> 
+  mutate(hour = hour(t2)) |>
+  count(source, gid, hour) |> 
+  ggplot(aes(source, n, fill = factor(hour))) +
+  geom_col(position = "fill") +
+  ggmisc::scale_fill_crayola(guide = "none") +
+  coord_flip()
+```
+
+So, thing as expected.
+
+Now, list the vessel and date to be used for the different sources.
+
+```{r}
+use <- 
+  match |> 
+  mutate(use = case_when(what == "old only" ~ "old",
+                         what == "both - same" ~ "old",
+                         what == "both - diff" ~ "old",
+                         what == "new only" ~ "new",
+                         .default = NA))
+```
+
+Now, back to the issue of time of start and end fishing not being reported:
+
+```{r}
+use |> 
+  filter(use == "new") |> 
+  select(vid, date) |> 
+  left_join(new,
+            multiple = "all") |> 
+  mutate(h1 = hour(t1),
+         date = floor_date(date, "1 month")) |> 
+  count(date, gid, h1) |> 
+  ggplot(aes(date, n, fill = factor(h1))) +
+  geom_col() +
+  ggmisc::scale_fill_crayola(guide = "none") +
+  facet_wrap(~ gid, scales = "free_y")
+```
+
+Looking good ..., begs the question if a different type of approach when deciding the merge criteria to use. I.e. it is possible the time of start and end of fishing ... Let's do that on another rainy day. 
+
+
+## Matching old and new database
+
+Here we follow the data extraction used when responding to the ICES vms data-call.
+
+```{r}
+old <- 
+  lb_base(con) |> 
+  filter(year(date) %in% 2009:2022) |> 
+  collect(n = Inf) |> 
+  mutate(date = as_date(date))
+```
+
+
+## Appendix
+
+```{r}
+devtools::session_info()
+```
+

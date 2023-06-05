@@ -1,0 +1,165 @@
+---
+title: "Trail-landings match"
+code-fold: true
+message: FALSE
+warning: FALSE
+---
+
+## Preamble
+
+This document just describes a summary of the matches of landings with vessel trips as identified in the stk-data.
+
+The results here are based on some cascading upstream code that resides elsewhere. Besides the inputs used here that reside in the Oracle database the heart of upstream code that generates vessel trips were derived via this [code](https://raw.githubusercontent.com/einarhjorleifsson/AIS_TRAIL/main/rscripts/01_stk-trails.R)
+
+## Import, transform and match trails with landings
+
+Match ais-trips and landings (from gafl) for 2017 such that a landing id (
+
+```{r}
+library(sf)
+library(mapdeck)
+source("~/R/Pakkar2/ramb/TOPSECRET.R")
+set_token(key)
+library(tidyverse)
+library(ramb)
+library(omar)
+con <- connect_mar()
+
+YEAR <- 2017 # Year to process
+
+# import -----------------------------------------------------------------------
+## landings --------------------------------------------------------------------
+lnd <- 
+  omar::ln_agf(con) |> 
+  filter(year(date) %in% YEAR) |> 
+  collect(n = Inf) |> 
+  filter(!between(vid, 3700, 4999)) |>   # only icelandic vessels
+  filter(vid > 0, vid != 9999) |> 
+  filter(wt > 0) |>   # check this, wt if only ungutted weight
+  mutate(date = as_date(date)) |> 
+  group_by(vid, date, hid) |> 
+  summarise(n.landings = n_distinct(.id),
+            .id = min(.id),
+            gid.agf = min(gid),                 # just in case, which should not be
+            catch = sum(wt, na.rm = TRUE) / 1e3,
+            .groups = "drop")
+## trail -----------------------------------------------------------------------
+fil <- dir("~/stasi/gis/AIS_TRAIL/trails", full.names = TRUE)
+fil <- fil[str_detect(fil, paste0("y", YEAR))]
+n <- nchar(fil[1])
+VIDS_now <- str_sub(fil, n - 7, n-4) |> as.integer()
+lnd <- lnd |> filter(vid %in% VIDS_now)
+trail <- 
+  map(fil, read_rds) |> 
+  bind_rows()
+
+# match landings ---------------------------------------------------------------
+
+# create a trip summary
+trip <- 
+  trail |> 
+  filter(v %in% c("end_location", "not", "short")) |> 
+  arrange(vid, time) |> 
+  mutate(dd = traipse::track_distance(lon, lat)) |> 
+  group_by(vid, .cid) |> 
+  reframe(pings = n(),
+          T1 = min(time),
+          T2 = max(time),
+          dt = round(as.numeric(difftime(T2, T1, units = "hours")), 2),
+          dd = round(sum(dd, na.rm = TRUE) / 1852, 2),
+          hid_dep = hid_dep[1],
+          hid_arr = hid_arr[1],
+          lon1 = lon[1],            # departure coordinates
+          lat1 = lat[1],
+          lon2 = lon[time == T2],   # arrival coordinates
+          lat2 = lat[time == T2])
+
+# limit trips to match (ideally should not be needed)
+trip2 <- 
+  trip |> 
+  filter(.cid  > 0,
+         pings > 5,
+         dt   >= 1,     # trip duration [hours]
+         dd    > 1)     # trip distance [nm]
+
+match <- 
+  trip2 |>
+  filter(vid %in% unique(lnd$vid)) |> 
+  mutate(datel = as_date(T2)) |> 
+  select(vid, .cid, datel, dt, dd, hid_dep, hid_arr) |>
+  mutate(what = "ais") |> 
+  bind_rows(lnd |> 
+              # what does a landing of 0 mean
+              filter(catch > 0) |> 
+              mutate(what = "lnd") |> 
+              rename(datel = date)) |> 
+  arrange(vid, datel, what) |> 
+  group_by(vid) |> 
+  # if what == "ais" is followed by what == "lnd" consider that a match
+  mutate(match = case_when(what == "ais" & lead(what) == "lnd" ~ TRUE,
+                           what == "lnd" & lag(what) == "ais" ~ TRUE,
+                           .default = FALSE),
+         days = case_when(match ~ as.numeric(difftime(lead(datel), datel, units = "days")),
+                          .default = NA)) |> 
+  ungroup()
+```
+
+## Results
+
+```{r}
+trips <- 
+  match |> 
+  filter(what == "lnd") |> 
+  summarise(Variable = "Trips",
+            Total = n(),
+            Match = sum(match),
+            Difference = Total - Match,
+            Percent = round(Match / Total * 100, 1))
+catch <- 
+  match |> 
+  filter(what == "lnd") |> 
+  summarise(Variable = "Catch [t]",
+            Total = sum(catch),
+            Match = sum(catch[match]),
+            Difference = Total - Match,
+            Percent = round(Match / Total * 100, 1))
+bind_rows(trips, catch) |> 
+  knitr::kable(caption = "Number of trips and total catch")
+```
+
+Not bad, but we may have:
+
+* False positives
+  * This may largely be a result of wrong trip segment generation because of whacky points
+* False negatives
+
+False positive could be a match of landings to a false trip. False negative could be:
+
+* Landings in foreign harbours (seems to be only in rare cases)
+* Very short trips close to harbours
+* ...
+
+
+### Some details of missing match by vessels
+
+```{r}
+
+match |> 
+  filter(what == "lnd") |>
+  group_by(vid) |> 
+  summarise(landings = n(),
+            match.n = sum(match),
+            dt = landings - match.n,
+            p = round(match.n / landings * 100, 1),
+            catch.match = sum(catch[match == TRUE]),
+            catch = sum(catch),
+            cdiff = catch - catch.match,
+            p.catch = round(catch.match / catch * 100, 1)) |> 
+  mutate(catch.match = round(catch.match, 1),
+         catch = round(catch, 1),
+         cdiff = round(cdiff, 1)) |> 
+  arrange(p) |> 
+  filter(p < 100 | p.catch < 100) |> 
+  knitr::kable(caption = "Match by each vessel, arranged by proportion trips missing")
+```
+
