@@ -1,2 +1,4 @@
 git lfs track "*.gpkg"
 git lfs track "*.xlsx"
+git lfs track "data-aux/gear_codes.rds"
+git lfs track "data-aux/vessels.rds"

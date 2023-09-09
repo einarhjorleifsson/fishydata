@@ -203,13 +203,13 @@ gid_orri |>
                                 gid == 15 ~ 25,
                                 .default = -9)) |> 
   left_join(gid_agf |> rename(gid_ln_agf = gid_ln, veidarfaeri_agf = veidarfaeri)) |> 
-  write_rds("data/aux/gear_codes.rds")
+  write_rds("data-aux/gear_codes.rds")
 
 # Vessel data ------------------------------------------------------------------
 omar::vessels_vessels(con) |>
   collect(n = Inf) |>
   arrange(vid) |>
-  write_rds("data/aux/vessels.rds")
+  write_rds("data-aux/vessels.rds")
 
 # Vesselid-mobileid match ------------------------------------------------------
 ## NOT RUN ---------------------------------------------------------------------
