@@ -1,0 +1,19 @@
+project:
+  type: website
+
+website:
+  title: "fishy data"
+  navbar:
+    left:
+      - text: Documents
+        menu:
+          - seed1.qmd
+          - auxillary-data.qmd
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    toc: true
+
+
+

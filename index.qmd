@@ -1,0 +1,139 @@
+---
+title: "The processing from A through Ö"
+warning: false
+message: false
+---
+
+## TODO
+
+* Recompile auxillary data
+* Add landings data
+
+## Data compilation sequence
+
+```
+R/00_auxillary-data.R
+R/01_vid-mid.R
+R/02-1_logbooks-merge.R
+R/02-2-logbooks-processing.R
+R/02-3_logbooks-for-ais.R
+R/03-stk-tails_parquet_v02.R
+
+```
+
+Should really set this up as a bash-script
+
+Note: Log of the running kept in directory lgs
+
+## Usage
+
+```{r}
+library(raster)
+library(viridis)
+library(leaflet)
+library(sf)
+library(tidyterra)
+library(tidyverse)
+library(arrow)
+library(omar)
+con <- connect_mar()
+# functions --------------------------------------------------------------------
+grid_species <- function(SID = 61, d, CT, dx = 300, GID = 6) {
+  d |> 
+    filter(speed >= s1 & speed <= s2) |> 
+    filter(gid == GID) |> 
+    inner_join(CT |> 
+                 filter(sid == SID),
+               by = "visir") |> 
+    group_by(visir) |> 
+    # not sure if this works properly
+    mutate(n = length(visir),
+           catch = catch / n) |> 
+    ungroup() |> 
+    filter(lon >= -33, lon <= -10,
+           lat >=  62, lat <= 68.5) |> 
+    mutate(x = x %/% dx * dx + dx/2,
+           y = y %/% dx * dx + dx/2) |> 
+    group_by(x, y) |> 
+    summarise(z = sum(catch) / 1e3,   # tonnes
+              .groups = "drop") |> 
+    collect() ->
+    g
+  
+  return(g)
+  
+}
+
+raster_helper <- function(g) {
+  g |> 
+    mutate(z = ifelse(z > quantile(z, 0.99), quantile(z, 0.99), z)) |> 
+    raster::rasterFromXYZ(crs = "EPSG:3857")
+}
+
+## colour palettes -------------------------------------------------------------
+hyp <- 
+  tidyterra:::extract_pal(tidyterra::hypsometric_tints_db, 
+                          palette = "etopo1_hypso") |> 
+  pull(hex)
+inf <- inferno(12, alpha = 1, begin = 0, end = 1, direction = -1)
+
+# data -------------------------------------------------------------------------
+sc_arrow <-
+  tribble(~gid,  ~s1,  ~s2,
+          -199, 1.000, 3.000,
+          1,    0.375, 2.750,
+          2,    0.125, 2.500,
+          3,    0.025, 2.000,
+          5,    0.250, 3.250,
+          6,    2.625, 5.500,
+          7,    2.625, 6.000,
+          9,    2.375, 4.000,
+          12,    0.050, 2.250,
+          14,    1.750, 3.250,
+          15,    0.500, 5.500,
+          38,    0.250, 4.750,
+          40,    0.250, 6.000) |> 
+  mutate(gid = as.integer(gid)) |> 
+  arrow::as_arrow_table()
+con <- 
+  open_dataset("~/stasi/trails/trails-parquet_v02") |> 
+  left_join(sc_arrow)
+dx <- 300
+q <- 
+  con |> 
+  mutate(year = year(time)) |> 
+  filter(between(lon, -30, -20),
+         between(lat, 65, 67.5),
+         speed >= s1, speed <= s2,
+         gid == 6) |> 
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2,
+         one = 1L) |> 
+  group_by(x, y) |> 
+  summarise(z = sum(one),
+            .groups = "drop")
+ais <-
+  q |> 
+  collect()
+island <- 
+  geo::island |> 
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326) |> 
+  st_transform(crs = 3857) |> 
+  st_coordinates() |> 
+  as_tibble() |> 
+  rename(x = X, y = Y)
+ais |> 
+  mutate(z = ifelse(z > quantile(z, 0.99),
+                    quantile(z, 0.99),
+                    z)) |> 
+  ggplot() +
+  theme_void() +
+  geom_tile(aes(x, y, fill = z)) +
+  geom_polygon(data = island, aes(x, y),
+               fill = "grey80") +
+  tidyterra::scale_fill_hypso_c() +
+  coord_cartesian(xlim = range(ais$x), ylim = range(ais$y)) +
+  labs(fill = "Effort")
+```
+
