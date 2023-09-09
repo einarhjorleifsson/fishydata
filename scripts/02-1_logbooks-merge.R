@@ -3,7 +3,7 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < R/02-1_logbooks-merge.R --vanilla > logs/02-1_logbooks-merge_2023-09-08.log &
+#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2023-09-09.log &
 lubridate::now()
 
 # Input:  Oracle database
@@ -516,9 +516,6 @@ LGS <-
 # 6. Save ----------------------------------------------------------------------
 LGS   |> write_rds("data/logbooks/station.rds")
 CATCH |> write_rds("data/logbooks/catch.rds")
-library(arrow)
-LGS   |> arrow::write_parquet("data/logbooks/station.parquet")
-CATCH |> arrow::write_parquet("data/logbooks/catch.parquet")
 
 # 7. Info ----------------------------------------------------------------------
 devtools::session_info()

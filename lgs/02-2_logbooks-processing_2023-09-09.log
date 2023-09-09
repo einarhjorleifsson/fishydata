@@ -1,0 +1,485 @@
+
+R version 4.2.2 (2022-10-31) -- "Innocent and Trusting"
+Copyright (C) 2022 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> # 0.  Objective --------------------------------------------------------------------
+> # Correct and "standardize" logbook records
+> #
+> # 1. Preamble ---------------------------------------------------------------------
+> # run this as:
+> #  nohup R < scripts/02-2_logbooks-processing.R --vanilla > lgs/02-2_logbooks-processing_2023-09-09.log &
+> lubridate::now()
+[1] "2023-09-09 18:35:25 GMT"
+> 
+> # Input:  data/logbooks/station.parquet
+> #         data/logbooks/catch.parguet
+> # Output: data/stk/....
+> # Downstream usage: R/...
+> ## Brief summary ---------------------------------------------------------------
+> #
+> 
+> # 3. Input ------------------------------------------------------------------------
+> library(omar)
+> library(tidyverse)
+── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
+✔ dplyr     1.1.3     ✔ readr     2.1.4
+✔ forcats   1.0.0     ✔ stringr   1.5.0
+✔ ggplot2   3.4.3     ✔ tibble    3.2.1
+✔ lubridate 1.9.2     ✔ tidyr     1.3.0
+✔ purrr     1.0.2     
+── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+✖ dplyr::filter() masks stats::filter()
+✖ dplyr::lag()    masks stats::lag()
+ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+> con <- connect_mar()
+> 
+> lb <- read_rds("data/logbooks/station.rds")
+> ca <- read_rds("data/logbooks/catch.rds")
+> gears <- read_rds("data-aux/gear_codes.rds")
+> 
+> 
+> # Gear correction -------------------------------------------------------------
+> # This is some legacy code that may need a review
+> # Basic procedure
+> # Question if this should not be moved to 02-1_logbooks-merge.R
+> lb <- 
++   lb |> 
++   # to align with the legacy code
++   rename(gid.ln = gid_ln_lods,
++          sid.target = sid_target) |> 
++   mutate(dt = difftime(date, date_ln_lods, units = "days"),
++          dt = as.integer(dt)) |> 
++   mutate(gid.lb = gid) |> 
++   left_join(gears %>% select(gid.lb = gid, gc.lb = gclass), by = "gid.lb") %>% 
++   left_join(gears %>% select(gid.ln = gid, gc.ln = gclass), by = "gid.ln") %>% 
++   select(.sid:gid.ln, gc.lb, gc.ln, everything()) %>% 
++   mutate(gid = NA_integer_,
++          gid.source = NA_character_) %>% 
++   mutate(i = gid.lb == gid.ln,
++          gid = ifelse(i, gid.ln, gid),
++          gid.source = ifelse(i, "gid.lb=gid.ln", gid.source),
++          step = ifelse(i, 1L, NA_integer_)) %>% 
++   mutate(i = is.na(gid) & gc.lb == gc.ln,
++          gid = ifelse(i, gc.lb, gid),
++          gid.source = ifelse(i, "gc.lb=gc.ln   -> gid.lb", gid.source),
++          step = ifelse(i, 2L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 15L & gid.lb %in% c(5L, 6L),
++          gid = ifelse(i, gid.ln, gid),
++          gid.source = ifelse(i, "gid.ln=15, gid.lb=5,6   -> gid.ln", gid.source),
++          step = ifelse(i, 3L, step)) %>% 
++   mutate(i = is.na(gid) & 
++            gid.ln == 21 & 
++            gid.lb == 6 &
++            !sid.target %in% c(30, 36, 41),
++          gid = ifelse(i, gid.lb, gid),
++          gid.source = ifelse(i, "gid.ln=21, gid.lb=6, sid.target != 30,36,41   -> gid.lb",
++                              gid.source),
++          step = ifelse(i, 4L, step)) %>% 
++   mutate(i = is.na(gid) &
++            gid.ln == 21 &
++            gid.lb == 6 & 
++            sid.target %in% c(22, 41),
++          gid = ifelse(i, 14, gid),
++          gid.source = ifelse(i, "gid.ln=21, gid.lb=6, sid.target = 22,41   -> 14", gid.source),
++          step = ifelse(i, 5L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 6 & gid.lb == 7 & sid.target %in% c(11, 19, 30:36),
++          gid = ifelse(i, gid.lb, gid),
++          gid.source = ifelse(i, "gid.ln=6, gid.lb=7, sid.target = 11,19,30:36   -> gid.lb", gid.source),
++          step = ifelse(i, 6L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 18 & gid.lb == 5,
++          gid = ifelse(i, gid.ln, gid),
++          gid.source = ifelse(i, "gid.ln=18, gid.lb=5   -> gid.ln", gid.source),
++          step = ifelse(i, 7L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 18 & gid.lb == 40,
++          gid = ifelse(i, gid.lb, gid),
++          gid.source = ifelse(i, "gid.ln=18, gid.lb=40   -> gid.lb", gid.source),
++          step = ifelse(i, 8L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 14 & gid.lb == 6 & sid.target == 41,
++          gid = ifelse(i, gid.ln, gid),
++          gid.source = ifelse(i, "gid.ln=14, gid.lb=6, sid.target = 41   -> gid.ln", gid.source),
++          step = ifelse(i, 9L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 7 & gid.lb == 6,
++          gid = ifelse(i, gid.ln, gid),
++          gid.source = ifelse(i, "gid.ln=7, gid.lb=6   -> gid.ln", gid.source),
++          step = ifelse(i, 10L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 9 & gid.lb == 6,
++          gid = ifelse(i, gid.ln, gid),
++          gid.source = ifelse(i, "gid.ln=9, gid.lb=6   -> gid.ln", gid.source),
++          step = ifelse(i, 11L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 18 & gid.lb == 38,
++          gid = ifelse(i, gid.ln, gid),
++          gid.source = ifelse(i, "gid.ln=18, gid.lb=38   -> gid.ln", gid.source),
++          step = ifelse(i, 12L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 6 & gid.lb == 14,
++          gid = ifelse(i, gid.lb, gid),
++          gid.source = ifelse(i, "gid.ln=6, gid.lb=14   -> gid.lb", gid.source),
++          step = ifelse(i, 13L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 15 & gid.lb == 39,
++          gid = ifelse(i, gid.lb, gid),
++          gid.source = ifelse(i, "gid.ln=15, gid.lb=39   -> gid.lb", gid.source),
++          step  = ifelse(i, 14L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 40 & gid.lb %in% c(5, 6),
++          gid = ifelse(i, gid.ln, gid),
++          gid.source = ifelse(i, "gid.ln=40, gid.lb=5,6   -> gid.ln", gid.source),
++          step = ifelse(i, 15L, step)) %>% 
++   mutate(i = is.na(gid) & is.na(gid.ln) & gid.lb %in% c(1:3),
++          gid = ifelse(i, gid.lb, gid),
++          gid.source = ifelse(i, "is.na(gid.ln), gid.lb=1:3   -> gid.lb", gid.source),
++          step = ifelse(i, 16L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 21 & gid.lb == 6,
++          gid = ifelse(i, 7, gid),
++          gid.source = ifelse(i, "gid.ln=21, gid.lb=6   -> 7", gid.source),
++          step = ifelse(i, 17L, step)) %>% 
++   mutate(i = is.na(gid) & gid.ln == 21 & gid.lb == 14,
++          gid = ifelse(i, gid.lb, gid),
++          gid.source = ifelse(i, "gid.ln=21, gid.lb=14   -> gid.lb", gid.source),
++          step = ifelse(i, 18L, step)) |> 
++   mutate(i = is.na(gid),
++          gid = ifelse(i, gid.lb, gid),
++          gid.source = ifelse(i, "rest", gid.source),
++          step = ifelse(i, 19L, step))
+> 
+> # Lump some gears --------------------------------------------------------------
+> lb <-
++   lb %>% 
++   mutate(gid = case_when(gid %in% c(10, 12) ~ 4,   # purse seines
++                          gid %in% c(18, 39) ~ 18,      # traps
++                          TRUE ~ gid)) %>% 
++   # make the rest a negative number
++   mutate(gid = ifelse(is.na(gid), -666, gid)) %>% 
++   # "skip" these also in downstream processing
++   mutate(gid = ifelse(gid %in% c(4, 12, 42), -666, gid)) %>% 
++   # lump dredges into one single gear
++   mutate(gid = ifelse(gid %in% c(15, 37, 38, 40), 15, gid))
+> 
+> lb |> 
++   filter(is.na(gid)) |> 
++   count(gid.lb, gid.source, gid.ln) |> 
++   arrange(-n) |> 
++   knitr::kable(caption = "Expect a null table")
+
+
+Table: Expect a null table
+
+| gid.lb|gid.source | gid.ln|  n|
+|------:|:----------|------:|--:|
+> lb |> 
++   count(gid.source) |> 
++   arrange(-n) |> 
++   mutate(p = (n / sum(n) * 100) |> round(2),
++          cump = cumsum(p)) |> 
++   knitr::kable(caption = "Derivation of correct gid")
+
+
+Table: Derivation of correct gid
+
+|gid.source                                               |       n|     p|  cump|
+|:--------------------------------------------------------|-------:|-----:|-----:|
+|gid.lb=gid.ln                                            | 1583247| 91.61| 91.61|
+|gc.lb=gc.ln   -> gid.lb                                  |  114317|  6.61| 98.22|
+|gid.ln=15, gid.lb=5,6   -> gid.ln                        |   15267|  0.88| 99.10|
+|rest                                                     |    6435|  0.37| 99.47|
+|gid.ln=40, gid.lb=5,6   -> gid.ln                        |    3094|  0.18| 99.65|
+|gid.ln=21, gid.lb=6, sid.target != 30,36,41   -> gid.lb  |    1294|  0.07| 99.72|
+|gid.ln=18, gid.lb=5   -> gid.ln                          |    1184|  0.07| 99.79|
+|gid.ln=6, gid.lb=7, sid.target = 11,19,30:36   -> gid.lb |    1061|  0.06| 99.85|
+|gid.ln=18, gid.lb=38   -> gid.ln                         |     903|  0.05| 99.90|
+|gid.ln=7, gid.lb=6   -> gid.ln                           |     645|  0.04| 99.94|
+|is.na(gid.ln), gid.lb=1:3   -> gid.lb                    |     347|  0.02| 99.96|
+|gid.ln=21, gid.lb=6   -> 7                               |     193|  0.01| 99.97|
+|gid.ln=18, gid.lb=40   -> gid.lb                         |     113|  0.01| 99.98|
+|gid.ln=21, gid.lb=14   -> gid.lb                         |      52|  0.00| 99.98|
+|gid.ln=15, gid.lb=39   -> gid.lb                         |      24|  0.00| 99.98|
+> 
+> # Gear class of corrected gid --------------------------------------------------
+> lb <- 
++   lb %>% 
++   left_join(gears %>% select(gid, gclass),
++             by = "gid")
+> lb |> 
++   count(gid, gclass) |> 
++   left_join(gears |> select(gid, gclass, lysing, dcf4, dcf5)) |> 
++   knitr::kable(captions = "Corrected gear and gear class")
+Joining with `by = join_by(gid, gclass)`
+
+
+|  gid| gclass|      n|lysing                      |dcf4 |dcf5     |
+|----:|------:|------:|:---------------------------|:----|:--------|
+| -666|     NA|   9836|NA                          |NA   |NA       |
+|    1|      1| 214763|Lína                        |LLS  |Fish     |
+|    2|      2| 106377|Net                         |GNS  |Fish     |
+|    3|      3| 291111|Handfæri                    |LHM  |Fish     |
+|    5|      5| 264459|Dragnót 135 mm              |SDN  |Fish     |
+|    6|      6| 616414|Botnvarpa                   |OTB  |Fish     |
+|    7|      7|  62583|Flotvarpa                   |OTM  |Fish     |
+|    9|      6|  48212|Humarvarpa                  |OTB  |Nephrops |
+|   11|      2|     13|Reknet                      |GDN  |Fish     |
+|   14|      6|  57478|Rækjuvarpa                  |OTB  |Shrimp   |
+|   15|     15|  48206|Hörpudiskplógur/Scallop dr. |DRB  |Scallop  |
+|   17|     17|   1479|Þorskgildra                 |TRP  |Fish     |
+|   18|     17|   2201|Krabbagildra                |TRP  |Crab     |
+|   25|      2|   3780|Grásleppunet                |GNS  |Fish     |
+|   29|      2|     22|Rauðmaganet                 |GNS  |Fish     |
+|   51|     NA|     48|NA                          |NA   |NA       |
+|   91|      2|    247|Skötuselsnet                |GNS  |Fish     |
+|   92|      2|    517|Grálúðunet                  |GNS  |Fish     |
+|   99|     99|    430|Óskráð veiðarfæri           |NA   |NA       |
+> 
+> # effort units of corrected gears ----------------------------------------------
+> # pending, but not critical .....
+> 
+> # Missing effort units ---------------------------------------------------------
+> lb |> 
++   filter(!is.na(effort_unit)) |> 
++   count(gid, effort_unit) |> 
++   arrange(gid, -n) |> 
++   knitr::kable(caption = "Effort units")
+
+
+Table: Effort units
+
+|  gid|effort_unit |      n|
+|----:|:-----------|------:|
+| -666|setting     |   9836|
+|    1|hooks       | 214067|
+|    2|netnights   | 105719|
+|    3|hookhours   | 272007|
+|    5|setting     | 264122|
+|    5|hours towed |      5|
+|    6|hours towed | 615275|
+|    7|hours towed |  62570|
+|    9|hours towed |  48212|
+|   11|netnights   |     13|
+|   14|hours towed |  57478|
+|   15|hours towed |  43535|
+|   15|setting     |   4671|
+|   17|traphours   |   1479|
+|   18|setting     |   1184|
+|   18|hours towed |    903|
+|   18|traphours   |    114|
+|   25|netnights   |   1626|
+|   29|netnights   |     20|
+|   51|trap hours  |     25|
+|   91|netnights   |    160|
+|   92|netnights   |    517|
+> 
+> # Median effort if effort missing ----------------------------------------------
+> effort_q99 <- 
++   lb |> 
++   group_by(gid) |> 
++   summarise(q99 = quantile(effort, 0.99, na.rm = TRUE))
+> lb |> 
++   ggplot(aes(effort)) +
++   geom_histogram() +
++   geom_vline(data = effort_q99,
++              aes(xintercept = q99),
++              colour = "red") +
++   facet_wrap(~ gid, scales = "free")
+`stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+Warning messages:
+1: Removed 30681 rows containing non-finite values (`stat_bin()`). 
+2: Removed 1 rows containing missing values (`geom_vline()`). 
+> median.effort <- 
++   lb %>% 
++   group_by(gid) %>% 
++   summarise(median = median(effort, na.rm = TRUE)) %>% 
++   drop_na()
+> lb <- 
++   lb %>% 
++   left_join(median.effort, by = "gid") %>% 
++   mutate(effort = ifelse(!is.na(effort), effort, median)) %>% 
++   select(-median) %>% 
++   # cap effort hours
++   mutate(effort = case_when(effort > 12 & gid ==  6 ~ 12,
++                             effort > 24 & gid ==  7 ~ 24,
++                             effort > 15 & gid == 14 ~ 15,
++                             TRUE ~ effort))
+> lb |> 
++   filter(is.na(effort)) |> 
++   count(gid) |> 
++   knitr::kable(caption = "Missing effort (should be null")
+
+
+Table: Missing effort (should be null
+
+| gid|   n|
+|---:|---:|
+|  99| 430|
+> 
+> # Cap on end time of setting ---------------------------------------------------
+> # Cap on the t2 so not overlapping with next setting
+> #    NOTE: Effort not adjusted accordingly
+> lb |> 
++   mutate(has.t1 = !is.na(t1),
++          has.t2 = !is.na(t2)) |> 
++   count(gid, has.t1) |> 
++   spread(has.t1, n)
+# A tibble: 19 × 3
+     gid `FALSE` `TRUE`
+   <dbl>   <int>  <int>
+ 1  -666      15   9821
+ 2     1   73214 141549
+ 3     2   39250  67127
+ 4     3  240182  50929
+ 5     5    3752 260707
+ 6     6      32 616382
+ 7     7       9  62574
+ 8     9       6  48206
+ 9    11      NA     13
+10    14       6  57472
+11    15    9704  38502
+12    17    1479     NA
+13    18     163   2038
+14    25      NA   3780
+15    29      NA     22
+16    51      NA     48
+17    91      NA    247
+18    92      NA    517
+19    99      NA    430
+> lb2 <-
++   lb |> 
++   arrange(vid, t1) %>%
++   group_by(vid) %>%
++   mutate(overlap = if_else(t2 > lead(t1), TRUE, FALSE, NA),
++          t22 = if_else(overlap,
++                        lead(t1) - minutes(1), # need to subtract 1 minute but get the format right
++                        t2,
++                        as.POSIXct(NA)),
++          t22 = if_else(overlap,
++                        ymd_hms(format(as.POSIXct(t22, origin="1970-01-01", tz="UTC"))),
++                        as.POSIXct(NA)),
++          t2 = if_else(overlap & !is.na(t22), t22, t2, as.POSIXct(NA))) %>%
++   ungroup() %>% 
++   select(-t22) 
+Warning message:
+There were 3 warnings in `mutate()`.
+The first warning was:
+ℹ In argument: `t22 = if_else(...)`.
+ℹ In group 705: `vid = 2673`.
+Caused by warning:
+!  1 failed to parse.
+ℹ Run `dplyr::last_dplyr_warnings()` to see the 2 remaining warnings. 
+> paste("Number of records:", nrow(lb))
+[1] "Number of records: 1728176"
+> 
+> 
+> # Gear width proxy -------------------------------------------------------------
+> # Should this be upstream, in 02-1?
+> 
+> 
+> # Cap gear width proxy ---------------------------------------------------------
+> 
+> ## Proxy for missing gear width ------------------------------------------------
+> # Ideally this should be modelled based on z, lon and lat
+> 
+> 
+> # Determine what records to filter downstream ----------------------------------
+> 
+> # Save -------------------------------------------------------------------------
+> lb |> write_rds("data/logbooks/station-processing.rds")
+> # X. Info ----------------------------------------------------------------------
+> devtools::session_info()
+─ Session info ───────────────────────────────────────────────────────────────
+ setting  value
+ version  R version 4.2.2 (2022-10-31)
+ os       Debian GNU/Linux 11 (bullseye)
+ system   x86_64, linux-gnu
+ ui       X11
+ language (EN)
+ collate  is_IS.UTF-8
+ ctype    is_IS.UTF-8
+ tz       Atlantic/Reykjavik
+ date     2023-09-09
+ pandoc   2.9.2.1 @ /usr/bin/pandoc
+
+─ Packages ───────────────────────────────────────────────────────────────────
+ package     * version    date (UTC) lib source
+ cachem        1.0.8      2023-05-01 [1] CRAN (R 4.2.2)
+ callr         3.7.3      2022-11-02 [1] CRAN (R 4.2.2)
+ cli           3.6.1      2023-03-23 [1] CRAN (R 4.2.2)
+ colorspace    2.1-0      2023-01-23 [1] CRAN (R 4.2.2)
+ crayon        1.5.2      2022-09-29 [1] CRAN (R 4.2.2)
+ DBI           1.1.3      2022-06-18 [1] CRAN (R 4.2.2)
+ devtools      2.4.5      2022-10-11 [1] CRAN (R 4.2.2)
+ digest        0.6.33     2023-07-07 [1] CRAN (R 4.2.2)
+ dplyr       * 1.1.3      2023-09-03 [1] CRAN (R 4.2.2)
+ ellipsis      0.3.2      2021-04-29 [1] CRAN (R 4.2.2)
+ fansi         1.0.4      2023-01-22 [1] CRAN (R 4.2.2)
+ farver        2.1.1      2022-07-06 [1] CRAN (R 4.2.2)
+ fastmap       1.1.1      2023-02-24 [1] CRAN (R 4.2.2)
+ forcats     * 1.0.0      2023-01-29 [1] CRAN (R 4.2.2)
+ fs            1.6.3      2023-07-20 [1] CRAN (R 4.2.2)
+ generics      0.1.3      2022-07-05 [1] CRAN (R 4.2.2)
+ ggplot2     * 3.4.3      2023-08-14 [1] CRAN (R 4.2.2)
+ glue          1.6.2      2022-02-24 [1] CRAN (R 4.2.2)
+ gtable        0.3.4      2023-08-21 [1] CRAN (R 4.2.2)
+ hms           1.1.3      2023-03-21 [1] CRAN (R 4.2.2)
+ htmltools     0.5.6      2023-08-10 [1] CRAN (R 4.2.2)
+ htmlwidgets   1.6.2      2023-03-17 [1] CRAN (R 4.2.2)
+ httpuv        1.6.11     2023-05-11 [1] CRAN (R 4.2.2)
+ knitr         1.43       2023-05-25 [1] CRAN (R 4.2.2)
+ labeling      0.4.3      2023-08-29 [1] CRAN (R 4.2.2)
+ later         1.3.1      2023-05-02 [1] CRAN (R 4.2.2)
+ lifecycle     1.0.3      2022-10-07 [1] CRAN (R 4.2.2)
+ lubridate   * 1.9.2      2023-02-10 [1] CRAN (R 4.2.2)
+ magrittr      2.0.3      2022-03-30 [1] CRAN (R 4.2.2)
+ memoise       2.0.1      2021-11-26 [1] CRAN (R 4.2.2)
+ mime          0.12       2021-09-28 [1] CRAN (R 4.2.2)
+ miniUI        0.1.1.1    2018-05-18 [1] CRAN (R 4.2.2)
+ munsell       0.5.0      2018-06-12 [1] CRAN (R 4.2.2)
+ omar        * 2023.05.25 2023-09-07 [1] Github (einarhjorleifsson/omar@f4e7259)
+ pillar        1.9.0      2023-03-22 [1] CRAN (R 4.2.2)
+ pkgbuild      1.4.2      2023-06-26 [1] CRAN (R 4.2.2)
+ pkgconfig     2.0.3      2019-09-22 [1] CRAN (R 4.2.2)
+ pkgload       1.3.2.1    2023-07-08 [1] CRAN (R 4.2.2)
+ prettyunits   1.1.1      2020-01-24 [1] CRAN (R 4.2.2)
+ processx      3.8.2      2023-06-30 [1] CRAN (R 4.2.2)
+ profvis       0.3.8      2023-05-02 [1] CRAN (R 4.2.2)
+ promises      1.2.1      2023-08-10 [1] CRAN (R 4.2.2)
+ ps            1.7.5      2023-04-18 [1] CRAN (R 4.2.2)
+ purrr       * 1.0.2      2023-08-10 [1] CRAN (R 4.2.2)
+ R6            2.5.1      2021-08-19 [1] CRAN (R 4.2.2)
+ Rcpp          1.0.11     2023-07-06 [1] CRAN (R 4.2.2)
+ readr       * 2.1.4      2023-02-10 [1] CRAN (R 4.2.2)
+ remotes       2.4.2.1    2023-07-18 [1] CRAN (R 4.2.2)
+ rlang         1.1.1      2023-04-28 [1] CRAN (R 4.2.2)
+ ROracle       1.3-1.1    2021-11-10 [2] CRAN (R 4.2.2)
+ rstudioapi    0.15.0     2023-07-07 [1] CRAN (R 4.2.2)
+ scales        1.2.1      2022-08-20 [1] CRAN (R 4.2.2)
+ sessioninfo   1.2.2      2021-12-06 [1] CRAN (R 4.2.2)
+ shiny         1.7.5      2023-08-12 [1] CRAN (R 4.2.2)
+ stringi       1.7.12     2023-01-11 [1] CRAN (R 4.2.2)
+ stringr     * 1.5.0      2022-12-02 [1] CRAN (R 4.2.2)
+ tibble      * 3.2.1      2023-03-20 [1] CRAN (R 4.2.2)
+ tidyr       * 1.3.0      2023-01-24 [1] CRAN (R 4.2.2)
+ tidyselect    1.2.0      2022-10-10 [1] CRAN (R 4.2.2)
+ tidyverse   * 2.0.0      2023-02-22 [1] CRAN (R 4.2.2)
+ timechange    0.2.0      2023-01-11 [1] CRAN (R 4.2.2)
+ tzdb          0.4.0      2023-05-12 [1] CRAN (R 4.2.2)
+ urlchecker    1.0.1      2021-11-30 [1] CRAN (R 4.2.2)
+ usethis       2.2.2      2023-07-06 [1] CRAN (R 4.2.2)
+ utf8          1.2.3      2023-01-31 [1] CRAN (R 4.2.2)
+ vctrs         0.6.3      2023-06-14 [1] CRAN (R 4.2.2)
+ withr         2.5.0      2022-03-03 [1] CRAN (R 4.2.2)
+ xfun          0.40       2023-08-09 [1] CRAN (R 4.2.2)
+ xtable        1.8-4      2019-04-21 [1] CRAN (R 4.2.2)
+
+ [1] /home/haf/einarhj/R/x86_64-pc-linux-gnu-library/4.2
+ [2] /usr/local/lib/R/site/x86_64-pc-linux-gnu-library/4.2
+ [3] /usr/lib/R/library
+
+──────────────────────────────────────────────────────────────────────────────
+> 

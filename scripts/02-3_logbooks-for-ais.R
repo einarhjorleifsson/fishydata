@@ -3,7 +3,7 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < R/02-3_logbooks-for-ais.R --vanilla > logs/02-3_logbooks-for-ais_2023-09-04.log &
+#  nohup R < scripts/02-3_logbooks-for-ais.R --vanilla > lgs/02-3_logbooks-for-ais_2023-09-09.log &
 lubridate::now()
 
 # Input:  xxx

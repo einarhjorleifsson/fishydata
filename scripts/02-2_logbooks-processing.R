@@ -3,7 +3,7 @@
 #
 # 1. Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < R/02-2_logbooks-processing.R --vanilla > logs/02-2_logbooks-processing_2023-09-04.log &
+#  nohup R < scripts/02-2_logbooks-processing.R --vanilla > lgs/02-2_logbooks-processing_2023-09-09.log &
 lubridate::now()
 
 # Input:  data/logbooks/station.parquet
@@ -14,14 +14,13 @@ lubridate::now()
 #
 
 # 3. Input ------------------------------------------------------------------------
-library(arrow)
 library(omar)
 library(tidyverse)
 con <- connect_mar()
 
 lb <- read_rds("data/logbooks/station.rds")
 ca <- read_rds("data/logbooks/catch.rds")
-gears <- read_rds("data/aux/gear_codes.rds")
+gears <- read_rds("data-aux/gear_codes.rds")
 
 
 # Gear correction -------------------------------------------------------------
