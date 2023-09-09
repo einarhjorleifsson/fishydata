@@ -1,1 +1,4 @@
 *.gpkg filter=lfs diff=lfs merge=lfs -text
+*.xlsx filter=lfs diff=lfs merge=lfs -text
+data-aux/gear_codes.rds filter=lfs diff=lfs merge=lfs -text
+data-aux/vessels.rds filter=lfs diff=lfs merge=lfs -text
