@@ -8,24 +8,46 @@ library(sf)
 library(tidyverse)
 library(gisland)
 
-# Icelandic shoreline ----------------------------------------------------------
-gisland::read_strandlinur() |> 
-  mutate(area = st_area(geom)) |> 
-  filter(area == max(area)) |> 
-  mutate(on_land = TRUE) |> 
-  select(on_land) |> 
-  st_transform(crs = 3057) |> 
-  st_buffer(dist = -100) |> 
-  st_transform(crs = 4326) |> 
-  st_write("data-raw/island.gpkg")
+# Iceland - shoreline -----------------------------------------------------------
+# safer way than gisland::read_strandlinur
+read_shorline <- function(mainland = TRUE) {
+  s <- 
+    "IS_50V:strandlina_flakar" %>% 
+    gisland::read_lmi()
+  tmp <- tempdir()
+  write_sf(s, paste0(tmp, "/in.gpkg"))
+  cmd <-
+    paste0("ogr2ogr ",
+           tmp,
+           "/out.gpkg ",
+           tmp,
+           "/in.gpkg",
+           " -explodecollections -nlt CONVERT_TO_LINEAR")
+  system(cmd)
+  s <- 
+    read_sf(paste0(tmp, "/out.gpkg")) |> 
+    dplyr::filter(!sf::st_is_empty(geom)) |>  
+    #sf::st_collection_extract(type = "POLYGON")
+    sf::st_make_valid() |> 
+    dplyr::mutate(geom = lwgeom::lwgeom_make_valid(geom)) |> 
+    mutate(area = st_area(geom),
+           on_land = TRUE) |>
+    select(area, on_land)
+  if(mainland) {
+    s <- s |> filter(area == max(area)) |> select(on_land)
+  }
+  return(s)
+}
 
-sf::read_sf("~/stasi/gis/harbours/gpkg/harbours-hidstd_2023-05-02.gpkg") |> 
-  st_write("data-raw/harbours-hidstd.gpkg")
-readxl::read_excel("~/stasi/gis/harbours/data-raw/stk_harbours.xlsx") |> 
-  write_csv("data-raw/stk_harbours.csv")
+read_shorline() |> 
+  st_write("data-aux/shoreline.gpkg")
 
-devtools::session_info()
+# code to be used in main scripts
+# st_transform(crs = 3057) |> 
+# st_buffer(dist = -100) |> 
+# st_transform(crs = 4326)
 
+# Standardized harbours --------------------------------------------------------
 
 
 
