@@ -3,7 +3,7 @@
 
 # ------------------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < R/03_stk-trails_parquet_v02.R --vanilla > logs/03_stk-trails_parquet_v02_2023_09-08.log &
+#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2023_09-09.log &
 #
 
 
@@ -59,10 +59,14 @@ library(argosfilter)
 library(arrow)
 
 # Auxilary data ----------------------------------------------------------------
-island <- read_sf("~/stasi/gis/AIS_TRAIL/data-raw/island.gpkg")
-harbour <- read_sf("~/stasi/gis/AIS_TRAIL/data-raw/harbours-hidstd.gpkg")
+island <- 
+  read_sf("data-aux/shoreline.gpkg") |> 
+  st_transform(crs = 3057) |> 
+  st_buffer(dist = -100) |> 
+  st_transform(crs = 4326)
+harbour <- read_sf("data-aux/harbours.gpkg")
 harbours.standards <- 
-  read_csv("~/stasi/gis/AIS_TRAIL/data-raw/stk_harbours.csv") |> 
+  readxl::read_excel("data-aux/harbours.xlsx") |> 
   select(hid, hid_std)
 LB <- read_rds("data/logbooks/station-for-ais.rds")
 
@@ -313,7 +317,7 @@ for(v in 1:length(VID)) {
       # and now for the save ...
       #  here only save positive trips with more than 5 pings
       
-      pth <- paste0("trails-parquet_v02/", str_pad(VIDv, width = 4, pad = "0"), ".parquet")
+      pth <- paste0("data/ais/", str_pad(VIDv, width = 4, pad = "0"), ".parquet")
       res2 |> write_parquet(pth)
       
     }
