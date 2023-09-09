@@ -212,8 +212,9 @@ omar::vessels_vessels(con) |>
   write_rds("data/aux/vessels.rds")
 
 # Vesselid-mobileid match ------------------------------------------------------
+## NOT RUN ---------------------------------------------------------------------
 # https://github.com/einarhjorleifsson/omar/blob/main/data-raw/00_SETUP_mobileid-vid-match.R
-tbl_mar(con, "ops$einarhj.mobile_vid") |> 
-  collect(n = Inf) |> 
-  write_rds("data/aux/vesselid-mobileid-match.rds")
+# tbl_mar(con, "ops$einarhj.mobile_vid") |> 
+#   collect(n = Inf) |> 
+#   write_rds("data/aux/vesselid-mobileid-match.rds")
 
