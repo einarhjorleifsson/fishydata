@@ -3,7 +3,7 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-3_logbooks-for-ais.R --vanilla > lgs/02-3_logbooks-for-ais_2023-09-09.log &
+#  nohup R < scripts/02-3_logbooks-for-ais.R --vanilla > lgs/02-3_logbooks-for-ais_2023-09-10.log &
 lubridate::now()
 
 # Input:  xxx
@@ -14,6 +14,7 @@ lubridate::now()
 #
 
 # Input ------------------------------------------------------------------------
+library(arrow)
 library(tidyverse)
 lb <- read_rds("data/logbooks/station-processing.rds")
 ca <- read_rds("data/logbooks/catch.rds")
@@ -67,6 +68,9 @@ lb |> glimpse()
 # Save -------------------------------------------------------------------------
 lb |> write_rds("data/logbooks/station-for-ais.rds")
 ca |> write_rds("data/logbooks/catch-for-ais.rds")
+
+lb |> write_parquet("data/logbooks/station-for-ais.parquet")
+ca |> write_parquet("data/logbooks/catch-for-ais.parquet")
 
 # Info -------------------------------------------------------------------------
 devtools::session_info()

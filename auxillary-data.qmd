@@ -1,11 +1,37 @@
 ---
 title: "Auxillary data"
+warning: false
+message: false
 ---
+
+```{r}
+library(sf)
+library(tidyverse)
+```
+
 
 ## Shoreline
 
+The shorelines are taken [programmatically](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/00_auxillary-data.R) from [LMI](https://www.lmi.is), specifically from ["Strandlína"](https://www.lmi.is/is/landupplysingar/gagnagrunnar/is-50v/strandlina). It is used here to remove ais points from land, an example being [here](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/04_stk-trails_parquet.R)
+
+The shoreline object can be accessed within the project via:
+
+```{r}
+read_sf("data-aux/shoreline.gpkg") |> plot()
+```
+
 ## Harbours
 
+Harbour polygons are generated from the ...
+
+The harbour polygons can be accessed within the project via:
+
+```{r}
+read_sf("data-aux/harbours.gpkg") |> select(harbour) |> plot()
+```
+
 ## Gears
+
+Gear codes are in a bit of a ...
 
 ## ...

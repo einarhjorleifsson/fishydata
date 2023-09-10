@@ -1,24 +1,23 @@
 ---
-title: "The processing from A through Ö"
+title: "Linking logbook, landings and ais"
 warning: false
 message: false
 ---
 
 ## TODO
 
-* Recompile auxillary data
-* Add landings data
+* Add landings data link
+* ...
 
 ## Data compilation sequence
 
 ```
-R/00_auxillary-data.R
-R/01_vid-mid.R
-R/02-1_logbooks-merge.R
-R/02-2-logbooks-processing.R
-R/02-3_logbooks-for-ais.R
-R/03-stk-tails_parquet_v02.R
-
+scripts/00_auxillary-data.R
+scripts/01_vid-mid.R
+scripts/02-1_logbooks-merge.R
+scripts/02-2-logbooks-processing.R
+scripts/02-3_logbooks-for-ais.R
+scripts/04-stk-tails_parquet.R
 ```
 
 Should really set this up as a bash-script
@@ -96,7 +95,7 @@ sc_arrow <-
   mutate(gid = as.integer(gid)) |> 
   arrow::as_arrow_table()
 con <- 
-  open_dataset("~/stasi/trails/trails-parquet_v02") |> 
+  open_dataset("data/ais") |> 
   left_join(sc_arrow)
 dx <- 300
 q <- 
@@ -105,11 +104,11 @@ q <-
   filter(between(lon, -30, -20),
          between(lat, 65, 67.5),
          speed >= s1, speed <= s2,
-         gid == 6) |> 
+         gid %in% c(1, 6)) |> 
   mutate(x = x %/% dx * dx + dx/2,
          y = y %/% dx * dx + dx/2,
          one = 1L) |> 
-  group_by(x, y) |> 
+  group_by(gid, x, y) |> 
   summarise(z = sum(one),
             .groups = "drop")
 ais <-
@@ -123,6 +122,10 @@ island <-
   st_coordinates() |> 
   as_tibble() |> 
   rename(x = X, y = Y)
+```
+
+
+```{r, fig.width=9, fig.height=12}
 ais |> 
   mutate(z = ifelse(z > quantile(z, 0.99),
                     quantile(z, 0.99),
@@ -133,7 +136,11 @@ ais |>
   geom_polygon(data = island, aes(x, y),
                fill = "grey80") +
   tidyterra::scale_fill_hypso_c() +
-  coord_cartesian(xlim = range(ais$x), ylim = range(ais$y)) +
-  labs(fill = "Effort")
+  coord_equal(xlim = range(ais$x), ylim = range(ais$y)) +
+  labs(fill = "Effort") +
+  theme(plot.background = element_rect(fill = "grey", colour = "grey"),
+        panel.background = element_rect(fill = "grey", colour = "grey"),
+        plot.margin = unit(c(0,0,0,0), "cm")) +
+  facet_grid(gid ~ .)
 ```
 

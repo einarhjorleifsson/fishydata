@@ -1,0 +1,234 @@
+---
+title: "Redfish closure"
+---
+
+Bug in quarto version on hafdruna (see e.g. https://github.com/quarto-dev/quarto-cli/issues/5702), so code below not run during website build but results at the following link:
+
+* [Catch by species](https://heima.hafro.is/~einarhj/tmp1.html)
+* [Proportion "djúpkarfi" in catch](https://heima.hafro.is/~einarhj/tmp2.html)
+
+
+
+```{r, eval = FALSE}
+library(raster)
+library(viridis)
+library(leaflet)
+library(sf)
+library(tidyverse)
+library(arrow)
+library(omar)
+library(htmlwidgets)
+con <- connect_mar()
+
+# data -------------------------------------------------------------------------
+sc_arrow <-
+  tribble(~gid,  ~s1,  ~s2,
+          -199, 1.000, 3.000,
+          1,    0.375, 2.750,
+          2,    0.125, 2.500,
+          3,    0.025, 2.000,
+          5,    0.250, 3.250,
+          6,    2.625, 5.500,
+          7,    2.625, 6.000,
+          9,    2.375, 4.000,
+          12,    0.050, 2.250,
+          14,    1.750, 3.250,
+          15,    0.500, 5.500,
+          38,    0.250, 4.750,
+          40,    0.250, 6.000) |> 
+  mutate(gid = as.integer(gid)) |> 
+  arrow::as_arrow_table()
+pth <- "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
+LB <- open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
+CT <- open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet"))
+ais <- 
+  open_dataset(paste0(pth, "ais")) |> 
+  left_join(sc_arrow)
+dx <- 300
+SID <- 61
+catch61 <- 
+  ais |> 
+  filter(speed >= s1, speed <= s2,
+         gid == 6,
+         lon >= -33, lon <= -10,
+         lat >=  62, lat <= 68.5) |> 
+  inner_join(CT |> 
+               filter(sid == SID)) |> 
+  group_by(.sid) |> 
+  # not sure if this works properly
+  mutate(n = length(.sid),
+         catch = catch / n) |> 
+  ungroup() |> 
+  
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2) |> 
+  group_by(x, y) |> 
+  summarise(z = sum(catch) / 1e3,   # tonnes
+            .groups = "drop") |> 
+  collect()
+SID <- 22
+catch22 <- 
+  ais |> 
+  filter(speed >= s1, speed <= s2,
+         gid == 6,
+         lon >= -33, lon <= -10,
+         lat >=  62, lat <= 68.5) |> 
+  inner_join(CT |> 
+               filter(sid == SID)) |> 
+  group_by(.sid) |> 
+  # not sure if this works properly
+  mutate(n = length(.sid),
+         catch = catch / n) |> 
+  ungroup() |> 
+  filter(lon >= -33, lon <= -10,
+         lat >=  62, lat <= 68.5) |> 
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2) |> 
+  group_by(x, y) |> 
+  summarise(z = sum(catch) / 1e3,   # tonnes
+            .groups = "drop") |> 
+  collect()
+catch <-
+  ais |> 
+  filter(speed >= s1, speed <= s2,
+         gid == 6,
+         lon >= -33, lon <= -10,
+         lat >=  62, lat <= 68.5) |> 
+  inner_join(CT |> 
+               group_by(.sid) |> 
+               summarise(catch = sum(catch, na.rm = TRUE),
+                         .groups = "drop")) |> 
+  group_by(.sid) |> 
+  # not sure if this works properly
+  mutate(n = length(.sid),
+         catch = catch / n) |> 
+  ungroup() |> 
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2) |> 
+  group_by(x, y) |> 
+  summarise(z = sum(catch) / 1e3,   # tonnes
+            .groups = "drop") |> 
+  collect()
+
+## area closures ---------------------------------------------------------------
+closure <- 
+  tribble(~lat, ~lon,
+          655400, 274200,
+          660600, 270000,
+          654800, 270000,
+          653000, 274200,
+          655400, 274200) |> 
+  mutate(lon = -geo::geoconvert.1(lon),
+         lat =  geo::geoconvert.1(lat)) |> 
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326) |> 
+  group_by() |> 
+  summarise(do_union = FALSE) |> 
+  st_cast("LINESTRING")
+closure2 <-
+  tribble(~lat, ~lon,
+          660000, 270000,
+          654300, 274200,
+          653500, 274200,
+          654300, 270000,
+          660000, 270000) |> 
+  mutate(lon = -geo::geoconvert.1(lon),
+         lat =  geo::geoconvert.1(lat)) |> 
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326) |> 
+  group_by() |> 
+  summarise(do_union = FALSE) |> 
+  st_cast("LINESTRING")
+## colour palettes -------------------------------------------------------------
+hyp <- 
+  tidyterra:::extract_pal(tidyterra::hypsometric_tints_db, 
+                          palette = "etopo1_hypso") |> 
+  pull(hex)
+inf <- inferno(12, alpha = 1, begin = 0, end = 1, direction = -1)
+
+# functions --------------------------------------------------------------------
+raster_helper <- function(g) {
+  g |> 
+    mutate(z = ifelse(z > quantile(z, 0.99), quantile(z, 0.99), z)) |> 
+    raster::rasterFromXYZ(crs = "EPSG:3857")
+}
+# Analysis ---------------------------------------------------------------------
+# Catch by species -------------------------------------------------------------
+r   <- catch   |> raster_helper()
+r22 <- catch22 |> raster_helper()
+r61 <- catch61 |> raster_helper()
+rr61 <- r61 / r
+# leaflet catch ----------------------------------------------------------------
+p    <- colorNumeric(hyp, values(r),    na.color = "transparent")
+p22  <- colorNumeric(hyp, values(r22),  na.color = "transparent")
+p61  <- colorNumeric(hyp, values(r61),  na.color = "transparent")
+pr61 <- colorNumeric(hyp, values(rr61), na.color = "transparent") 
+
+l2 <- 
+  leaflet() |> 
+  addTiles(urlTemplate = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+           group = "Image",
+           attribution = 'Data source: <a href="https://www.hafogvatn.is">Marine Rearch Institute</a>') %>%
+  addRasterImage(r22,
+                 colors = p22, 
+                 opacity = 1,
+                 project = FALSE, 
+                 maxBytes = Inf,
+                 group = "Grálúða") |> 
+  addRasterImage(r61,
+                 colors = p61, 
+                 opacity = 1,
+                 project = FALSE, 
+                 maxBytes = Inf,
+                 group = "Djúpkarfi") |>
+  addRasterImage(r,
+                 colors = p, 
+                 opacity = 1,
+                 project = FALSE, 
+                 maxBytes = Inf,
+                 group = "Allar tegundir") |>
+  addPolylines(data = closure, fillOpacity = 1, weight = 3, color = "pink") |> 
+  addPolylines(data = closure2, fillOpacity = 1, weight = 3, color = "cyan") |> 
+  # addLegend("bottomright", 
+  #           pal = pal,
+  #           values = values(r),
+  #           title = "X",
+  #           opacity = 1) |> 
+  addScaleBar() |> 
+  addLayersControl(baseGroups = c("Grálúða", "Djúpkarfi", "Allar tegundir"),
+                   options = layersControlOptions(collapsed = FALSE))
+l2
+
+# Redfish as a function of total catch:
+
+l3 <- 
+  leaflet() |> 
+  addTiles(urlTemplate = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+           group = "Image",
+           attribution = 'Data source: <a href="https://www.hafogvatn.is">Marine Rearch Institute</a>') %>%
+  addRasterImage(rr61,
+                 colors = pr61, 
+                 opacity = 1,
+                 project = FALSE, 
+                 maxBytes = Inf,
+                 group = "Proportion") |> 
+  addPolylines(data = closure, fillOpacity = 1, weight = 3, color = "pink") |> 
+  addPolylines(data = closure2, fillOpacity = 1, weight = 3, color = "cyan") |> 
+  addLegend("bottomright", 
+            pal = pr61,
+            values = values(rr61),
+            title = "proportion",
+            opacity = 1)
+```
+
+```{r, eval = FALSE}
+l2 %>%
+  saveWidget(file="/net/www/export/home/hafri/einarhj/public_html/tmp1.html",
+             selfcontained = TRUE)
+system("chmod -R a+rx /net/www/export/home/hafri/einarhj/public_html/tmp1.html")
+l3 |> 
+  saveWidget(file="/net/www/export/home/hafri/einarhj/public_html/tmp2.html",
+             selfcontained = TRUE)
+system("chmod -R a+rx /net/www/export/home/hafri/einarhj/public_html/tmp2.html")
+```
+

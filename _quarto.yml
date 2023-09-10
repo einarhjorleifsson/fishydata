@@ -7,7 +7,7 @@ website:
     left:
       - text: Documents
         menu:
-          - seed1.qmd
+          - catch.qmd
           - auxillary-data.qmd
 format:
   html:
