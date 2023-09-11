@@ -9,6 +9,9 @@ website:
         menu:
           - catch.qmd
           - auxillary-data.qmd
+    right: 
+      - icon: github
+        href: https://github.com/einarhjorleifsson/fishydata
 format:
   html:
     theme: cosmo
