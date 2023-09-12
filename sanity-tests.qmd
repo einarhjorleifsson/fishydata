@@ -1,0 +1,204 @@
+---
+title: "Sanity tests"
+echo: false
+message: false
+warning: false
+---
+
+```{r}
+library(arrow)
+library(tidyverse)
+library(omar)
+con <- connect_mar()
+# data path:
+pth <- "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
+```
+
+## Vessels
+
+## Landings
+
+## Logbooks
+
+### Total catch
+
+The match of catch reported in logbooks and reported in landings
+
+#### Annual
+
+```{r}
+# data
+ln_agf_by_year <- 
+  omar::ln_agf(con) |> 
+  mutate(year = year(date)) |> 
+  filter(year %in% 2009:2022,
+         !between(vid, 3700 , 4999)) |> 
+  group_by(year) |> 
+  summarise(catch = sum(wt) / 1e6) |> 
+  collect() |> 
+  arrange(year)
+lb <- read_rds("data/logbooks/station.rds")
+ca <- read_rds("data/logbooks/catch.rds")
+lb3 <- read_rds("data/logbooks/station-for-ais.rds")
+ca3 <- read_rds("data/logbooks/catch-for-ais.rds")
+
+ais_q <- open_dataset(paste0(pth, "ais"))
+ca_ais_q <- open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet"))
+
+# summarise
+lb_by_year <- 
+  lb |> 
+  mutate(year = year(date)) |> 
+  filter(year %in% 2009:2022) |> 
+  select(.sid, year) |> 
+  left_join(ca |> 
+              group_by(.sid) |> 
+              summarise(catch = sum(catch, na.rm = TRUE),
+                        .groups = "drop")) |> 
+  group_by(year) |> 
+  summarise(catch = sum(catch, na.rm = TRUE) / 1e6,
+            .groups = "drop")
+lb3_by_year <- 
+  lb3 |> 
+  mutate(year = year(date)) |> 
+  filter(year %in% 2009:2022) |> 
+  select(.sid, year) |> 
+  left_join(ca3 |> 
+              group_by(.sid) |> 
+              summarise(catch = sum(catch, na.rm = TRUE),
+                        .groups = "drop")) |> 
+  group_by(year) |> 
+  summarise(catch = sum(catch, na.rm = TRUE) / 1e6,
+            .groups = "drop")
+# ais-catch
+sc_arrow <-
+  tribble(~gid,  ~s1,  ~s2,
+          -199, 1.000, 3.000,
+          1,    0.375, 2.750,
+          2,    0.125, 2.500,
+          3,    0.025, 2.000,
+          5,    0.250, 3.250,
+          6,    2.625, 5.500,
+          7,    2.625, 6.000,
+          9,    2.375, 4.000,
+          12,    0.050, 2.250,
+          14,    1.750, 3.250,
+          15,    0.500, 5.500,
+          38,    0.250, 4.750,
+          40,    0.250, 6.000) |> 
+  mutate(gid = as.integer(gid)) |> 
+  arrow::as_arrow_table()
+con_ais <- 
+  open_dataset(paste0(pth, "ais"))
+# a simple spread
+ais_sid_ping_count <- 
+  con_ais |> 
+  filter(!is.na(.sid)) |> 
+  count(.sid) |> 
+  compute()
+ais_catch1 <-
+  con_ais |> 
+  filter(!is.na(.sid)) |> 
+  select(.sid, time) |> 
+  left_join(ais_sid_ping_count) |> 
+  inner_join(ca_ais_q |> 
+               group_by(.sid) |> 
+               summarise(catch = sum(catch, na.rm = TRUE),
+                         .groups = "drop")) |> 
+  mutate(catch = catch / n) |> 
+  mutate(year = year(time)) |> 
+  group_by(year) |> 
+  summarise(catch = sum(catch),
+            .groups = "drop") |> 
+  collect()
+```
+
+```{r}
+tmp <- 
+  bind_rows(ln_agf_by_year |> mutate(source = "ln_agf"),
+          lb_by_year     |> mutate(source = "lb"))
+tmp |> 
+  ggplot(aes(year, catch, colour = source)) +
+  geom_line() +
+  labs(caption = "Landings vs logbook catch") +
+  expand_limits(y = 0)
+tmp |> 
+  spread(source, catch) |> 
+  mutate(diff = abs(lb - ln_agf),
+         p = 1 - diff / ln_agf) |> 
+  ggplot(aes(year, p)) +
+  geom_line() +
+  geom_hline(yintercept = 1) +
+  labs(caption = "Logbooks as a proportion of landings")
+
+tmp <- 
+  bind_rows(lb_by_year      |> mutate(source = "lb"),
+            lb3_by_year     |> mutate(source = "lb_for_ais"))
+tmp |> 
+  ggplot(aes(year, catch, colour = source)) +
+  geom_line() +
+  labs(caption = "Logbook catch - 'raw' vs. processed for aid")
+tmp |> 
+  spread(source, catch) |> 
+  mutate(diff = abs(lb_for_ais - lb),
+         p = 1 - diff / lb) |> 
+  ggplot(aes(year, p)) +
+  geom_line() +
+  geom_hline(yintercept = 1) +
+  labs(caption = "Logbooks processed for ais vs logbooks raw")
+
+
+tmp <- 
+  bind_rows(lb_by_year      |> mutate(source = "lb"),
+            ais_catch1 |> 
+              mutate(catch = catch / 1e6) |>
+              mutate(source = "ais"))
+tmp |> 
+  filter(year %in% 2009:2022) |> 
+  ggplot(aes(year, catch, colour = source)) +
+  geom_line() +
+  labs(caption = "Logbook catch - 'raw' vs. processed for aid")
+tmp |> 
+  spread(source, catch) |> 
+  mutate(diff = abs(ais - lb),
+         p = 1 - diff / lb) |> 
+  ggplot(aes(year, p)) +
+  geom_line() +
+  geom_hline(yintercept = 1) +
+  labs(caption = "Logbooks catch vs ais spread catch")
+```
+
+
+
+
+
+```{r, eval = FALSE}
+CT |> summarise(catch = sum(catch, na.rm = TRUE) / 1e6) |> pull(catch)
+con_ais |> 
+  select(.sid) |> 
+  filter(!is.na(.sid)) |> 
+  distinct() |> 
+  inner_join(CT) |> 
+  summarise(catch = sum(catch, na.rm = TRUE) / 1e6) |> 
+  pull(catch)
+
+
+
+
+
+q <- open_dataset(paste0(pth, "ais"))
+q |> 
+  filter(!is.na(.sid)) |> 
+  select(.sid) |> 
+  distinct() |> 
+  pull(.sid) ->
+  .SID
+
+lb <- read_rds("data/logbooks/station-for-ais.rds")
+lb |> 
+  mutate(in.ais = ifelse(.sid %in% .SID, TRUE, FALSE)) |> 
+  count(in.ais) |> 
+  mutate(p = n / sum(n))
+
+```
+

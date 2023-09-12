@@ -9,6 +9,7 @@ website:
         menu:
           - catch.qmd
           - auxillary-data.qmd
+          - sanity-tests.qmd
     right: 
       - icon: github
         href: https://github.com/einarhjorleifsson/fishydata
