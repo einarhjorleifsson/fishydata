@@ -290,4 +290,3 @@ catch |>
             aes(x, y),
             colour = "cyan")
 ```
-
