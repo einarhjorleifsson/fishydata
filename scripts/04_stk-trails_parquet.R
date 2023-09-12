@@ -3,7 +3,7 @@
 
 # ------------------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2023_09-09.log &
+#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2023_09-22.log &
 #
 
 
@@ -300,6 +300,14 @@ for(v in 1:length(VID)) {
                  has.gid = !is.na(gid)) |> 
           count(has.visir, has.gid)
       }
+      
+      # assign the gear to the whole trip
+      res2 <- 
+        res2 |> 
+        mutate(.gid_trip = gid) |> 
+        group_by(.cid) |> 
+        fill(.gid_trip, .direction = "downup") |> 
+        ungroup()
       
       # include crs 3857
       xy <- 

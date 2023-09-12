@@ -7,9 +7,11 @@ website:
     left:
       - text: Documents
         menu:
+          - process.qmd
           - catch.qmd
           - auxillary-data.qmd
           - sanity-tests.qmd
+          - geoserver_demo.qmd
     right: 
       - icon: github
         href: https://github.com/einarhjorleifsson/fishydata
@@ -18,6 +20,9 @@ format:
     theme: cosmo
     css: styles.css
     toc: true
+    echo: true
+    message: false
+    warning: false
 
 
 

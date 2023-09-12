@@ -1,0 +1,328 @@
+---
+title: "The process"
+format:
+  html:
+    echo: false
+---
+
+```{r, echo = FALSE}
+knitr::include_graphics("data-aux/diagrams.svg")
+```
+
+## Data and providers
+
+### The AIS/VMS - Icelandic coastguard
+
+* Live feed
+* The current system in places since 2009
+* Includes all fishing vessels, small and large
+  * ERGO: Full census
+* Monitoring by the Icelandic coast guard
+  * Main purpose is safety at sea
+  * All registered vessels required to report by AIS
+    Irrespective of vessel (utility) class
+  * If vessel AIS signal not recieved:
+    * Immediate response, first by radio/telphone calling to vessel
+    * Signal sent to vessels in vicinity
+    * Search response witin ~20-30 minutes, including airborne helicopters
+      * Turning off AIS has consequences
+  * Exceptions: Vessel may get an exemption from sending AIS (because open, broadcasted) if concern of vessel safety issue (e.g. whaling vessels!)
+* Ping frequency ~ 1 minute -> currently MFRI gets ~10 minutes
+* Data recieved not marked by source (AIS or VMS)
+  * Working on getting higher frequency and signal source
+
+```{r}
+library(omar)
+library(tidyverse)
+library(arrow)
+pth <- "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
+ais <- 
+  open_dataset(paste0(pth, "ais")) |> 
+  filter(vms == "yes") |> 
+  mutate(year = year(time)) |> 
+  count(year) |> 
+  collect(n = Inf)
+con <- connect_mar()
+stk_trail(con) |> 
+  mutate(year = year(time)) |> 
+  count(year) |> 
+  collect(n = Inf) |> 
+  filter(between(year, 2009, 2023)) |> 
+  ggplot(aes(year, n / 1e6)) +
+  theme_bw(base_size = 16) +
+  geom_point() +
+  geom_point(data = ais, colour = "red") +
+  labs(x = NULL, y = "Pings [millions]",
+       caption = "Black: all data, Red: fishing vessels") +
+  scale_x_continuous(breaks = seq(2010, 2022, by = 2)) +
+  scale_y_continuous(breaks = seq(0, 30, by = 5)) +
+  expand_limits(y = 0)
+```
+
+### Logbook/landings data - Directorate of Fisheries
+
+* Landings data - daily feed
+  * By gear, species and processing type, unique id
+  * Landing time resolution: Date
+    * Date resolution creates coding problems when merging data if multiple trips within a day
+      * Can have two landings records per day, in different harbours
+
+```{r}
+mar::landadur_afli(con) |> 
+  mutate(year = year(l_dags)) |> 
+  filter(year >= 2009) |> 
+  group_by(year) |> 
+  summarise(n = n_distinct(komunr)) |> 
+  filter(between(year, 2009, 2023)) |> 
+  ggplot(aes(year, n / 1e3)) +
+  theme_bw(base_size = 16) +
+  geom_point() +
+  labs(x = NULL, y = "Landings [thousands]") +
+  scale_x_continuous(breaks = seq(2010, 2022, by = 2)) +
+  scale_y_continuous(breaks = seq(0, 100, by = 10))
+```
+
+* Logbook data - daily feed
+  * By **haul/setting** for larger vessels --> Jiggers 1 per fishing day
+    * Ergo: Time resolution: Date or datetime
+    *  Different time resolution creates coding problems when merging
+  * Effort: Hours towed, number of hooks, number of nets, ...
+    * Quality control: Minimal
+  * Larger vessels: Time and position at start and end of set
+    * Quality control: Minimal
+  * Species composition in each set
+    * Quality control: Minimal
+    
+```{r}
+LB <- open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
+LB |> 
+  mutate(year = year(date)) |> 
+  group_by(year) |> 
+  summarise(n = n()) |> 
+  collect() |> 
+  filter(between(year, 2009, 2023)) |> 
+  ggplot(aes(year, n / 1e3)) +
+  theme_bw(base_size = 16) +
+  geom_point() +
+  labs(x = NULL, y = "Logbook records [thousands]") +
+  scale_x_continuous(breaks = seq(2010, 2022, by = 2)) +
+  scale_y_continuous(breaks = seq(0, 200, by = 5))
+```
+
+### Vessel registry - Transport authority
+
+* Daily feed
+  * Vessel ID is fixed to hull irrespective of size
+    * Equivalent to IMO
+    * Change history available since 1960's
+
+### Call signs / MMSI - Electronic Communication Office
+
+* Not yet daily feed, info online
+* MMSI does not migrate between vessels
+  * MMSI hence equivalent to IMO
+
+## Current code flow
+
+[https://github.com/einarhjorleifsson/ices_vms_data_call](https://github.com/einarhjorleifsson/ices_vms_data_call)
+
+* Try to follow the vmstools approach with a native twist
+* [ais](https://github.com/einarhjorleifsson/AIS_TRAIL)
+  * Some minimal filtering, see [lgs](https://github.com/einarhjorleifsson/AIS_TRAIL/blob/main/lgs/01_stk-trails_2023-05-12.log)
+* [Logbooks](https://github.com/einarhjorleifsson/ices_vms_data_call/blob/main/logs/logbooks_2023-05-29.log)
+  1. Get and merge logbook and landings data
+  2. Gear corrections
+  3. Lump some gears
+  4. Cap effort and end of action 
+  5. Mesh size "corrections"
+  6. Set gear width proxy
+  7. gear class of corrected gid
+  8. Match vid with mobileid in stk
+  9. Add vessel information
+  10. Add metier
+  11. add ICES rectangles
+  12. Anonymize vid
+  13. Determine what records to filter downstream
+  14. Save raw (no records filtered) file
+  15. FILTER OUT RECORDS
+  16. Collapse all gear but 6, 7, 9, 14 (mobile) to daily records
+* [annexes](https://github.com/einarhjorleifsson/ices_vms_data_call/blob/main/R/annexes.R)
+  * Mobile: Match ais event to logbook intervals, apply speed filter
+  * Static Match ais event to logbooks date invervals, apply speed filter
+
+## New code flow
+
+* Define trips first!
+
+## Data usage
+
+
+```{r}
+library(tidyverse)
+# library(arrow)
+# ais <- arrow::open_dataset("data/ais")
+# ais |> 
+#   filter(vms == "yes") |> 
+#   mutate(year = year(time)) |> 
+#   count(year) |> 
+#   collect() ->
+#   pings
+library(sf)
+library(mar)
+library(mapdeck)
+library(leaflet)
+
+con <- connect_mar()
+key <- "pk.eyJ1IjoiZmlzaHZpY2UiLCJhIjoiY2p0MXQ5dThpMDZqeDQ5bHM0MGx4dHI5cyJ9.Fed_z7mv_TgTWDRjiavU3A"
+set_token(key)
+```
+
+### Fishing
+
+* [one product](https://veidar.hafogvatn.is)
+* recent trials via geoserver
+
+```{r}
+leaflet() |>
+  addTiles(urlTemplate = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+           #group = "Hnöttur",
+           attribution = 'Data source: <a href="https://www.hafogvatn.is">Marine & Freshwater Research Institute</a>') |>
+  setView(-25, 66, zoom = 6) |>
+  addWMSTiles(baseUrl = "https://gis.hafogvatn.is/geoserver/test/wms",
+              layers = "test:effort06",
+              group = "Fish trawl",
+              options = WMSTileOptions(format = "image/jpeg",
+                                       transparent  = TRUE,
+                                       crs = "EPSG:3057",
+                                       opacity = 0.7)) |>
+  addLayersControl(baseGroups = c("base"),
+                   overlayGroups = c("Fish trawl"),
+                   options = layersControlOptions(collapsed = FALSE))
+```
+
+* [Current fishing activity](http://hafdruna.hafro.is:3838/users/einarhj/asjo) - apologies, within a firewall
+
+### Seaweed harvesting
+
+```{r}
+vms.kelp <- 
+  omar::vessels_vessels(con) |> 
+  filter(vclass == 66) |> 
+  select(vid, vessel, vclass) %>%
+  left_join(stk_mobile(con, correct = TRUE, vidmatch = TRUE) %>%
+              select(mid, vid)) %>%
+  inner_join(stk_trail(con)) |> 
+  collect(n = Inf) |> 
+  mutate(speed = ifelse(speed > 4, 4, speed)) %>%
+  filter(between(lon, -23.5, -21.5),
+         between(lat, 64.8, 65.75))
+mapdeck(data = vms.kelp,
+        zoom = 8,
+        location = c(-23, 65.3)) %>%
+  add_scatterplot(lon = "lon",
+                  lat = "lat",
+                  radius = 100,
+                  fill_colour = "speed",
+                  layer_id = "track",
+                  palette = "inferno",
+                  update_view = FALSE)
+```
+
+### Aquaculture
+
+```{r}
+vid.kvi <- 
+  mar:::vessel_registry(con) %>% 
+  select(vessel = nafnskips,
+         vid = skipnr,
+         code = notkunarteg) %>% 
+  left_join(mar:::vessel_class(con)) %>% 
+  collect(n = Inf) %>% 
+  filter(flokkur == "SJÓKVÍA VINNUSKIP")
+vids <-
+  vid.kvi %>% 
+  pull(vid) %>% 
+  as.character()
+vms.kvi <- 
+  tbl_mar(con, "stk.stk_vms_v") %>% 
+  dplyr::mutate(lon = poslon * 
+                  45/atan(1), lat = poslat * 45/atan(1), heading = heading * 
+                  45/atan(1), speed = speed * 3600/1852) %>% 
+  select(vid = skip_nr, time = posdate, lon, lat, speed) %>% 
+  filter(time >= to_date("2015-01-01", "YYYY:MM:DD"),
+         vid %in% vids) %>% 
+  collect(n = Inf) %>% 
+  mutate(speed = ifelse(speed > 15, 15, speed)) %>% 
+  # Just westfjords
+  filter(between(lat, 65.52, 66.25),
+         between(lon, -28, -21.95)) %>% 
+  # only take 1/4 of data to limit file size
+  sample_frac(0.25) %>% 
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326)
+vms.kvi %>% 
+  mapdeck(zoom = 11,
+          location = c(-23.5, 65.905)) %>% 
+  add_sf(fill_colour = "speed",
+         legend = FALSE,
+         layer_id = "points",
+         radius = 5,
+         stroke_opacity = 1,
+         palette = "inferno",
+         update_view = FALSE)
+```
+
+### Dredging / mining
+
+```{r}
+Class <- 
+  mar:::vessel_class(con) %>% 
+  filter(flokkur %in% c("DÝPK. OG SANDSKIP", "DÝPKUNARSKIP")) %>% 
+  collect() %>% 
+  pull(code)
+
+vids <- 
+  mar:::vessel_registry(con) %>% 
+  select(vid = skipnr, vessel = nafnskips, class = notkunarteg) %>% 
+  collect(n = Inf) %>% 
+  mutate(class = str_trim(class),
+         class = as.numeric(class)) %>% 
+  filter(class %in% Class)
+
+vids <- 
+  vids %>% 
+  pull(vid) %>% 
+  as.character()
+
+vms.dredge <- 
+  tbl_mar(con, "stk.stk_vms_v") %>% 
+  dplyr::mutate(lon = poslon * 
+                  45/atan(1), lat = poslat * 45/atan(1), heading = heading * 
+                  45/atan(1), speed = speed * 3600/1852) %>% 
+  select(vid = skip_nr, time = posdate, lon, lat, speed) %>% 
+  filter(time >= to_date("2015-01-01", "YYYY:MM:DD"),
+         vid %in% vids) %>% 
+  collect(n = Inf) %>% 
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326) %>% 
+  sample_frac(size = 0.20) %>% 
+  mutate(speed = ifelse(speed > 12, 12, speed))
+
+mapdeck(zoom = 11,
+        location = c(-21.84, 64.174)) %>% 
+  add_sf(data = vms.dredge,
+         fill_colour = "speed",
+         legend = FALSE,
+         layer_id = "points",
+         radius = 5,
+         stroke_opacity = 1,
+         palette = "inferno",
+         update_view = FALSE)
+```
+
+## It's my fish!!
+
+```{r}
+knitr::include_graphics("~/stasi/lalina.png")
+```
+
