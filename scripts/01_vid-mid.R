@@ -8,5 +8,5 @@ con <- connect_mar()
 tbl_mar(con, "ops$einarhj.mobile_vid") |> 
   filter(!is.na(vid))  |> 
   collect(n = Inf) |> 
-  write_parquet("data-aux/mobile_vid.rds")
+  write_rds("data-aux/mobile_vid.rds")
   

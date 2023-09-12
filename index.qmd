@@ -6,11 +6,13 @@ message: false
 
 code on [github](https://github.com/einarhjorleifsson/fishydata)
 
+like to comment: don't send e-mail, file an [issue](https://github.com/einarhjorleifsson/fishydata/issues)
+
 * TODO:
-    * Add landings data link
-    * **Sanity checks**
-    * ...
-    
+* Add landings data link
+* **Sanity checks**
+* ...
+
 ## The data 
 
 ...
@@ -19,10 +21,10 @@ code on [github](https://github.com/einarhjorleifsson/fishydata)
 
 * [scripts/00_auxillary-data.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/00_auxillary-data.R)
 * [scripts/01_vid-mid.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/scripts/01_vid-mid.R)
-* [scripts/02-1_logbooks-merge.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/scripts/02-1_logbooks-merge.R)
-* [scripts/02-2-logbooks-processing.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/scripts/02-2-logbooks-processing.R)
-* [scripts/02-3_logbooks-for-ais.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/scripts/02-3_logbooks-for-ais.R)
-* [scripts/04-stk-tails_parquet.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/scripts/04-stk-tails_parquet.R)
+* [scripts/02-1_logbooks-merge.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-1_logbooks-merge.R)
+* [scripts/02-2-logbooks-processing.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-2-logbooks-processing.R)
+* [scripts/02-3_logbooks-for-ais.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-3_logbooks-for-ais.R)
+* [scripts/04-stk-tails_parquet.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/04-stk-tails_parquet.R)
 
 Should really set this up as a bash-script
 
@@ -42,39 +44,6 @@ library(omar)
 con <- connect_mar()
 # data path:
 pth <- "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
-# functions --------------------------------------------------------------------
-grid_species <- function(SID = 61, d, CT, dx = 300, GID = 6) {
-  d |> 
-    filter(speed >= s1 & speed <= s2) |> 
-    filter(gid == GID) |> 
-    inner_join(CT |> 
-                 filter(sid == SID),
-               by = "visir") |> 
-    group_by(visir) |> 
-    # not sure if this works properly
-    mutate(n = length(visir),
-           catch = catch / n) |> 
-    ungroup() |> 
-    filter(lon >= -33, lon <= -10,
-           lat >=  62, lat <= 68.5) |> 
-    mutate(x = x %/% dx * dx + dx/2,
-           y = y %/% dx * dx + dx/2) |> 
-    group_by(x, y) |> 
-    summarise(z = sum(catch) / 1e3,   # tonnes
-              .groups = "drop") |> 
-    collect() ->
-    g
-  
-  return(g)
-  
-}
-
-raster_helper <- function(g) {
-  g |> 
-    mutate(z = ifelse(z > quantile(z, 0.99), quantile(z, 0.99), z)) |> 
-    raster::rasterFromXYZ(crs = "EPSG:3857")
-}
-
 ## colour palettes -------------------------------------------------------------
 hyp <- 
   tidyterra:::extract_pal(tidyterra::hypsometric_tints_db, 
@@ -109,11 +78,13 @@ sc_arrow <-
   mutate(gid = as.integer(gid)) |> 
   arrow::as_arrow_table()
 # parquet files:
+LB <- open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
+CT <- open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet"))
 con_ais <- 
   open_dataset(paste0(pth, "ais")) |> 
   left_join(sc_arrow)
-LB <- open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
-CT <- open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet"))
+# How many records:
+con_ais |> count() |> pull()
 ```
 
 ### Relative effort
@@ -167,20 +138,26 @@ Done because of contemporaneous interest in bottom trawl closure off west Icelan
 ```{r}
 dx <- 300 # grid width
 SID <- 61
+# need to compute the pings per station id
+con_ais_sid_count <- 
+  con_ais |> 
+  filter(speed >= s1, speed <= s2,
+         gid == 6,
+         lon >= -33, lon <= -10,
+         lat >=  62, lat <= 68.5) |> 
+  count(.sid) |> 
+  compute()
+
 catch61 <- 
   con_ais |> 
   filter(speed >= s1, speed <= s2,
          gid == 6,
          lon >= -33, lon <= -10,
          lat >=  62, lat <= 68.5) |> 
+  left_join(con_ais_sid_count) |> 
   inner_join(CT |> 
                filter(sid == SID)) |> 
-  group_by(.sid) |> 
-  # not sure if this works properly
-  mutate(n = length(.sid),
-         catch = catch / n) |> 
-  ungroup() |> 
-  
+  mutate(catch = catch / n) |> 
   mutate(x = x %/% dx * dx + dx/2,
          y = y %/% dx * dx + dx/2) |> 
   group_by(x, y) |> 
@@ -194,15 +171,10 @@ catch22 <-
          gid == 6,
          lon >= -33, lon <= -10,
          lat >=  62, lat <= 68.5) |> 
+  left_join(con_ais_sid_count) |> 
   inner_join(CT |> 
                filter(sid == SID)) |> 
-  group_by(.sid) |> 
-  # not sure if this works properly
-  mutate(n = length(.sid),
-         catch = catch / n) |> 
-  ungroup() |> 
-  filter(lon >= -33, lon <= -10,
-         lat >=  62, lat <= 68.5) |> 
+  mutate(catch = catch / n) |> 
   mutate(x = x %/% dx * dx + dx/2,
          y = y %/% dx * dx + dx/2) |> 
   group_by(x, y) |> 
@@ -215,15 +187,12 @@ catch <-
          gid == 6,
          lon >= -33, lon <= -10,
          lat >=  62, lat <= 68.5) |> 
+  left_join(con_ais_sid_count) |> 
   inner_join(CT |> 
                group_by(.sid) |> 
                summarise(catch = sum(catch, na.rm = TRUE),
                          .groups = "drop")) |> 
-  group_by(.sid) |> 
-  # not sure if this works properly
-  mutate(n = length(.sid),
-         catch = catch / n) |> 
-  ungroup() |> 
+  mutate(catch = catch / n) |> 
   mutate(x = x %/% dx * dx + dx/2,
          y = y %/% dx * dx + dx/2) |> 
   group_by(x, y) |> 
@@ -232,7 +201,7 @@ catch <-
   collect()
 p <- 
   bind_rows(catch22 |> mutate(sid = "G. halbut"),
-          catch61 |> mutate(sid = "D. redfish")) |> 
+            catch61 |> mutate(sid = "D. redfish")) |> 
   group_by(sid) |> 
   mutate(z = ifelse(z > quantile(z, 0.99),
                     quantile(z, 0.99),
