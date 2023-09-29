@@ -4,6 +4,10 @@ warning: false
 message: false
 ---
 
+i am here: [https://heima.hafro.is/~einarhj/fishydata](https://heima.hafro.is/~einarhj/fishydata/)
+
+older [fishydata](https://heima.hafro.is/~einarhj/fishydata_older)
+
 code on [github](https://github.com/einarhjorleifsson/fishydata)
 
 like to comment: don't send e-mail, file an [issue](https://github.com/einarhjorleifsson/fishydata/issues)
@@ -13,6 +17,8 @@ like to comment: don't send e-mail, file an [issue](https://github.com/einarhjor
 * **Sanity checks**
 * ...
 
+check: https://dieghernan.github.io/202210_tidyterra-hillshade
+
 ## The data 
 
 ...
@@ -20,9 +26,9 @@ like to comment: don't send e-mail, file an [issue](https://github.com/einarhjor
 ## Data compilation sequence
 
 * [scripts/00_auxillary-data.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/00_auxillary-data.R)
-* [scripts/01_vid-mid.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/scripts/01_vid-mid.R)
+* [scripts/01_vid-mid.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/01_vid-mid.R)
 * [scripts/02-1_logbooks-merge.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-1_logbooks-merge.R)
-* [scripts/02-2-logbooks-processing.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-2-logbooks-processing.R)
+* [scripts/02-2_logbooks-processing.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-2_logbooks-processing.R)
 * [scripts/02-3_logbooks-for-ais.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-3_logbooks-for-ais.R)
 * [scripts/04-stk-tails_parquet.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/04-stk-tails_parquet.R)
 
@@ -110,7 +116,8 @@ ais <-
   summarise(z = sum(one),
             .groups = "drop") |> 
   collect()
-ais |> 
+m <- 
+  ais |> 
   mutate(z = ifelse(z > quantile(z, 0.99),
                     quantile(z, 0.99),
                     z),
@@ -127,6 +134,7 @@ ais |>
         panel.background = element_rect(fill = "grey", colour = "grey"),
         plot.margin = unit(c(0,0,0,0), "cm")) +
   facet_wrap(~ gid, ncol = 1)
+m
 ```
 
 ### Species catch
@@ -290,3 +298,7 @@ catch |>
             aes(x, y),
             colour = "cyan")
 ```
+
+CHECK:
+
+https://stackoverflow.com/questions/11774262/how-to-extract-the-fill-colours-from-a-ggplot-object

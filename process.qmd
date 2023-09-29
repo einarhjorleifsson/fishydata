@@ -9,6 +9,8 @@ format:
 knitr::include_graphics("data-aux/diagrams.svg")
 ```
 
+**this space is dynamic**: meaning that you will get different versions depending on your access time
+
 ## Data and providers
 
 ### The AIS/VMS - Icelandic coastguard
@@ -29,7 +31,7 @@ knitr::include_graphics("data-aux/diagrams.svg")
   * Exceptions: Vessel may get an exemption from sending AIS (because open, broadcasted) if concern of vessel safety issue (e.g. whaling vessels!)
 * Ping frequency ~ 1 minute -> currently MFRI gets ~10 minutes
 * Data recieved not marked by source (AIS or VMS)
-  * Working on getting higher frequency and signal source
+  * Work in progress: getting higher frequency and signal source
 
 ```{r}
 library(omar)
@@ -83,7 +85,7 @@ mar::landadur_afli(con) |>
 ```
 
 * Logbook data - daily feed
-  * By **haul/setting** for larger vessels --> Jiggers 1 per fishing day
+  * By **haul/setting timestamp** for larger vessels --> Jiggers 1 per **(fishing) day**
     * Ergo: Time resolution: Date or datetime
     *  Different time resolution creates coding problems when merging
   * Effort: Hours towed, number of hooks, number of nets, ...
@@ -323,6 +325,6 @@ mapdeck(zoom = 11,
 ## It's my fish!!
 
 ```{r}
-knitr::include_graphics("~/stasi/lalina.png")
+knitr::include_graphics("https://heima.hafro.is/~einarhj/lalina.png")
 ```
 
