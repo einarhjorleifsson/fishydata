@@ -1,7 +1,7 @@
-# 0.  Objective --------------------------------------------------------------------
+# Objective --------------------------------------------------------------------
 # Correct and "standardize" logbook records
 #
-# 1. Preamble ---------------------------------------------------------------------
+# Preamble ---------------------------------------------------------------------
 # run this as:
 #  nohup R < scripts/02-2_logbooks-processing.R --vanilla > lgs/02-2_logbooks-processing_2023-09-09.log &
 lubridate::now()
@@ -10,10 +10,8 @@ lubridate::now()
 #         data/logbooks/catch.parguet
 # Output: data/stk/....
 # Downstream usage: R/...
-## Brief summary ---------------------------------------------------------------
-#
 
-# 3. Input ------------------------------------------------------------------------
+# Input ------------------------------------------------------------------------
 library(omar)
 library(tidyverse)
 con <- connect_mar()
@@ -162,11 +160,13 @@ lb |>
 # effort units of corrected gears ----------------------------------------------
 # pending, but not critical .....
 
-# Missing effort units ---------------------------------------------------------
+# Effort units -----------------------------------------------------------------
 lb |> 
-  filter(!is.na(effort_unit)) |> 
+  mutate(effort_unit = ifelse(!is.na(effort_unit), effort_unit, "z_missing")) |> 
+  #filter(!is.na(effort_unit)) |> 
   count(gid, effort_unit) |> 
   arrange(gid, -n) |> 
+  spread(effort_unit, n) |> 
   knitr::kable(caption = "Effort units")
 
 # Median effort if effort missing ----------------------------------------------
@@ -192,6 +192,7 @@ lb <-
   mutate(effort = ifelse(!is.na(effort), effort, median)) %>% 
   select(-median) %>% 
   # cap effort hours
+  # NOTE: This should actually be done on t1 and t2 when available
   mutate(effort = case_when(effort > 12 & gid ==  6 ~ 12,
                             effort > 24 & gid ==  7 ~ 24,
                             effort > 15 & gid == 14 ~ 15,
@@ -204,12 +205,32 @@ lb |>
 # Cap on end time of setting ---------------------------------------------------
 # Cap on the t2 so not overlapping with next setting
 #    NOTE: Effort not adjusted accordingly
+## Reporting of t1 and t2 ------------------------------------------------------
 lb |> 
-  mutate(has.t1 = !is.na(t1),
-         has.t2 = !is.na(t2)) |> 
-  count(gid, has.t1) |> 
-  spread(has.t1, n)
-lb2 <-
+  select(gid, t1, t2) |> 
+  mutate(w = case_when(!is.na(t1) & !is.na(t2) ~ "both",
+                       !is.na(t1) &  is.na(t2) ~ "t1",
+                        is.na(t1) & !is.na(t2) ~ "t2",
+                        is.na(t1) &  is.na(t2) ~ "zNone")) |> 
+  count(gid, w) |> 
+  spread(w, n, fill = 0) |> 
+  mutate(p_both = round(both / (both + t1 + zNone), 3)) |> 
+  knitr::kable(caption = "Reporting of t1 and t2 and proportion both")
+## t1-t2 overlaps --------------------------------------------------------------
+lb |> 
+  filter(!is.na(t1) & !is.na(t2)) |> 
+  select(vid, gid, t1, t2) |> 
+  arrange(vid, t1, t2) %>%
+  group_by(vid) %>%
+  mutate(overlap = if_else(t2 > lead(t1), "yes", "no", "no")) |> 
+  ungroup() |> 
+  count(gid, overlap) |> 
+  spread(overlap, n, fill = 0) |> 
+  mutate(p = round(no / (no + yes), 3)) |> 
+  knitr::kable(caption = "Where t1 and t2 reported: Number and proportion of overlap")
+
+
+lb <-
   lb |> 
   arrange(vid, t1) %>%
   group_by(vid) %>%
@@ -219,7 +240,7 @@ lb2 <-
                        t2,
                        as.POSIXct(NA)),
          t22 = if_else(overlap,
-                       ymd_hms(format(as.POSIXct(t22, origin="1970-01-01", tz="UTC"))),
+                       t22,
                        as.POSIXct(NA)),
          t2 = if_else(overlap & !is.na(t22), t22, t2, as.POSIXct(NA))) %>%
   ungroup() %>% 
