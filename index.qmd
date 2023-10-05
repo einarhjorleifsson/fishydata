@@ -299,6 +299,13 @@ catch |>
             colour = "cyan")
 ```
 
-CHECK:
 
-https://stackoverflow.com/questions/11774262/how-to-extract-the-fill-colours-from-a-ggplot-object
+## Some refences
+
+### Datacleaning
+
+* (An introduction to data cleaning with R)[https://cran.r-project.org/doc/contrib/de_Jonge+van_der_Loo-Introduction_to_data_cleaning_with_R.pdf]
+* https://appsilon.com/data-cleaning-in-r
+* https://appsilon.github.io/data.validator
+* https://data-cleaning.github.io/validate
+* https://docs.ropensci.org/targets
