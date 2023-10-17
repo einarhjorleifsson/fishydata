@@ -3,24 +3,23 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2023-09-09.log &
+#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2023-10-06.log &
 lubridate::now()
 
 # Input:  Oracle database
-# Output: data/logbooks/logbooks_2009p.parguet
-#         data/logbooks/catch_2009p.parquet
+# Output: data/logbooks/station.rds
+#         data/logbooks/catch.rds
 # Downstream usage: R/02-2_logbooks-gear-correction.R
 
 ## Brief summary ---------------------------------------------------------------
 # The main output file is just a flat file containing station information as 
 #   well as basic effort information. The latter are for some historical reasons
 #   stored in tables for different "gear types".
+# In the merge, new database takes precedents over the old database for logbook
+#  data for the same vessel on the same logbook date entry.
 # In addition, the catch by species is also dumped
 #
 # Processing data loss are related to orphan effort files
-#
-## TODO ------------------------------------------------------------------------
-# ...
 
 # NOTE: If using years further back: need to double check that visir and station_id
 #       are not the same.
@@ -381,4 +380,4 @@ LGS |> write_rds("data/logbooks/station.rds")
 CATCH |> write_rds("data/logbooks/catch.rds")
 
 # 7. Info ----------------------------------------------------------------------
-devtools::session_info()
+devtools::session_info() |> print()

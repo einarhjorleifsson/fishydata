@@ -1,16 +1,24 @@
 # Objective --------------------------------------------------------------------
-# Match landings id and gear to logbooks
+# Match landings id and landings gear to logbooks
 #
 # Input:  Logbooks: data/logbooks/station.rds
 #         Catch:    data/logbooks/catch.rds
 #         Landings: Oracle database
-# Output: data/logbooks/logbooks_2009p.parguet
-#         data/logbooks/catch_2009p.parquet
-# Downstream usage: R/02-2_logbooks-gear-correction.R
+# Output: data/logbooks/station_landings-merge.rds
 #
+# The matching is done by date not time. Landings data are hence consolidated
+#  by date, the landings id is the lowest landings id value within a date
+# There are issues with some landings data in cases we have two different gears
+#  or harbours within a single landings date.
+# TODO: Check effect on algorithm given the two gears, two harbours scenario
+#
+# Downstream usage: 02-3_logbooks-processing.R
+#
+# 
+# 
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2023-09-09.log &
+#  nohup R < scripts/02-2_logbooks-landings-coupling.R --vanilla > lgs/02-2_logbooks-landings-coupling_2023-10-06.log &
 lubridate::now()
 
 
@@ -47,6 +55,7 @@ LGS <-
 
 # 5. Add landing id and gid from landings data ---------------------------------
 ## Landings data - agf ---------------------------------------------------------
+## Here take the minimum landings id within a landings date
 LN_raw <- 
   omar::ln_agf(con) |> 
   filter(wt > 0,
@@ -81,7 +90,7 @@ checks |> count(n_gears) |> mutate(p = round(n / sum(n), 3))
 #### Same landings date, different landings id ---------------------------------
 checks |> count(n_lid) |> mutate(p = round(n / sum(n), 3))
 
-### Date and gear only ---------------------------------------------------------
+### Landing id and gear --------------------------------------------------------
 LN <-  
   LN_raw |> 
   select(vid, datel, gid_ln, .lid_min) |> 
@@ -167,7 +176,6 @@ LGS <-
 
 # 6. Save ----------------------------------------------------------------------
 LGS   |> write_rds("data/logbooks/station_landings-merge.rds")
-# CATCH |> write_rds("data/logbooks/catch.rds")
 
 # 7. Info ----------------------------------------------------------------------
-devtools::session_info()
+devtools::session_info() |> print()

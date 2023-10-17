@@ -30,6 +30,24 @@ leaflet() |>
                                        opacity = 0.5
               )
   )
+
+# This takes a while to load
+leaflet() |>
+  addTiles(group = "base") %>%
+  setView(-20, 64, zoom = 7) |>
+  addWMSTiles(baseUrl = "https://gis.hafogvatn.is/geoserver/test/wms",
+              layers = "test:SAMPLE_SPECIES_GEO_V",
+              group = "Fish trawl",
+              options = WMSTileOptions(#format = "image/jpeg",
+                                       transparent  = TRUE,
+                                       crs = "EPSG:4326",
+                                       opacity = 0.5
+              )
+  )
+
+
+
+
 # minimum
 leaflet() |>
   addTiles(group = "base") %>%

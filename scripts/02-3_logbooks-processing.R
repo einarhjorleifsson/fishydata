@@ -3,20 +3,21 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-2_logbooks-processing.R --vanilla > lgs/02-2_logbooks-processing_2023-09-09.log &
+#  nohup R < scripts/02-3_logbooks-processing.R --vanilla > lgs/02-3_logbooks-processing_2023-10-06.log &
 lubridate::now()
 
-# Input:  data/logbooks/station.parquet
-#         data/logbooks/catch.parguet
-# Output: data/stk/....
-# Downstream usage: R/...
+# Input:  data/logbooks/station_landings-merge.rds
+#         data/logbooks/catch.rds
+#         data-aux/gear_codes.rds
+# Output: data/logbooks/station-processing.rds"
+# Downstream usage: scripts/02-4_logbooks-for_ais.R
 
 # Input ------------------------------------------------------------------------
 library(omar)
 library(tidyverse)
 con <- connect_mar()
 
-lb <- read_rds("data/logbooks/station.rds")
+lb <- read_rds("data/logbooks/station_landings-merge.rds")
 ca <- read_rds("data/logbooks/catch.rds")
 gears <- read_rds("data-aux/gear_codes.rds")
 
@@ -24,7 +25,7 @@ gears <- read_rds("data-aux/gear_codes.rds")
 # Gear correction -------------------------------------------------------------
 # This is some legacy code that may need a review
 # Basic procedure
-# Question if this should not be moved to 02-1_logbooks-merge.R
+
 lb <- 
   lb |> 
   # to align with the legacy code
@@ -263,4 +264,4 @@ paste("Number of records:", nrow(lb))
 # Save -------------------------------------------------------------------------
 lb |> write_rds("data/logbooks/station-processing.rds")
 # X. Info ----------------------------------------------------------------------
-devtools::session_info()
+devtools::session_info() |> print()

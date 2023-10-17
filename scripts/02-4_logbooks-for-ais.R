@@ -3,12 +3,15 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-3_logbooks-for-ais.R --vanilla > lgs/02-3_logbooks-for-ais_2023-09-10.log &
+#  nohup R < scripts/02-4_logbooks-for-ais.R --vanilla > lgs/02-4_logbooks-for-ais_2023-10-06.log &
 lubridate::now()
 
-# Input:  xxx
-#         xxx
-# Output: xxx
+# Input:  data/logbooks/station-processing.rds
+#         data/logbooks/catch.rds
+# Output: data/logbooks/station-for-ais.rds
+#         data/logbooks/catch-for-ais.rds
+#         data/logbooks/station-for-ais.parquet
+#         data/logbooks/catch-for-ais.parquet
 # Downstream usage: R/...
 ## Brief summary ---------------------------------------------------------------
 #
@@ -22,12 +25,22 @@ ca <- read_rds("data/logbooks/catch.rds")
 # Filter out records -----------------------------------------------------------
 
 # Collapse records with missing t1 or t2 to daily records ----------------------
+# first an overview by gear
+lb |> 
+  mutate(flag = ifelse(!is.na(t1) & !is.na(t2), "has_t1_t2", "rest")) |> 
+  count(gid, flag) |> 
+  spread(flag, n) |> 
+  mutate(total = has_t1_t2 + rest,
+         p = has_t1_t2 / total) |> 
+  knitr::kable()
+
 lb_t1_t2 <- 
   lb |> 
   filter(!is.na(t1) & !is.na(t2))
 lb_rest <- 
   lb |> 
   filter(!.sid %in% lb_t1_t2$.sid)
+
 # now for the catches
 ca_t1_t2 <-
   ca |> 
@@ -73,4 +86,5 @@ lb |> write_parquet("data/logbooks/station-for-ais.parquet")
 ca |> write_parquet("data/logbooks/catch-for-ais.parquet")
 
 # Info -------------------------------------------------------------------------
-devtools::session_info()
+devtools::session_info() |> print()
+
