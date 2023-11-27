@@ -28,9 +28,10 @@ check: https://dieghernan.github.io/202210_tidyterra-hillshade
 * [scripts/00_auxillary-data.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/00_auxillary-data.R)
 * [scripts/01_vid-mid.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/01_vid-mid.R)
 * [scripts/02-1_logbooks-merge.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-1_logbooks-merge.R)
-* [scripts/02-2_logbooks-processing.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-2_logbooks-processing.R)
-* [scripts/02-3_logbooks-for-ais.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-3_logbooks-for-ais.R)
-* [scripts/04-stk-tails_parquet.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/04-stk-tails_parquet.R)
+* [scripts/02-2_logbooks-landings-coupling.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-2_logbooks-landings-coupling.R)
+* [scripts/02-3_logbooks-processing.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-3_logbooks-processing.R)
+* [scripts/02-4_logbooks-for-ais.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/02-4_logbooks-for-ais.R)
+* [scripts/04-stk-tails_parquet.R](https://github.com/einarhjorleifsson/fishydata/blob/master/scripts/04_stk-tails_parquet.R)
 
 Should really set this up as a bash-script
 
@@ -38,7 +39,7 @@ Note: Log of the running kept in directory lgs
 
 ## Examples
 
-```{r}
+```{r setup}
 library(raster)
 library(viridis)
 library(leaflet)
@@ -97,7 +98,7 @@ con_ais |> count() |> pull()
 
 Here a simple relative effort of longline and bottom fishtrawl for all the years (2009-2022)
 
-```{r}
+```{r d_effort0}
 #| fig.width: 9
 #| fig.height: 9
 #| fig.cap: "Relative efffort by gear based on 2009 to 2022 data."
@@ -137,13 +138,90 @@ m <-
 m
 ```
 
+### Change in effort
+
+```{r d_effort1}
+#| fig.cap: "Change in effort, 2009-2010 vs 2021-2022."
+dx <- 2000
+ais <-
+  con_ais |> 
+  mutate(year = year(time),
+         var = case_when(year %in% 2009:2011 ~ "one",
+                         year %in% 2020:2022 ~ "two",
+                         .default = "other")) |> 
+  filter(between(lon, -30, -10),
+         between(lat, 62, 68.5),
+         speed >= s1, speed <= s2,
+         gid == 6,
+         var %in% c("one", "two")) |> 
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2,
+         one = 1L) |> 
+  group_by(var, year, x, y) |> 
+  summarise(z = sum(one),
+            .groups = "drop") |> 
+  collect() |> 
+  group_by(var, x, y) |> 
+  summarise(z = sum(z),
+            n_years = n_distinct(year)) |> 
+  ungroup() |> 
+  filter(n_years > 1)
+
+p1 <- 
+  full_join(ais |> filter(var == "one") |> rename(one = z) |> select(-var),
+            ais |> filter(var == "two") |> rename(two = z) |> select(-var)) |> 
+  mutate(d = case_when(is.na(one) & !is.na(two) ~ Inf,
+                       !is.na(one) & is.na(two) ~ -Inf,
+                       .default = log(two/one))) |> 
+  mutate(d = case_when(is.infinite(d) & d > 0 ~ max(d[!is.infinite(d)]),
+                       is.infinite(d) & d < 0 ~ min(d[!is.infinite(d)]),
+                       .default = d)) |> 
+  ggplot() +
+  theme_void() +
+  geom_tile(aes(x, y, fill = d)) +
+  geom_polygon(data = island, aes(x, y),
+               fill = "grey30") +
+  scale_fill_gradient2() +
+  coord_equal() +
+  theme(plot.background = element_rect(fill = "grey", colour = "grey"),
+        panel.background = element_rect(fill = "grey", colour = "grey"),
+        plot.margin = unit(c(0,0,0,0), "cm"))
+p1
+```
+
+```{r d_effort2}
+#| fig.cap: "Change in effort, 2009-2010 vs 2021-2022 - ordinary scale."
+p2 <- 
+  full_join(ais |> filter(var == "one") |> rename(one = z) |> select(-var),
+            ais |> filter(var == "two") |> rename(two = z) |> select(-var)) |> 
+  mutate(one = replace_na(one, 0),
+         two = replace_na(two, 0),
+         d = two - one) |>
+  mutate(d = case_when(d > 1000 ~ 1000,
+                       d < -1000 ~ -1000,
+                       .default = d)) |> 
+  ggplot() +
+  theme_void() +
+  geom_tile(aes(x, y, fill = d)) +
+  geom_polygon(data = island, aes(x, y),
+               fill = "grey30") +
+  scale_fill_gradient2() +
+  coord_equal() +
+  theme(plot.background = element_rect(fill = "grey", colour = "grey"),
+        panel.background = element_rect(fill = "grey", colour = "grey"),
+        plot.margin = unit(c(0,0,0,0), "cm"))
+p2
+```
+
+
+
 ### Species catch
 
 Catch distribution of Greenland halibut and Slope redfish for all years 2009-2022.
 
 Done because of contemporaneous interest in bottom trawl closure off west Iceland.
 
-```{r}
+```{r species1}
 dx <- 300 # grid width
 SID <- 61
 # need to compute the pings per station id
@@ -229,7 +307,7 @@ p <-
 p
 ```
 
-```{r}
+```{r species2}
 ## area closures ---------------------------------------------------------------
 closure <- 
   tribble(~lat, ~lon,
@@ -271,7 +349,7 @@ p +
   coord_equal(xlim = c(-3.2e6, -2.8e6), ylim = c(9.5e6, 10e6))
 ```
 
-```{r}
+```{r species3}
 catch |> 
   filter(z > 0) |> 
   full_join(catch61 |> rename(z61 = z)) |> 

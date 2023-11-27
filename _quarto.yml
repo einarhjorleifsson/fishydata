@@ -8,6 +8,7 @@ website:
       - text: Documents
         menu:
           - process.qmd
+          - trips.qmd
           - catch.qmd
           - auxillary-data.qmd
           - sanity-tests.qmd

@@ -15,28 +15,28 @@ m <-
   addWMSTiles(baseUrl = "https://gis.hafogvatn.is/geoserver/hafro/wms",
               layers = "hafro:trawl_3857_byte",
               group = "Fish trawl",
-              options = WMSTileOptions(format = "image/jpeg",
-                                       transparent  = FALSE,
+              options = WMSTileOptions(format = "image/png",
+                                       transparent  = TRUE,
                                        crs = "EPSG:3057",
-                                       opacity = 0.7
+                                       opacity = 1
               )
   ) |>
   addWMSTiles(baseUrl = "https://gis.hafogvatn.is/geoserver/hafro/wms",
               layers = "hafro:dseine_3857_byte",
               group = "Demersal seine",
-              options = WMSTileOptions(format = "image/jpeg",
-                                       transparent  = FALSE,
+              options = WMSTileOptions(format = "image/png",
+                                       transparent  = TRUE,
                                        crs = "EPSG:3057",
-                                       opacity = 0.7
+                                       opacity = 1
               )
   ) |>
   addWMSTiles(baseUrl = "https://gis.hafogvatn.is/geoserver/hafro/wms",
               layers = "	hafro:jiggers_3857_byte",
               group = "Jiggers",
-              options = WMSTileOptions(format = "image/jpeg",
-                                       transparent  = FALSE,
+              options = WMSTileOptions(format = "image/png",
+                                       transparent  = TRUE,
                                        crs = "EPSG:3057",
-                                       opacity = 0.7
+                                       opacity = 1
               )
   ) |>
   addLayersControl(baseGroups = c("base"),
