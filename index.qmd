@@ -388,3 +388,6 @@ catch |>
 * https://data-cleaning.github.io/validate
 * https://docs.ropensci.org/targets
 
+## Smoothing data
+
+* [smoothr](https://cran.r-project.org/web/packages/smoothr/vignettes/smoothr.html)

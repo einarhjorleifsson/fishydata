@@ -1,0 +1,220 @@
+---
+title: "Trips explorations"
+---
+
+```{r base}
+library(sf)
+library(mapview)
+library(tidyverse)
+library(arrow)
+source("R/read.R")
+# parquet files:
+pth = "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
+LB <- arrow::open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
+CT <- arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet"))
+AIS <- fd_stk_arrow() |> filter(vms == "yes")
+
+# create trips
+AIS |> 
+  filter(.cid > 0) |> 
+  group_by(vid, .cid) |> 
+  summarise(t1 = min(time),
+            t2 = max(time),
+            gid = min(gid, na.rm = TRUE),
+            hid_dep = min(hid_dep),
+            hid_arr = min(hid_arr),
+            n_pings = n(),
+            # what if we have NA's
+            n_stations = n_distinct(.sid, na.rm = TRUE),
+            .groups = "drop") |> 
+  collect() |> 
+  arrange(vid, t1) ->
+  trips
+# create stations
+AIS |> 
+  filter(.cid > 0) |> 
+  group_by(vid, .cid, .sid) |> 
+  summarise(t1 = min(time),
+            t2 = max(time),
+            gid = min(gid, na.rm = TRUE),
+            n_pings = n(),
+            .groups = "drop") |> 
+  # get number of reported species
+  inner_join(CT |> 
+              group_by(.sid) |> 
+              summarise(n_species = n_distinct(sid, na.rm = TRUE))) |> 
+  collect() |> 
+  arrange(vid, t1) ->
+  stations
+```
+
+Should not have any trips with zero stations but gear assigned:
+```{r gear-trips1}
+trips |> 
+  filter(n_stations == 0) |> 
+  count(gid)
+```
+
+Should not have any trips with gear assigned but no stations:
+```{r gear-trips2}
+trips |> 
+  filter(is.na(gid)) |> 
+  count(n_stations)
+```
+
+### Distribution of stations per trip by gear
+
+```{r stations-per-trip-by-year}
+trips |> 
+  filter(!is.na(gid)) |> 
+  filter(gid %in% c(1:9, 14, 15, 18)) |> 
+  mutate(n_stations = ifelse(n_stations > 40, 40, n_stations)) |> 
+  count(gid, n_stations) |> 
+  ggplot(aes(n_stations, n)) +
+  geom_point() +
+  facet_wrap(~ gid, scales = "free_y") +
+  expand_limits(y = 0)
+```
+
+Unrealistic fishtrawl distribution:
+
+```{r trawl-distributions}
+trips |> 
+  filter(!is.na(gid)) |> 
+  filter(gid %in% c(6)) |> 
+  #mutate(n_stations = ifelse(n_stations > 40, 40, n_stations)) |> 
+  count(gid, n_stations) |> 
+  ggplot(aes(n_stations, n)) +
+  geom_point() +
+  facet_wrap(~ gid, scales = "free_y") +
+  expand_limits(y = 0)
+trips |> 
+  filter(gid == 6,
+         n_stations == max(n_stations))
+tmp <- 
+  AIS |> 
+  filter(vid == 2549,
+         .cid == 41,
+         vms == "yes") |> 
+  collect() |> 
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326)
+mapview(tmp)
+```
+
+At least the max station number is assocated with a barent sea trip, but still not a completed trip.
+
+### Number of species in a haul
+
+```{r species-per-haul}
+# let's select fishtrawl, 13 tows per trip
+tmp <- 
+  trips |> 
+  filter(gid == 6,
+         n_stations %in% 2:30) |> 
+  select(vid, .cid, n_stations) |> 
+  left_join(stations) |> 
+  arrange(vid, t1) |> 
+  group_by(vid, .cid, n_stations) |> 
+  mutate(n_in_trip = 1:n()) |> 
+  ungroup()
+tmp.sum <-
+  tmp |> 
+  group_by(n_in_trip, n_stations) |> 
+  summarise(m = mean(n_species, na.rm = TRUE),
+            .groups = "drop")
+tmp |> 
+  ggplot() +
+  theme_bw(base_size = 16) +
+  geom_line(data = tmp.sum,
+            aes(n_in_trip, m, group = n_stations,
+                colour = factor(n_stations)),
+            linewidth = 1) +
+  #stat_summary(aes(n_in_trip, n_species, colour = factor(n_stations)),
+  #             fun.data = "mean_cl_boot") +
+  expand_limits(y = 0) +
+  theme(legend.position = "none") +
+  scale_colour_viridis_d() +
+  labs(x = "Númer togs í túr",
+       y = "Meðalfjöldi tegunda í togi",
+       caption = "Fiskibotnvarpa - litir: hámarksfjöldi toga í túr") +
+  scale_y_continuous(breaks = 1:10)
+```
+
+### Cumulative species numbers per trip
+
+```{r cum-species-per-haul}
+catch <- CT |> collect()
+
+# for range of tows in trip
+tmp <- 
+  trips |> 
+  filter(gid == 6,
+         n_stations %in% 1:30) |> 
+  select(vid, .cid, n_stations) |> 
+  left_join(stations) |> 
+  arrange(vid, t1) |> 
+  group_by(vid, .cid, n_stations) |> 
+  mutate(n_in_trip = 1:n()) |> 
+  ungroup() |> 
+  left_join(catch) |> 
+  arrange(vid, t1, sid) |> 
+  group_by(n_stations, vid, .cid, sid) |> 
+  summarise(n_first = min(n_in_trip),
+            .groups = "drop") |> 
+  arrange(vid, .cid, n_first) |> 
+  group_by(n_stations, vid, .cid, n_first) |> 
+  summarise(csid = n()) |> 
+  group_by(n_stations, vid, .cid) |> 
+  mutate(csid = cumsum(csid)) |> 
+  ungroup() 
+tmp |> 
+  group_by(n_stations, n_first) |> 
+  summarise(csid = mean(csid)) |> 
+  ggplot(aes(n_first, csid, colour = factor(n_stations))) +
+  theme_bw(base_size = 16) +
+  geom_point() +
+  geom_line(linewidth = 1) +
+  scale_colour_viridis_d() +
+  theme(legend.position = "none") +
+  expand_limits(y = 0) +
+  scale_y_continuous(breaks = 0:14) +
+  labs(x = "Númer togs í túr", y = "Uppsafnaður fjöldi tegunda",
+       caption = "Fiskibotnvarpa - litir: hámarksfjöldi toga í túr")
+```
+
+What are the species added in the last tows per trip - by frequency:
+
+```{r species-in-last-tow, fig.height = 9}
+trips |> 
+  filter(gid == 6,
+         n_stations %in% 2:20) |> 
+  select(vid, .cid, n_stations) |> 
+  left_join(stations) |> 
+  arrange(vid, t1) |> 
+  group_by(vid, .cid, n_stations) |> 
+  mutate(n_in_trip = 1:n()) |> 
+  ungroup() |> 
+  left_join(catch) |> 
+  arrange(vid, t1, sid) |> 
+  group_by(n_stations, vid, .cid, sid) |> 
+  summarise(n_first = min(n_in_trip),
+            .groups = "drop") |> 
+  arrange(vid, .cid) |> 
+  #filter(n_stations == 13) |> 
+  filter(n_stations == n_first) |> 
+  count(sid) |> 
+  filter(sid != 184) |> 
+  left_join(mar::les_tegund(mar::connect_mar()) |> 
+              select(sid = tegund_nr, tegund = heiti) |> 
+              collect(n = Inf)) |> 
+  filter(!is.na(tegund)) |> 
+  ungroup() |> 
+  mutate(p = n / sum(n)) |> 
+  ggplot(aes(p, reorder(tegund, p))) +
+  geom_point() +
+  labs(x = "Hlutfall", y = "Tegund") +
+  scale_x_continuous(breaks = seq(0, 0.20, by = 0.02))
+```
+
+
