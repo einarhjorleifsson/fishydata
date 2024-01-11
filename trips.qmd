@@ -13,6 +13,20 @@ pth = "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
 LB <- arrow::open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
 CT <- arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet"))
 AIS <- fd_stk_arrow() |> filter(vms == "yes")
+AIS |> 
+  filter(vms == "yes") |> 
+  count(vid, .cid, .sid) |> 
+  collect() |> 
+  arrow::write_dataset("trip_visir.parquet")
+TRIP_VISIR <- 
+  arrow::open_dataset("trip_visir.parquet") |> 
+  filter(!is.na(.sid))
+LB <- 
+  LB |> 
+  left_join(TRIP_VISIR |> 
+              select(vid, .sid, .cid)) |> 
+  compute()
+LB |> glimpse()
 
 # create trips
 AIS |> 

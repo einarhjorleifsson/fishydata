@@ -3,7 +3,10 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2023-10-06.log &
+#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2023-12-28.log &
+library(tictoc)
+tic()
+
 lubridate::now()
 
 # Input:  Oracle database
@@ -380,4 +383,7 @@ LGS |> write_rds("data/logbooks/station.rds")
 CATCH |> write_rds("data/logbooks/catch.rds")
 
 # 7. Info ----------------------------------------------------------------------
-devtools::session_info() |> print()
+toc()
+
+print(devtools::session_info())
+

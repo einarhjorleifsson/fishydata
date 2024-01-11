@@ -8,11 +8,15 @@ website:
       - text: Documents
         menu:
           - process.qmd
+          - observer-trips.qmd
           - trips.qmd
           - catch.qmd
           - auxillary-data.qmd
           - sanity-tests.qmd
           - geoserver_demo.qmd
+      - text: Bits
+        menu: 
+          - bits_landings.qmd
     right: 
       - icon: github
         href: https://github.com/einarhjorleifsson/fishydata

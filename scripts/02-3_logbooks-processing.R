@@ -3,7 +3,9 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-3_logbooks-processing.R --vanilla > lgs/02-3_logbooks-processing_2023-10-06.log &
+#  nohup R < scripts/02-3_logbooks-processing.R --vanilla > lgs/02-3_logbooks-processing_2023-12-29.log &
+library(tictoc)
+tic()
 lubridate::now()
 
 # Input:  data/logbooks/station_landings-merge.rds
@@ -263,5 +265,11 @@ paste("Number of records:", nrow(lb))
 
 # Save -------------------------------------------------------------------------
 lb |> write_rds("data/logbooks/station-processing.rds")
+
 # X. Info ----------------------------------------------------------------------
-devtools::session_info() |> print()
+
+toc()
+
+print(devtools::session_info())
+
+

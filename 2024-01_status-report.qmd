@@ -1,0 +1,337 @@
+---
+title: "Af fiskveiðum og tegundabrottkasti"
+echo: false
+fig-width: 9
+fig-height: 6
+crossref:
+  fig-prefix: mynd   # (default is "Figure")
+  tbl-prefix: tafla    # (default is "Table")
+---
+
+```{r}
+library(arrow)
+library(tidyverse)
+library(patchwork)
+```
+
+## Fororð
+
+Skýrsla þessi er áfangaskýrsla tengdum rannsóknum á möguleika þess að meta umfang brottkast með samþættingu á gögnum á staðsetningu skipa, löndunarskýrslum og afladagbókum. Útgangspunkturinn var að útvíkka fyrri rannsókn þar sem borin var saman afli og tegundasamsetning veiðferða skipa þegar eftirlitsmaður var um borð annars vegar og veiðiferða sömu skipa fyrir og eftir eftirlitsferðar [DAÐI: bæta hér í, stutt um niðurstöður, annmarkar og ætlunina hér].
+
+Mesta áhersla og vinna í þessum áfanga hefur verið að samþætta gögn úr sjálfvirkum staðsetningum skipa, afladagbókum og löndunarskýrslum. Einnig var gerð frumathugun á mynstri í gögnun þegar kemur að fjölda skráðra tegunda.
+
+## Tenging gagna - Aðferðarfræði
+
+Veiðiferð fiskiskipa má í megindráttum skipta upp í eftirfarandi hluta: Siglingu úr höfn á fiskimið, veiðarnar sjálfar og siglingu í höfn sem lýkur með löndun. Upplýsingar um hverja veiðiferð er hægt að nálgast úr þremur ótengdum gagnagrunnum:
+
+1) Sjálfvirk tilkynningarkerfi skipa (STK) sem haldið er út af Vaktstöð Siglinga. Þessi gögn innihalda skráningu um staðsetningu, hraða og stefnu á um það bil 10 mínútna fresti.
+2) Aflaskráning skipstjóra úr hverri veiðiaðgerð. Þessi gögn innihalda grófa staðsetningu, tíma og magn eftir tegundum.
+3) Skráning á afla við löndun. Þessi gögn innihalda heildarafla eftir tegundum úr hverri veiðiferð.
+
+Til þessa hafa gögnin að mestu ekki verið skoðuð í samhengi þar sem engin einföld leið hefur verið fyrir hendi til að tengja þau saman. Þannig er t.d. einkvæmisnúmer á hverri veiðferð ekki til í löndundargögnunum heldur er það númer tengt þeim sem kaupir afurðina, sem í mörgum tilfellum geta verið fleiri en einn. Einnig er enginn einkvæmislykill fyrir veiðiferð í afladagbókum heldur er slíkt bundið hverri veiðiaðgerð.
+
+Öll gagnasettin þrjú eiga þó það sammerkt að það er skráður tími. Fyrir löndundargögnin er upplausnin í tíma þó aðeins sem dagsetning en í STK gögnum er upplausn í tíma sekúndur. Í afladagbókum er tími oftast í mínútu upplausn. Þó er mikið af færslum smærri skipa (einkum á króka og netaveiðum) með þeim hætti  að aðeins er skráð dagsetning og í sumum tilfellum er aðeins skráð ein færsla á dag þó svo að veiðiaðgerðir geti verið fleiri, bæði í tíma og rúmi. Allar færslur í afladagbókum og og löndunargögnum eru beint tengdar skiparskrárnúmeri en slíkt á ekki við í öllum tilfellum í STK gögnunum og því þarf oft að beita nálgunum t.d. með því að styðjast við kallmerki sem oft eru skráð. Samtengingu gagna frá árunum 2009-2022 var gerð í eftirfarandi skrefum:
+
+1) Út frá STK gögnum var búið til einkvæmur lykill fyrir hverja ferð skips, höfn úr höfn. Hver ferð þarf ekki endilega að vera veiðiferð og í sumum tilfellum endar veiðiferð ekki endilega með löndun, t.d. þegar veiðarfæri er aðeins lagt. Heildarfjöldi staðsetningarpunkta var 1.3 milljarðar og heildarfjöldi ferða ~1 milljón.
+2) Einkvæmur lykill í afladagbókum ("visir") var tengt við ofangreindan staðsetningarferil skips ef tími við upphaf og lok veiðaðgerðar var skráð. Ef tími var ekki skáður, eða aðeins skráð ein færsla per dag þá var lægsti einkvæmi afladagbókarlykill innan dags notaður og skráður á alla staðsetningarpunkta þess skips innan dagsins.
+3) Afladagbækur og löndundargögn voru tengd saman með því að nota áætlaða dagsetningu löndunar sem skráð er afladagbókum og para það saman við dagsetningu löndunar eins og skrá er í löndunargrunninum. Í flestum tilfellum ber dagsetningu saman en einnig voru umtalsverður fjöldi tilfella þar sem dagsetningu skeikaði um  &#177;2 daga.
+4) Með sama hætti var skráð dagsetning á lok veiðferðar þar sem eftirlitsmaður var um borð í gagnasetti um eftirlitsmenn notaður til að para saman við löndunargögn.
+
+Lykiláhersla var lögð á að allt samtvinningarferlið væri innifalið í forritunarkóða þannig að hægt væri að endurtaka ferlið, betrumbæta síðar sem og uppfæra samtenginguna þegar nýrri gögn berast. Þróunarferlið sem og síðasta útgáfan af kóðanum er aðgengileg á eftirfarandi slóð: [https://github.com/einarhjorleifsson/fishydata](https://github.com/einarhjorleifsson/fishydata).
+
+## Niðurstöður
+
+```{r}
+# landings ---------------------------------------------------------------------
+gear <-  
+  read_rds("data/landings/agf_gear.rds") |> 
+  select(gid_ln = gid, heiti)
+ob <- 
+  read_rds("data/landings/agf_observers.rds") |> 
+  filter(use) |> 
+  select(.lid) |> 
+  mutate(observer = "yes")
+CT <- read_rds("data/landings/agf_catch.rds")
+ca <- 
+  CT |> 
+  group_by(.lid) |> 
+  summarise(n_sid = n_distinct(sid))
+ln <- 
+  read_rds("data/landings/agf_stations.rds") |> 
+  left_join(ca) |> 
+  left_join(ob) |> 
+  left_join(gear) |> 
+  mutate(observer = replace_na(observer, "no"),
+         year = year(datel),
+         gear = paste0(str_pad(gid_ln, width = 2, pad = "0"),
+                       " ",
+                       heiti))
+# logbooks ---------------------------------------------------------------------
+pth = "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
+lb_species <- 
+  arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet")) |> 
+  group_by(.sid) |> 
+  summarise(n.species = n_distinct(sid)) |> 
+  collect()
+TRIP_VISIR <- 
+  arrow::open_dataset("trip_visir.parquet") |> 
+  filter(!is.na(.sid))
+lb <- 
+  arrow::open_dataset(paste0(pth, "logbooks/station-for-ais.parquet")) |> 
+  left_join(TRIP_VISIR |> 
+              select(vid, .sid, .cid)) |> 
+  collect() |> 
+  left_join(lb_species) |> 
+  arrange(vid, date, t1) |> 
+  group_by(vid, .cid) |> 
+  mutate(tow.n = 1:n(),
+         n.stations = max(tow.n)) |> 
+  ungroup()
+
+# auxillary --------------------------------------------------------------------
+vids <- 
+  read_rds("data-aux/vessels.rds") |> 
+  select(vid, length)
+
+# filters ----------------------------------------------------------------------
+ln <- 
+  ln |> 
+  filter(year >= 2016,
+         gid_ln %in% c(2, 3, 6, 7, 9, 11, 12, 13, 21)) |> 
+  mutate(date = floor_date(datel, "month"),
+         Eftirlitsmaður = ifelse(observer == "yes", "Já", "Nei"))
+```
+
+
+## Fjöldi eftirlitsferða
+
+Á tímabilinu 2016-2022 voru farnar um 160 þúsund veiðiferðir og þar af voru eftirlitsmenn um borð í 1173 veiðiferðum eða í innan við 1% tilfella (@tbl-samplesize). Ef fjöldi eftirlitsferða er brotin niður á veiðarfæri og mánuði kemur fram að fjöldinn í helstu veiðarfærum eins og botnvörpu og línu er innan við 20.  Og þar sem breytileiki í aflabrögðum er mjög mikill þegar tekið er tillit árstíða sem og veiðsvæða er líklegt að fjöldi veiðiferða (@fig-sample) sé nokkuð takmarkandi til þess að framkvæma magnlæga greiningu, t.d. á magni meðaflategunda sem ekki skila sér í land.
+
+```{r}
+#| label: tbl-samplesize
+#| tbl-cap: "Heildarfjöldi veiðiferða eftir veiðarfærum á tímabilinu 2016-2022 ásamt fjölda ferða þar sem eftirlitsmaður er um borð."
+ln |> 
+  group_by(gear, Eftirlitsmaður) |> 
+  summarise(n = n(),
+            .groups = "drop") |> 
+  spread(Eftirlitsmaður, n, fill = 0) |> 
+  mutate(Heildarfjöldi = Já + Nei) |> 
+  select(Veiðarfæri = gear, Eftirlitsferðir = Já, Heildarfjöldi) |> 
+  arrange(Veiðarfæri) |> 
+  knitr::kable()
+```
+
+```{r}
+#| label: fig-sample
+#| fig-cap: "Fjöldi eftirlitsferða eftir veiðarfærum og mánuðum"
+ln |> 
+  filter(Eftirlitsmaður == "Já") |> 
+  count(date, gear) |>
+  ggplot(aes(date, n)) +
+  geom_col() +
+  facet_wrap(~ gear, scale = "free_y")
+```
+
+### Fjöldi landaðra tegunda
+
+Sem fyrsta skref var gerður samanburður á fjölda tegunda sem skráðar eru úr veiðiferð við löndun þegar eftirlitsmaður er um borð eða ekki. Annars vegar eftir mánuðum og veiðarfærum (@fig-landspecies1) og hinsvegar eftir veiðarfærum (@fig-landspecies2) og eftir stærð skipa fyrir botnvörpu og línu (@fig-landspecies3). Í öllum veiðarfærum nema flotvörpu er að meðaltali fleiri tegundum landað þegar eftirlitsmaður er um borð. Þannig er meðalfjöldi tegunda í botnvörpu innan við 10.5 þegar eftirlitsmaður er um borð samanborið við 13-14 tegundir ef eftirlitsmaður er um borð. Munur á fjöldi landaðra tegunda í línu er nokkuð minni en í botnvörpu en munur í fjölda eftir því hvort eftirlitsmaður er um borð eða ekki u.þ.b. 1 tegund.
+
+Ef úrtakið á eftirlitsferðum er tilviljunarkennt þá eru þetta sterkar vísbendingar um tegundarháð brottkast. Saman mynstur kemur þó upp fyrir botnvörpu og línu ef greiningin er bundin einungis við skip þar sem eftirlitsmaður hefur verið um borð i a.m.k. einu tilfelli (@fig-landspecies4).
+
+```{r}
+#| label: fig-landspecies1
+#| fig-cap: "Meðalfjöldi tegunda í veiðiferð eftir veiðarfærum og tíma (mánuður) eftir því hvort eftirlitsmaður var um borð eða ekki"
+ln |> 
+  ggplot(aes(date, n_sid, colour = Eftirlitsmaður)) +
+  theme_bw(base_size = 16) +
+  stat_summary(fun.data = "mean_cl_boot",
+               size = 0.25) +
+  facet_wrap(~ gear, scales = "free_y") +
+  scale_colour_brewer(palette = "Set1") +
+  labs(x = "Tími [mánuður]",
+       y = "Meðalfjöldi tegunda")
+```
+
+```{r}
+#| label: fig-landspecies2
+#| fig-cap: "Meðalfjöldi tegunda á tímabilinu 2016-2022 í veiðiferð eftir veiðarfærum eftir því hvort eftirlitsmaður var um borð eða ekki."
+ln |> 
+  ggplot(aes(Eftirlitsmaður, n_sid)) +
+  theme_bw(base_size = 16) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_wrap(~ gear, scales = "free_y") +
+  scale_colour_brewer(palette = "Set1") +
+  scale_y_continuous(breaks = 1:20)
+```
+
+
+```{r}
+#| label: fig-landspecies3
+#| fig-cap: "Meðalfjöldi tegunda Meðalfjöldi tegunda á tímabilinu 2016-2022í veiðiferð eftir veiðarfærum eftir því hvort eftirlitsmaður var um borð eða ekki fyrir botnvörpu og línu eftir mismunandi skipastærð (lengd)."
+p1 <-
+  ln |> 
+  filter(gid_ln == 6) |> 
+  left_join(vids) |> 
+  mutate(length = case_when(length <= 30 ~ " <30 m",
+                            length > 30 & length < 50 ~ " 30-50 m",
+                            length >= 50 ~ ">50 m")) |> 
+  ggplot(aes(Eftirlitsmaður, n_sid)) +
+  theme_bw(base_size = 16) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_grid(gear ~ length) +
+  scale_colour_brewer(palette = "Set1") +
+  scale_y_continuous(breaks = 1:20) +
+  labs(x = NULL, y = "Fjöldi tegunda")
+p2 <- 
+  ln |> 
+  filter(gid_ln %in% c(12)) |> 
+  left_join(vids) |> 
+  mutate(length = case_when(length <= 20 ~ "<20 m",
+                            length >  20 ~  ">20 m")) |> 
+  ggplot(aes(Eftirlitsmaður, n_sid)) +
+  theme_bw(base_size = 16) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_grid(gear ~ length) +
+  scale_colour_brewer(palette = "Set1") +
+  scale_y_continuous(breaks = 1:20) +
+  labs(x = NULL, y = "Fjöldi tegunda")
+p1 + p2
+```
+
+```{r}
+#| label: fig-landspecies4
+#| fig-cap: "Meðalfjöldi tegunda Meðalfjöldi tegunda á tímabilinu 2016-2022í veiðiferð eftir veiðarfærum eftir því hvort eftirlitsmaður var um borð eða ekki fyrir botnvörpu og línu eftir mismunandi skipastærð (lengd). Einungis skip sem að hafa verið með eftirlitsmann a.m.k. einu sinni á tímabilinu 2016-2022."
+vids <- 
+  read_rds("data-aux/vessels.rds") |> 
+  select(vid, length)
+ln |> 
+  filter(gid_ln == 6,
+         Eftirlitsmaður == "Já") |> 
+  pull(vid) |> 
+  unique() ->
+  vid6
+p1 <-
+  ln |> 
+  filter(gid_ln == 6,
+         vid %in% vid6) |> 
+  left_join(vids) |> 
+  mutate(length = case_when(length <= 30 ~ " <30 m",
+                            length > 30 & length < 50 ~ " 30-50 m",
+                            length >= 50 ~ ">50 m")) |> 
+  ggplot(aes(Eftirlitsmaður, n_sid)) +
+  theme_bw(base_size = 16) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_grid(gear ~ length) +
+  scale_colour_brewer(palette = "Set1") +
+  scale_y_continuous(breaks = 1:20) +
+  labs(x = NULL, y = "Fjöldi tegunda")
+ln |> 
+  filter(gid_ln == 12,
+         Eftirlitsmaður == "Já") |> 
+  pull(vid) |> 
+  unique() ->
+  vid12
+p2 <- 
+  ln |> 
+  filter(gid_ln %in% c(12),
+         vid %in% vid12) |> 
+  left_join(vids) |> 
+  mutate(length = case_when(length <= 20 ~ "<20 m",
+                            length >  20 ~  ">20 m")) |> 
+  ggplot(aes(Eftirlitsmaður, n_sid)) +
+  theme_bw(base_size = 16) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_grid(gear ~ length) +
+  scale_colour_brewer(palette = "Set1") +
+  scale_y_continuous(breaks = 1:20) +
+  labs(x = NULL, y = "Fjöldi tegunda")
+library(patchwork)
+p1 + p2
+```
+
+### Afladagbækur - tegundaskráningar
+
+Ljóst er að tegundarsamsetning í lönduðum afla er háður því hvar veiði fer fram. Þar sem staðsetning á hvar fiskur er veiddur kemur ekki fram í löndunargögnunum þarf að styðjast við afladagbækur skipstjóra. Þessi gögn hafa til þessa að mestu verið notuð af Hafrannsóknastofnun til til meta útbreiðslu veiða eftir tegundum og þess að skipta lönduðum afla eftir svæðum við mat á stærðar- og aldursdreifingu aflans. Til að meta hvort þessi gögn gætu nýst til að meta tegundarbrottkast var í fyrsta kasti skoðuð skráning á tegundum eftir númer togs í hverjum fiskbotnvörpuveiðitúr.
+
+Við skoðun á fjölda skráðra tegunda í hverju togi innan túrs (@fig-pertow1) kemur fram að meðalfjöldi tegunda sem skráður er í hverju togi er á bilinu 2.5-3 tegundir og þá að öllu jöfnu hærri í túrum með færri heildarfjölda toga. Undantekningin er þó síðasta togið í hverjum túr þar sem fjöldi tegunda í toginu er að meðatali um 5-6 tegundir (nema ef fjöldi toga í túrnum er mjög lítill). Ef skoðaður er uppsafnaður fjölda tegunda sem skráðar eru í túr (@fig-pertow2) að fjöldi tegunda eykst eftir því sem togum í túr fjölgar. En að öllu jöfnu bætast við um 1-2 nýjar tegundir í næstsíðasta og síðasta togi túrs í hverri veiðiferð.
+
+Hugsanlegar skýringinar á þessu mynstir gætu verið:
+
+* Líklegast er að túrar þar sem fjöldi toga í túr er lágur takmarkist við skip sem stunda veiðar nærri landi þar sem fjöldi nytjategunda er meiri en fjær landi. Tiltölulega einfalt ætti að vera að sannreyna það með frekari greiningu.
+* Mynstrið innan hvers túrs, óháð heildarfjölda toga í túr er líklegast vegna þess að skráning á afla eftir tegund er einungis gerður þegar kar er orðið fullt.
+* Tegundarfjöldinn í síðasta togi sem og vibótarfjöldi tegunda sem ekki hafa verið skráðar áður eru líklega annars vegar til að stemma bókhaldið fyrir löndun og hinsvegar vegna tegunda sem að lítið veiddist af í túr og því hugsanlega tegunda sem ekki náðu að fylla kar fyrr í túrnum.
+
+
+```{r}
+#| label: fig-pertow1
+#| fig-cap: "Meðalfjöldi skráðra tegunda í afladagbókum skipstjóra eftir númer togs í fiskibotnvörpu tímabilinu 2016-2022. Litir gefa til kynna hámarksfjölda toga í túr."
+tmp.sum <-
+  lb |> 
+   filter(gid == 6,
+         n.stations %in% 2:20,
+         year(date) %in% 2016:2022) |> 
+  group_by(tow.n, n.stations) |> 
+  summarise(m = mean(n.species, na.rm = TRUE),
+            .groups = "drop")
+tmp.sum |> 
+  ggplot(aes(tow.n, m, group = n.stations,
+                colour = factor(n.stations))) +
+  theme_bw(base_size = 16) +
+  geom_line(data = tmp.sum,
+            linewidth = 1) +
+  geom_point(size = 1) +
+  #stat_summary(aes(n_in_trip, n_species, colour = factor(n_stations)),
+  #             fun.data = "mean_cl_boot") +
+  expand_limits(y = 0) +
+  theme(legend.position = "none") +
+  scale_colour_viridis_d() +
+  labs(x = "Númer togs í túr",
+       y = "Meðalfjöldi tegunda í togi") +
+  scale_y_continuous(breaks = 1:10)
+```
+
+```{r}
+#| label: fig-pertow2
+#| fig-cap: "Uppsafnaður meðalfjöldi skráðra tegunda í afladagbókum skipstjóra eftir númer togs í fiskibotnvörpu tímabilinu 2016-2022. Litir gefa til kynna hámarksfjölda toga í túr."
+lb_catch <- 
+  arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet")) |> 
+  collect()
+
+# for range of tows in trip
+tmp <- 
+  lb |> 
+   filter(gid == 6,
+         n.stations %in% 2:20,
+         year(date) %in% 2016:2022) |> 
+  left_join(lb_catch) |> 
+  arrange(vid, t1, sid) |> 
+  group_by(n.stations, vid, .cid, sid) |> 
+  summarise(n_first = min(tow.n),
+            .groups = "drop") |> 
+  arrange(vid, .cid, n_first) |> 
+  group_by(n.stations, vid, .cid, n_first) |> 
+  summarise(csid = n()) |> 
+  group_by(n.stations, vid, .cid) |> 
+  mutate(csid = cumsum(csid)) |> 
+  ungroup()
+tmp |> 
+  group_by(n.stations, n_first) |> 
+  summarise(csid = mean(csid)) |> 
+  ggplot(aes(n_first, csid, colour = factor(n.stations))) +
+  theme_bw(base_size = 16) +
+  geom_point() +
+  geom_line(linewidth = 1) +
+  scale_colour_viridis_d() +
+  theme(legend.position = "none") +
+  expand_limits(y = 0) +
+  scale_y_continuous(breaks = 0:14) +
+  labs(x = "Númer togs í túr", y = "Uppsafnaður fjöldi tegunda")
+```
+
+## Niðurlag
+
+Í upphafi var markmið þessa verkefnis að skoða hvort hægt væri að meta umfang á brottkasti meðaflategunda með því að samþætta löndunargögn, afladagbækur og stk gögn ásamt gögnum um veiðiferðir með eftirlitsmönnum.
+
+Mestur tími verkefnisins fór í að þróa aðferðarfræði til að spyrða saman gagnasettin. Þeirri vinnu er að mestu lokið og er hún aðgengileg á eftirfarandi síðu: https://github.com/einarhjorleifsson/fishydata
+
+Samanburður á tegundarsamsetningu í lönduðum afla eftir því hvort eftirlitsmaður er um borð eður ei bendir til að tegundabrottkast geti verið umtalsvert. Þar sem veiðar á hverri tegund er háð staðsetningu þá var ætlunin að nýta slíkar upplýsingar úr afladagbókum sem og úr stk gögnum til að greina betur meint tegundarbrottkast. Greining á afladagbókum bendir þó til að skráning á aflasamsetningu í hverju togi þegar kemur að tegundum er mjög svo ónákvæm. Á þessu stigi er ekki ljóst hvaða áhrif sú bjögun myndi hafa á slíka greiningu né hvort að hægt sé með einhverjum hætti að taka tillit til hennar með einhverjum hætti.

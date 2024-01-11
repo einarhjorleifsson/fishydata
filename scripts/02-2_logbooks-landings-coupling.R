@@ -3,22 +3,23 @@
 #
 # Input:  Logbooks: data/logbooks/station.rds
 #         Catch:    data/logbooks/catch.rds
-#         Landings: Oracle database
+#         Landings: data/landings/agf_stations.rds
+#                   data/landings/lods_stations.rds
 # Output: data/logbooks/station_landings-merge.rds
 #
 # The matching is done by date not time. Landings data are hence consolidated
 #  by date, the landings id is the lowest landings id value within a date
-# There are issues with some landings data in cases we have two different gears
-#  or harbours within a single landings date.
-# TODO: Check effect on algorithm given the two gears, two harbours scenario
 #
 # Downstream usage: 02-3_logbooks-processing.R
 #
 # 
-# 
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-2_logbooks-landings-coupling.R --vanilla > lgs/02-2_logbooks-landings-coupling_2023-10-06.log &
+#  nohup R < scripts/02-2_logbooks-landings-coupling.R --vanilla > lgs/02-2_logbooks-landings-coupling_2023-12-29.log &
+library(tictoc)
+
+tic()
+
 lubridate::now()
 
 
@@ -29,14 +30,15 @@ YEARS <- 2022:2009
 library(data.table)
 library(tidyverse)
 library(lubridate)
-library(omar)
-con <- connect_mar()
 
 # Read data from previous step -------------------------------------------------
 LGS <- read_rds("data/logbooks/station.rds")
 CATCH <- read_rds("data/logbooks/catch.rds")
+LODS <- read_rds("data/landings/lods_stations.rds")
+AGF <- read_rds("data/landings/agf_stations.rds")
 
 # 4. Add "target" species to each setting --------------------------------------
+# Should really have this upstream in the code
 #  Used downstream when attempting to correct gear
 catch_target <- 
   CATCH |> 
@@ -48,54 +50,21 @@ catch_target <-
   slice(1) |> 
   ungroup() |> 
   select(.sid, sid_target = sid, p_target = p, catch_total = total)
+print(paste0("Number of logbook records with no catch: ", 
+             nrow(LGS) - nrow(catch_target),
+             " (",
+             100 * (1 - round(nrow(catch_target) / nrow(LGS), 3)),
+             "%)"))
 LGS <- 
   LGS |> 
-  left_join(catch_target)
-
+  left_join(catch_target) |> 
+  mutate(sid_target = replace_na(sid_target, 0),
+         p_target = replace_na(p_target, 0),
+         catch_total = replace_na(catch_total, 0))
 
 # 5. Add landing id and gid from landings data ---------------------------------
 ## Landings data - agf ---------------------------------------------------------
-## Here take the minimum landings id within a landings date
-LN_raw <- 
-  omar::ln_agf(con) |> 
-  filter(wt > 0,
-         year(date) %in% YEARS) |> 
-  rename(.lid = .id,
-         hid_ln = hid,
-         gid_ln = gid,
-         datel = date) |> 
-  collect(n = Inf) |> 
-  filter(vid %in% c(2, 5:3699, 5000:9998)) |> 
-  mutate(datel = as_date(datel),
-         vid = as.integer(vid),
-         gid_ln = as.integer(gid_ln),
-         hid_ln = as.integer(hid_ln)) |> 
-  arrange(vid, datel, .lid, gid_ln, sid) |>
-  group_by(vid, datel) |> 
-  mutate(.lid_min = min(.lid)) |> 
-  ungroup()
 
-### Checks ---------------------------------------------------------------------
-checks <- 
-  LN_raw |> 
-  group_by(vid, datel) |> 
-  summarise(n_harbours = n_distinct(hid_ln),
-            n_gears = n_distinct(gid_ln),
-            n_lid = n_distinct(.lid),
-            .groups = "drop")
-#### Same landings date, different harbours ------------------------------------
-checks |> count(n_harbours) |> mutate(p = round(n / sum(n), 3))
-#### Same landings date, different gear ----------------------------------------
-checks |> count(n_gears) |> mutate(p = round(n / sum(n), 3))
-#### Same landings date, different landings id ---------------------------------
-checks |> count(n_lid) |> mutate(p = round(n / sum(n), 3))
-
-### Landing id and gear --------------------------------------------------------
-LN <-  
-  LN_raw |> 
-  select(vid, datel, gid_ln, .lid_min) |> 
-  # here only keep one gid record and the lowest .lid wihtin a landings date
-  distinct(vid, datel, .lid_min, .keep_all = TRUE)
 ### Nearest date match ---------------------------------------------------------
 #### Function ------------------------------------------------------------------
 match_nearest_date <- function(lb, ln) {
@@ -120,7 +89,7 @@ match_nearest_date <- function(lb, ln) {
   lb %>%
     left_join(res,
               by = c("vid", "datel")) %>%
-    left_join(ln %>% select(vid, date.ln = datel, gid_ln, .lid_min),
+    left_join(ln %>% select(vid, date.ln = datel, gid_ln, .lid),
               by = c("vid", "date.ln"))
   
 }
@@ -128,7 +97,7 @@ match_nearest_date <- function(lb, ln) {
 n_before_nearest_match <- nrow(LGS)
 LGS <-
   LGS |> 
-  match_nearest_date(LN) |> 
+  match_nearest_date(AGF) |> 
   rename(date_ln = date.ln)
 n_after_nearest_match <- nrow(LGS)
 print(c(n_before_nearest_match, n_after_nearest_match))
@@ -136,35 +105,29 @@ LGS <-
   LGS |> 
   rename(date_ln_agf = date_ln,
          gid_ln_agf = gid_ln,
-         .lid_min_agf = .lid_min)
+         .lid_agf = .lid)
+### Checks ---------------------------------------------------------------------
+LGS |> 
+  mutate(has.lid = !is.na(.lid_agf)) |> 
+  count(has.lid) |> 
+  mutate(p = n / sum(n)) |> 
+  knitr::kable(caption = "Missing landings id")
+LGS |> 
+  mutate(dt = as.integer(difftime(datel, date_ln_agf, units = "days")),
+         dt = ifelse(dt <= -5, -5, dt),
+         dt = ifelse(dt >=  5,  5, dt)) |> 
+  count(dt) |> 
+  mutate(p = n / sum(n) * 100,
+         pc = cumsum(p),
+         p = round(p, 2),
+         pc = round(pc, 2)) |> 
+  knitr::kable(caption = "Difference in matched logbook and landings dates")
+
 ## Landings data - kvoti-lods --------------------------------------------------
-LN_raw <- 
-  omar::tbl_mar(con, "kvoti.lods_oslaegt") |> 
-  filter(magn_oslaegt > 0,
-         year(l_dags) %in% YEARS) |> 
-  select(.lid = komunr,
-         gid_ln = veidarf,
-         datel = l_dags,
-         vid = skip_nr) |> 
-  collect(n = Inf) |> 
-  filter(vid %in% c(2, 5:3699, 5000:9998)) |> 
-  mutate(datel = as_date(datel),
-         vid = as.integer(vid),
-         gid_ln = as.integer(gid_ln)) |> 
-  arrange(vid, datel, .lid, gid_ln) |>
-  group_by(vid, datel) |> 
-  mutate(.lid_min = min(.lid)) |> 
-  ungroup()
-### Date and gear only ---------------------------------------------------------
-LN <-  
-  LN_raw |> 
-  select(vid, datel, gid_ln, .lid_min) |> 
-  # here only keep one gid record and the lowest .lid wihtin a landings date
-  distinct(vid, datel, .lid_min, .keep_all = TRUE)
 n_before_nearest_match <- nrow(LGS)
 LGS <-
   LGS |> 
-  match_nearest_date(LN) |> 
+  match_nearest_date(LODS) |> 
   rename(date_ln = date.ln)
 n_after_nearest_match <- nrow(LGS)
 print(c(n_before_nearest_match, n_after_nearest_match))
@@ -172,10 +135,29 @@ LGS <-
   LGS |> 
   rename(date_ln_lods = date_ln,
          gid_ln_lods = gid_ln,
-         .lid_min_lods = .lid_min)
+         .lid_lods = .lid)
+### Checks ---------------------------------------------------------------------
+LGS |> 
+  mutate(has.lid = !is.na(.lid_lods)) |> 
+  count(has.lid) |> 
+  mutate(p = n / sum(n)) |> 
+  knitr::kable(caption = "Missing landings id")
+LGS |> 
+  mutate(dt = as.integer(difftime(datel, date_ln_lods, units = "days")),
+         dt = ifelse(dt <= -5, -5, dt),
+         dt = ifelse(dt >=  5,  5, dt)) |> 
+  count(dt) |> 
+  mutate(p = n / sum(n) * 100,
+         pc = cumsum(p),
+         p = round(p, 2),
+         pc = round(pc, 2)) |> 
+  knitr::kable(caption = "Difference in matched logbook and landings dates")
+
 
 # 6. Save ----------------------------------------------------------------------
 LGS   |> write_rds("data/logbooks/station_landings-merge.rds")
 
 # 7. Info ----------------------------------------------------------------------
-devtools::session_info() |> print()
+toc()
+
+print(devtools::session_info())

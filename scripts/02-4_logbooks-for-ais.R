@@ -3,7 +3,7 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-4_logbooks-for-ais.R --vanilla > lgs/02-4_logbooks-for-ais_2023-10-06.log &
+#  nohup R < scripts/02-4_logbooks-for-ais.R --vanilla > lgs/02-4_logbooks-for-ais_2023-12-29.log &
 lubridate::now()
 
 # Input:  data/logbooks/station-processing.rds
@@ -15,6 +15,9 @@ lubridate::now()
 # Downstream usage: R/...
 ## Brief summary ---------------------------------------------------------------
 #
+library(tictoc)
+tic()
+
 
 # Input ------------------------------------------------------------------------
 library(arrow)
@@ -86,5 +89,7 @@ lb |> write_parquet("data/logbooks/station-for-ais.parquet")
 ca |> write_parquet("data/logbooks/catch-for-ais.parquet")
 
 # Info -------------------------------------------------------------------------
-devtools::session_info() |> print()
+toc()
+
+print(devtools::session_info())
 
