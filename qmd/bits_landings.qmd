@@ -1,0 +1,163 @@
+---
+title: "Landings"
+---
+
+## Get data
+
+```{r}
+library(tidyverse)
+library(omar)
+con <- connect_mar()
+ln_q <- 
+  tbl_mar(con, "agf.aflagrunnur") |> 
+    dplyr::select(.id = londun_id,
+                  date = londun_hefst,
+                  hid = hafnarnumer,
+                  vid = skip_numer,
+                  gid = veidarfaeri,
+                  stock = veidistofn,
+                  sid = fisktegund,
+                  astand,
+                  wt = magn_oslaegt,
+                  gt = magn_slaegt,
+                  magn,
+                  dplyr::everything()) |> 
+  # just some trimming of variables
+  select(.id:magn)
+```
+
+## What does londun_id (.id) stand for?
+
+If we filter out a particular vessel and landings date we may get something like this:
+
+```{r}
+d <- 
+  tbl_mar(con, "agf.aflagrunnur_v") |> 
+  filter(skip_numer == 1523,
+         londun_hefst == to_date("2009-02-28", "YYYY-MM-DD")) |> 
+  collect()
+d |> 
+  select(londun_id, 
+         ends_with("_heiti"),
+         kaupandi_nafn,
+         isprosenta:magn_oslaegt) |> 
+  janitor::remove_constant() |> 
+  select(-c(fisktegund_heiti)) |> 
+  knitr::kable()
+```
+
+The assumption is that these data respresents a landings from a single fishing trip. The above records demonstrate:
+
+* One fishing trips can have many landings ids (thus "londun_id" is a bit of a misnomer)
+* Catch from one fishing trip can be registered in more than one harbour, here the second harbour is just a dummy variable
+
+If we just drop the columns that represents amount and then just look at the distinct records:
+
+```{r}
+d |> 
+  select(londun_id, 
+         ends_with("_heiti"),
+         kaupandi_nafn) |> 
+  janitor::remove_constant() |> 
+  select(-c(veidistofn_heiti, fisktegund_heiti)) |> 
+  distinct() |> 
+  knitr::kable()
+```
+
+one can decipher that "londun_id" is an id associated with:
+
+* what harbour and/or
+* what type of weighing and/or
+* what type of product and/or
+* whet type of fate and/or
+* who the buyer is.
+
+**Ergo, there is no unique number in the landings database that is associated with the actuall trip**.
+
+## A proposal for a trip id
+
+Ideally we one would like to have an unique id for each trip. It is the understanding that the Directorate of Fisheries is establishing such system in the future. Question is what to do with the historical data. It is most likely that for a vessel a landings within a certain date can be assumed to come from one trip. We will though in some cases have:
+
+* A catch from a single fishing trip  is registered on two different landings date
+* More than one trip may occur within a day, one recollection is from the bonanza mackerel fisheries by the small boats in the start of the 2010's.
+
+Ideally one could try to use the stk-data to sort these kinds of issues out, the problem though being that time is not recorded in the landings database, only the date.
+
+For the historical data it is proposed here to define a unique trip id for the vast majority of the data by using the minimum "londun_id" for a vessel within a single landings date. I.e.:
+
+```{r}
+ln_q <- 
+  ln_q |> 
+  group_by(vid, date) |> 
+  mutate(.lid = min(.id)) |> 
+  ungroup()
+```
+
+So in the case used above we have:
+
+```{r}
+ln_q |> 
+  filter(vid == 1523,
+         date == to_date("2009-02-28", "YYYY-MM-DD")) |> 
+  select(.lid, everything()) |> 
+  collect() |> 
+  knitr::kable()
+```
+
+The effective results is that we have a total of some ~4.8 million landings records, with ~854 thousand unique "londun_id" and then some ~835 thousand trips.
+
+```{r, echo = FALSE, eval = FALSE}
+ln_q |> 
+  collect(n = Inf) |> 
+  mutate(date = as_date(date)) |> 
+  group_by(vid, date) |> 
+  mutate(.lid = min(.id)) |> 
+  ungroup() |> 
+  summarise(n = n(),
+            n.records = n_distinct(.id),
+            n.landings = n_distinct(.lid))
+```
+
+
+## A note on zero weights data
+
+It has been observed, including in the case above that there are a lot of zero records in the data, like in wt (oslaegt) and gt (gutted weights) and "magn". What purpose is for all these zero weight records?
+
+If we look at the specfic reords above we get e.g.:
+
+```{r}
+d |> 
+  glimpse() |> 
+  filter(magn_slaegt == 0, magn_oslaegt == 0, magn == 0) |> 
+  janitor::remove_constant() |> 
+  glimpse()
+```
+
+And if we look at all the data:
+
+```{r}
+zeros <- 
+  tbl_mar(con, "agf.aflagrunnur_v") |> 
+  filter(magn_slaegt == 0, magn_oslaegt == 0, magn == 0) |> 
+  collect()
+zeros |> nrow()
+```
+
+So we have about ~640 thousand records of zero's (out of a total of ~4.7 million records).
+
+```{r}
+zeros |> 
+  mutate(has.isprosenta = ifelse(isprosenta > 0, TRUE, FALSE)) |> 
+  count(has.isprosenta) |> 
+  knitr::kable()
+```
+
+So in some cases there is some positive value for isprosenta but in most cases the value is zero or missing. One wanders what these records are supposed to entail.
+
+```{r}
+zeros |> 
+  filter(isprosenta == 0 | is.na(isprosenta)) |> 
+  glimpse()
+```
+
+

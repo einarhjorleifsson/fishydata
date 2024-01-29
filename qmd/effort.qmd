@@ -79,7 +79,7 @@ r   <- effort |> select(x, y, z) |> raster_helper()
 plot(r)
 i <- is.na(values(r))
 values(r)[i] <- -1
-r |> writeRaster("raster/effort06_na_trial.tif", overwrite = TRUE)
+r |> writeRaster(here::here("raster/effort06_na_trial.tif"), overwrite = TRUE)
 
 
 
@@ -100,5 +100,5 @@ l2 <-
                  maxBytes = Inf,
                  group = "Effort")
 l2
-r |> writeRaster("raster/effort06.tif", overwrite = TRUE)
+r |> writeRaster(here::here("raster/effort06.tif"), overwrite = TRUE)
 ```

@@ -14,7 +14,7 @@ lh_date <- function(x) {
 }
 
 obs1 <-
-  readxl::read_excel("data-teams/SJOFERDIR_01012016_31122019.xlsx", col_types = "text") |>
+  readxl::read_excel("data-external/SJOFERDIR_01012016_31122019.xlsx", col_types = "text") |>
   rename(vid = 1,
          gear = 2,
          t1 = 3,
@@ -32,7 +32,7 @@ obs1 <-
   arrange(t1) |> 
   mutate(source = "dorothea")
 obs2 <-
-  read_csv("data-teams/SJOFERDIR_01012017_25102022.csv") |> 
+  read_csv("data-external/SJOFERDIR_01012017_25102022.csv") |> 
   rename(vid = 1,
          t1 = 2,
          t2 = 3) |> 
@@ -44,6 +44,18 @@ obs2 <-
   # Data frequency low prior to this date, also overlaps with that provided
   #  by Dorothea
   filter(t1 >= ymd("2020-01-01"))
+obs3 <- 
+  readxl::read_excel("data-external/2019_sjór_Fiskistofu_2021-09-19_from-vidar-olason.xlsx") |> 
+  janitor::clean_names() |> 
+  select(vid = skip,
+         t1 = sjoferd_byrjar,
+         t2 = sjoferd_endar,
+         gear = veidarfaeri) |> 
+  separate(vid, into = c("name", "vid"), sep = "\\(") |> 
+  mutate(vid = str_remove(vid, "\\)"),
+         vid = as.integer(vid),
+         source = "Viðar") |> 
+  select(-name)
 
 obs <- 
   bind_rows(obs1, obs2) |> 

@@ -1,0 +1,268 @@
+---
+title: "Observer trips"
+---
+
+## Data source
+
+Two data-sources:
+
+* Directly from Fiskistofa
+  * Contains observer trips that have been matched to landings id
+  * Time range: 2016-01-01 to 2019-12-31
+  * Number of observations (trips): 1128
+* From Fiskistofa via Daði:
+  * Contains observer trips that have not been matched to landings id
+  * Time range: 2017-01-02 to 2022-10-24
+  * Number of observations (trips): 1371
+
+
+### Directly from Fiskistofa
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(omar)
+con <- connect_mar()
+lh_date <- function(x) {
+  if_else(str_detect(x, "\\."),
+          dmy(x),
+          janitor::excel_numeric_to_date(as.numeric(x)))
+}
+gear_code <- 
+  tbl_mar(con, "agf.aflagrunnur_v") |> 
+  select(gid = veidarfaeri,
+         gear = veidarfaeri_heiti) |> 
+  distinct() |> 
+  collect() |> 
+  arrange(gid)
+
+obs1 <-
+  readxl::read_excel(here::here("data-external/SJOFERDIR_01012016_31122019.xlsx"), col_types = "text") |>
+  rename(vid = 1,
+         gear = 2,
+         t1 = 3,
+         t2 = 4,
+         .id = 5,
+         datel = 6) |> 
+  mutate(vid = as.integer(vid),
+         t1 = lh_date(t1),
+         t2 = lh_date(t2),
+         .id = as.integer(.id),
+         datel = lh_date(datel)) |> 
+  mutate(t1 = if_else(t1 == ymd("2011-11-25"),
+                      ymd("2017-11-25"),
+                      t1)) |> 
+  arrange(vid, t1, t2) |> 
+  mutate(.rid = 1:n(),
+         .cid = ramb::rb_event(paste(vid, t1, t2))) |> 
+  select(.cid, everything())
+```
+
+### Via Daði
+
+```{r}
+obs2 <-
+  read_csv(here::here("data-external/SJOFERDIR_01012017_25102022.csv")) |> 
+  rename(vid = 1,
+         t1 = 2,
+         t2 = 3) |> 
+  mutate(vid = as.integer(vid),
+         t1 = dmy(t1),
+         t2 = dmy(t2)) |> 
+  filter(vid > 0) |> 
+  arrange(vid, t1, t2) |> 
+  mutate(.rid = 1:n(),
+         .cid = ramb::rb_event(paste(vid, t1, t2))) |> 
+  select(.cid, everything())
+```
+
+## Can we automatically obtain landings id?
+
+In dataset 1 we have reported t2 and the landings date, the latter presumably from the landings database. Let's check the match/difference in the two:
+
+```{r}
+obs1 |> 
+  select(vid, t1, t2, datel) |> 
+  distinct() |> 
+  mutate(dt = difftime(datel, t2, units = "days")) |> 
+  count(dt) |> 
+  mutate(p = round(n / sum(n), 3)) |> 
+  knitr::kable(caption = "Difference in reported trip end date and landings date")
+```
+
+So in 86% of cases the two dates match, in another 10% the date landings recorded in the landings database is 1 day after the reported drip end date.
+
+### Trial via nearest date match
+
+```{r}
+match_nearest_date <- function(lb, ln) {
+  
+  lb.dt <-
+    lb %>%
+    select(vid, datel) %>%
+    distinct() %>%
+    setDT()
+  
+  ln.dt <-
+    ln %>%
+    select(vid, datel) %>%
+    distinct() %>%
+    mutate(dummy = datel) %>%
+    setDT()
+  
+  res <-
+    lb.dt[, date.ln := ln.dt[lb.dt, dummy, on = c("vid", "datel"), roll = "nearest"]] %>%
+    as_tibble()
+  
+  lb %>%
+    left_join(res,
+              by = c("vid", "datel")) %>%
+    left_join(ln %>% select(vid, date.ln = datel, gid_ln = gid, .id),
+              by = c("vid", "date.ln"))
+  
+}
+# try first the obs1 data, prentend they are logbook data
+lb <- 
+  obs1 |> 
+  # use t2 as proxy for date landed (are pretending" we do not have it)
+  select(.cid, .rid, vid, t1, datel = t2, .id_org = .id, gear)
+ln <- 
+  tbl_mar(con, "agf.aflagrunnur") |>
+  filter(between(year(londun_hefst), 2016, 2019),
+         magn > 0) |> 
+  select(vid = skip_numer, 
+         datel = londun_hefst, 
+         gid = veidarfaeri,
+         .id = londun_id) |> 
+  collect() |> 
+  mutate(datel = as_date(datel)) |>
+  distinct() |> 
+  arrange(vid, datel) |> 
+  filter(vid > 0)
+m <- 
+  match_nearest_date(lb, ln)
+```
+
+First thing to note is that we have more number of records than the original (obs `r nrow(obs1)` vs m `r nrow(m)`). Let's check why:
+
+```{r}
+m |> 
+  group_by(.rid) |> 
+  mutate(n = n()) |> 
+  filter(n > 1) |> 
+  knitr::kable(caption = "Records with row expansions")
+```
+
+In most cases this seems to be just an issue with the many-to-many relationship. We could try summarise the data such that only one landing id (the minumum used here) is used for what constitutes a trip:
+
+```{r}
+obs1_min <- 
+  obs1 |> 
+  group_by(.cid) |> 
+  mutate(.id_min = min(.id)) |> 
+  ungroup() |> 
+  select(.cid, vid, t1, t2, datel, .id_min) |> 
+  distinct()
+ln_min <- 
+  ln |> 
+  group_by(vid, datel) |> 
+  mutate(.id_min = min(.id)) |> 
+  ungroup() |> 
+  select(-.id) |> 
+  distinct()
+lb <- 
+  obs1_min |> 
+  # use t2 as proxy for date landed (are pretending" we do not have it)
+  rename(.id_org = .id_min)
+m <- 
+  match_nearest_date(lb, ln_min |> rename(.id = .id_min))
+m |> 
+  filter(.id_org != .id) |> 
+  knitr::kable(caption = "Records with mismatching landings id depending on approach used")
+ID <- 
+  m |> 
+  filter(.id_org != .id) |> 
+  pull(.id_org)
+ln_dt <- # double test
+  tbl_mar(con, "agf.aflagrunnur") |> 
+  filter(londun_id %in% ID) |> 
+  select(.id = londun_id,
+         vid = skip_numer,
+         datel = londun_hefst,
+         fisktegund,
+         magn,
+         magn_oslaegt) |> 
+  collect()
+m |> 
+  filter(.id_org != .id) |> 
+  left_join(ln_dt)
+```
+
+Not quite clear what is going on.
+
+```{r}
+m |> 
+  mutate(what = case_when(is.na(.id) ~ "NA",
+                          .id == .id_org ~ "same",
+                          .id != .id_org ~ "diff",
+                          .default = "other")) |> 
+  mutate(dt = difftime(datel, date.ln, units = "days")) |> 
+  filter(what == "diff")
+```
+
+```{r}
+# first line
+ID <- c(499646, 499470)
+m |> 
+  filter(.id_org %in% ID | .id %in% ID)
+ln |> 
+  filter(.id %in% ID) |> 
+  glimpse()
+# second line
+ID <- c(500124, 500073)
+m |> 
+  filter(.id_org %in% ID | .id %in% ID)
+ln |> 
+  filter(.id %in% ID) |> 
+  glimpse()
+m |> 
+  arrange(vid, date.ln, .id) |> 
+  left_join(ln |> 
+              select(vid, date.ln = datel, .id_auto = .id) |> 
+              arrange(vid, date.ln, .id_auto)) |> 
+  filter(.id != .id_auto)
+# think may be better to use bind_rows and then find a match
+m
+```
+
+## Number of species by trip type
+
+```{r}
+ln <-
+  tbl_mar(con, "agf.aflagrunnur") |>
+  filter(between(year(londun_hefst), 2016, 2019)) |>
+  collect(n = Inf) |>
+  mutate(on.board = ifelse(londun_id %in% obs1$.id, TRUE, FALSE)) 
+ln |>
+  filter(veidarfaeri %in% c(6, 12, 3, 2, 13, 11, 9, 10, 7,
+                            21, 9, 22)) |>
+  group_by(londun_id, veidarfaeri, londun_hefst, on.board) |>
+  mutate(on.board = ifelse(on.board, "Já", "Nei")) |>
+  summarise(n.sid = n_distinct(fisktegund),
+            .groups = "drop") |>
+  mutate(dm = floor_date(londun_hefst, "month")) |>
+  left_join(gear_code |> 
+              rename(veidarfaeri = gid)) |> 
+  mutate(veidarfaeri = paste(str_pad(veidarfaeri, 2, pad = "0"), gear)) |> 
+  ggplot(aes(dm, n.sid, colour = on.board)) +
+  stat_summary(fun.data = "mean_cl_boot",
+               size = 0.25) +
+  scale_colour_brewer(palette = "Set1") +
+  facet_wrap(~ veidarfaeri, scales = "free_y") +
+  labs(x = "Mánuður", y = "Fjöldi tegunda",
+       colour = "Eftirlitsmaður",
+       caption = "Hver rammi: Veiðarfæri, Miðgildi og 95% öryggismörk") +
+  theme(legend.position = c(0.9, 0.15)) +
+  expand_limits(y = 0)
+```
+

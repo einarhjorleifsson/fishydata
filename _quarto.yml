@@ -7,13 +7,13 @@ website:
     left:
       - text: Documents
         menu:
-          - process.qmd
-          - observer-trips.qmd
-          - trips.qmd
-          - catch.qmd
-          - auxillary-data.qmd
-          - sanity-tests.qmd
-          - geoserver_demo.qmd
+          - qmd/process.qmd
+          - qmd/observer-trips.qmd
+          - qmd/trips.qmd
+          - qmd/catch.qmd
+          - qmd/auxillary-data.qmd
+          - qmd/sanity-tests.qmd
+          - qmd/geoserver_demo.qmd
       - text: Bits
         menu: 
           - bits_landings.qmd

@@ -44,20 +44,20 @@ Lykiláhersla var lögð á að allt samtvinningarferlið væri innifalið í fo
 ```{r}
 # landings ---------------------------------------------------------------------
 gear <-  
-  read_rds("data/landings/agf_gear.rds") |> 
+  read_rds(here::here("data/landings/agf_gear.rds")) |> 
   select(gid_ln = gid, heiti)
 ob <- 
-  read_rds("data/landings/agf_observers.rds") |> 
+  read_rds(here::here("data/landings/agf_observers.rds")) |> 
   filter(use) |> 
   select(.lid) |> 
   mutate(observer = "yes")
-CT <- read_rds("data/landings/agf_catch.rds")
+CT <- read_rds(here::here("data/landings/agf_catch.rds"))
 ca <- 
   CT |> 
   group_by(.lid) |> 
   summarise(n_sid = n_distinct(sid))
 ln <- 
-  read_rds("data/landings/agf_stations.rds") |> 
+  read_rds(here::here("data/landings/agf_stations.rds")) |> 
   left_join(ca) |> 
   left_join(ob) |> 
   left_join(gear) |> 
@@ -74,7 +74,7 @@ lb_species <-
   summarise(n.species = n_distinct(sid)) |> 
   collect()
 TRIP_VISIR <- 
-  arrow::open_dataset("trip_visir.parquet") |> 
+  arrow::open_dataset(here::here("trip_visir.parquet")) |> 
   filter(!is.na(.sid))
 lb <- 
   arrow::open_dataset(paste0(pth, "logbooks/station-for-ais.parquet")) |> 
@@ -90,7 +90,7 @@ lb <-
 
 # auxillary --------------------------------------------------------------------
 vids <- 
-  read_rds("data-aux/vessels.rds") |> 
+  read_rds(here::here("data-aux/vessels.rds")) |> 
   select(vid, length)
 
 # filters ----------------------------------------------------------------------
@@ -202,7 +202,7 @@ p1 + p2
 #| label: fig-landspecies4
 #| fig-cap: "Meðalfjöldi tegunda Meðalfjöldi tegunda á tímabilinu 2016-2022í veiðiferð eftir veiðarfærum eftir því hvort eftirlitsmaður var um borð eða ekki fyrir botnvörpu og línu eftir mismunandi skipastærð (lengd). Einungis skip sem að hafa verið með eftirlitsmann a.m.k. einu sinni á tímabilinu 2016-2022."
 vids <- 
-  read_rds("data-aux/vessels.rds") |> 
+  read_rds(here::here("data-aux/vessels.rds")) |> 
   select(vid, length)
 ln |> 
   filter(gid_ln == 6,

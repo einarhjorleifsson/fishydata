@@ -2,11 +2,13 @@
 library(sf)
 library(tidyverse)
 library(omar)
+library(arrow)
+library(sfarrow)
 con <- connect_mar()
 
 # Iceland - shoreline -----------------------------------------------------------
 # safer way than gisland::read_strandlinur
-read_shorline <- function(mainland = TRUE) {
+read_shoreline <- function(mainland = TRUE) {
   s <- 
     "IS_50V:strandlina_flakar" %>% 
     gisland::read_lmi()
@@ -35,8 +37,15 @@ read_shorline <- function(mainland = TRUE) {
   return(s)
 }
 
-read_shorline() |> 
+shoreline <- 
+  read_shorline() 
+shoreline |> 
   st_write("data-aux/shoreline.gpkg")
+shoreline |> 
+  st_write("/net/hafgola.hafro.is/var/ftp/pub/data/fishydata/shoreline.gpkg")
+
+read_sf("ftp://ftp.hafro.is/pub/data/fishydata/shoreline.gpkg")
+
 
 # code to be used in main scripts
 # st_transform(crs = 3057) |> 

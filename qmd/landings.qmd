@@ -1,0 +1,430 @@
+---
+title: "Landings"
+---
+
+```{r}
+library(arrow)
+library(tidyverse)
+library(patchwork)
+library(broom)
+library(modelr)
+# landings ---------------------------------------------------------------------
+gear <-  
+  read_rds(here::here("data/landings/agf_gear.rds")) |> 
+  select(gid_ln = gid, heiti)
+ob <- 
+  read_rds(here::here("data/landings/agf_observers.rds")) |> 
+  filter(use) |> 
+  select(.lid) |> 
+  mutate(observer = "yes")
+CT <- read_rds(here::here("data/landings/agf_catch.rds"))
+ca <- 
+  CT |> 
+  group_by(.lid) |> 
+  summarise(n_sid = n_distinct(sid))
+ln <- 
+  read_rds(here::here("data/landings/agf_stations.rds")) |> 
+  left_join(ca) |> 
+  left_join(ob) |> 
+  left_join(gear) |> 
+  mutate(observer = replace_na(observer, "no"),
+         year = year(datel),
+         gear = paste0(str_pad(gid_ln, width = 2, pad = "0"),
+                       " ",
+                       heiti))
+# # logbooks ---------------------------------------------------------------------
+# pth = "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
+# lb_species <- 
+#   arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet")) |> 
+#   group_by(.sid) |> 
+#   summarise(n.species = n_distinct(sid)) |> 
+#   collect()
+# TRIP_VISIR <- 
+#   arrow::open_dataset("trip_visir.parquet") |> 
+#   filter(!is.na(.sid))
+# lb <- 
+#   arrow::open_dataset(paste0(pth, "logbooks/station-for-ais.parquet")) |> 
+#   left_join(TRIP_VISIR |> 
+#               select(vid, .sid, .cid)) |> 
+#   collect() |> 
+#   left_join(lb_species) |> 
+#   arrange(vid, date, t1) |> 
+#   group_by(vid, .cid) |> 
+#   mutate(tow.n = 1:n(),
+#          n.stations = max(tow.n)) |> 
+#   ungroup()
+species <- 
+  omar::tbl_mar(omar::connect_mar(), "agf.aflagrunnur_v") |> 
+  select(starts_with("fisktegund")) |> 
+  distinct() |> 
+  collect() |> 
+  select(sid = fisktegund, tegund = fisktegund_heiti)
+
+# # auxillary --------------------------------------------------------------------
+# vids <- 
+#   read_rds("data-aux/vessels.rds") |> 
+#   select(vid, length)
+
+# filters ----------------------------------------------------------------------
+ln <- 
+  ln |> 
+  filter(year >= 2016,
+         gid_ln %in% c(2, 3, 6, 7, 9, 11, 12, 13, 21)) |> 
+  mutate(date = floor_date(datel, "month"),
+         Eftirlitsmaður = ifelse(observer == "yes", "Já", "Nei"))
+
+species_hz <- function(GID, ln,  CT, trim = TRUE) {
+  trips <- 
+    ln |> 
+    filter(gid_ln == GID)
+  GEAR <- trips |> pull(gear) |> unique()
+  trips <-
+    trips |> 
+    count(Eftirlitsmaður)
+  tmp <- 
+    ln |> 
+    filter(gid_ln == GID) |> 
+    left_join(CT) |> 
+    select(.lid, Eftirlitsmaður, sid) |> 
+    distinct() |> 
+    group_by(Eftirlitsmaður, sid) |> 
+    summarise(n.species = n(),
+              .groups = "drop") |> 
+    left_join(trips) |> 
+    left_join(species) |> 
+    mutate(sid = paste0(str_pad(sid, width = 3, pad = "0"),
+                        " ",
+                        tegund)) |> 
+    mutate(p.species = n.species / n)
+  
+  if(trim) {
+    sids <- 
+      tmp |> 
+      select(Eftirlitsmaður, sid, p.species) |> 
+      spread(Eftirlitsmaður, p.species, fill = 0) |> 
+      arrange(Já) |> 
+      filter(Já >= 0.001 | Nei >= 0.001) |> 
+      pull(sid)
+    tmp <- 
+      tmp |> 
+      filter(sid %in% sids)
+  }
+  
+  p <- 
+    tmp |> 
+    ggplot() +
+    geom_pointrange(aes(x = sid,
+                        y = p.species,
+                        ymin = 0,
+                        ymax = p.species,
+                        colour = Eftirlitsmaður)) +
+    scale_colour_brewer(palette = "Set1") +
+    scale_y_continuous(breaks = seq(0, 1, by = 0.1)) +
+    labs(y = "Hlutfall landana",
+         x = NULL,
+         caption = GEAR) +
+    theme(legend.position = c(0.8, 0.8)) +
+    coord_cartesian(ylim = c(0, 1)) +
+    coord_flip()
+  return(p)
+}
+# Frequency of species ---------------------------------------------------------
+
+if(FALSE) {
+  species_hz(2, ln, CT)
+  species_hz(3, ln, CT)
+  species_hz(6, ln, CT)
+  species_hz(7, ln, CT)
+  species_hz(9, ln, CT)
+  species_hz(11, ln, CT)
+  species_hz(12, ln, CT)
+  species_hz(13, ln, CT)
+  species_hz(21, ln, CT)
+}
+
+trips <- 
+  ln |> 
+  count(Eftirlitsmaður, gear)
+
+tmp <- 
+  ln |> 
+  left_join(CT) |> 
+  select(.lid, Eftirlitsmaður, sid, gear) |> 
+  distinct() |> 
+  group_by(Eftirlitsmaður, sid, gear) |> 
+  summarise(n.species = n(),
+            .groups = "drop") |> 
+  left_join(trips) |> 
+  left_join(species) |> 
+  mutate(sid = paste0(str_pad(sid, width = 3, pad = "0"),
+                      " ",
+                      tegund)) |> 
+  mutate(p.species = n.species / n)
+
+what <- 
+  tmp |> 
+  select(Eftirlitsmaður, sid, p.species, gear) |> 
+  spread(Eftirlitsmaður, p.species, fill = 0) |> 
+  arrange(Já) |> 
+  filter(Já >= 0.001 | Nei >= 0.001) |> 
+  select(sid, gear) |> 
+  distinct()
+tmp <- 
+  tmp |> 
+  inner_join(what)
+```
+
+
+```{r}
+#| fig.height: 30
+tmp |> 
+  ggplot() + 
+  geom_pointrange(aes(x = sid,
+                      y = p.species,
+                      ymin = 0,
+                      ymax = p.species,
+                      colour = Eftirlitsmaður)) +
+  facet_grid(gear ~ ., scales = "free", space = "free") +
+  theme(strip.text.y = element_text(angle = 0)) +
+  labs(x = NULL, y = "Hlutfall landana") +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.1)) +
+  coord_flip() +
+  scale_colour_brewer(palette = "Set1")
+
+```
+
+## Viðauki
+
+### Understanding general linear models 
+
+* Let's limit our analsys to  trawlers where observer have been on-board
+* Let's take a very simple case of only two trawlers, selected because they are:
+  * At the extreme range of the number of species landed
+  * Have some few trips where observer was onboard
+
+```{r}
+obs.vids <- 
+  ln |> 
+  filter(gid_ln == 6,
+         Eftirlitsmaður == "Já") |> 
+  pull(vid) |> 
+  unique()
+d <-
+  ln |> 
+  filter(gid_ln == 6,
+         vid %in% obs.vids)
+
+d2 <- 
+  d |> 
+  filter(vid %in% c(1937, 2170)) |> 
+  select(vid, sid = n_sid, observer = Eftirlitsmaður) |> 
+  mutate(vid = as.factor(vid),
+         observer = as.factor(observer))
+```
+
+#### A simple histogram of the species per trip
+
+```{r}
+d2 |> 
+  count(vid, sid) |> 
+  ggplot() +
+  geom_col(aes(sid, n)) +
+  facet_grid(vid ~ ., scales = "free_y") +
+  labs(x = "Number of species",
+       y = "Number of trips")
+```
+
+#### Fit a GLM to the data
+
+Here let's start by using gaussian-distribution (read: normal-distribution) just because it is simple to interpret the parameter estimates. A statistician may argue that we should use the poisson-distribution because we are dealing with counts (and we can not have negative count). Need to check that at some stage.
+
+```{r}
+m <- glm(formula = sid  ~ vid, data = d2, family = gaussian)
+summary(m)
+```
+
+The statistics indicate that the model is highly significant. The meaning of the parameters is as follows:
+
+```{r}
+m |> 
+  tidy(conf.int = TRUE) |> 
+  knitr::kable(digits = 2)
+```
+
+* The estimated mean number of species for the first vessel (vid = 1937) is 8.55 species, with a 95% confidence interval between 8.43-8.68. This vessel servers as our ground-zero when interpreting the meaning of the parameter values of the second vessel.
+* For vessel 2170 we have a value of 6.45 with a confidence interval of 6.16-6.73. This is to be interpreted as this vessel on average reportin 6.45 more species than the first vessel.
+
+In order to get the actual mean estimate of the number of species for the second vessel we could do something like:
+
+```{r}
+m2179 <- 8.55 + 6.45   # the mean
+```
+
+```{r}
+d2 |> 
+  add_predictions(m) |> 
+  select(vid, pred) |> 
+  distinct()
+tidy(m, conf.int = TRUE)
+```
+
+
+#### Considering observers
+
+Looking at the distribution adding the observer we have:
+
+```{r}
+d2 |> 
+  count(vid, observer, sid) |> 
+  ggplot() +
+  geom_col(aes(sid, n, fill = observer)) +
+  facet_grid(vid ~ ., scales = "free_y") +
+  labs(x = "Number of species",
+       y = "Number of trips") +
+  scale_fill_brewer(palette = "Set1")
+```
+
+We observe:
+
+* The number of observer trips is a small proportion of the total trips
+* When observer is on board the number of species landed tend to be in the uppper range of the distribution
+
+Could get a quick summary view of the mean and the confidence interval via:
+
+```{r}
+d2 |> 
+  ggplot(aes(vid, sid, colour = observer)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  scale_colour_brewer(palette = "Set1") +
+  labs(x = "Vessel",
+       y = "Number of species") +
+  scale_y_continuous(breaks = 8:20)
+```
+
+So, a quick analysis indicates that we have significantly higher number of species landed when observer is on-board. Let's estimate the parameters:
+
+```{r}
+m <- glm(formula = sid  ~ vid + observer, data = d2, family = poisson)
+summary(m)
+```
+
+So again the statistics are significant, both the vessel factor and the observer factor. Nake note that the intercept is now different, was 2.14612 (8.55 species) is now 2.44682 (11.55 species).
+
+The meaning of 11.55 can be considered as the expected mean number of species landed of the first vessel when the observer is on-board, taken into account the data for the second vessel.
+
+
+
+#### Adding quarter
+
+```{r}
+d2 <- 
+  d |> 
+  mutate(quarter = quarter(date)) |> 
+  filter(vid %in% c(1937, 2170)) |> 
+  select(vid, sid = n_sid, q = quarter, observer = Eftirlitsmaður) |> 
+  mutate(vid = as.factor(vid),
+         observer = as.factor(observer))
+```
+
+
+```{r}
+d.count <- 
+  d |> 
+  group_by(vid) |> 
+  summarise(n = n(),
+            n.observer = sum(Eftirlitsmaður == "Já"),
+            m = median(n_sid)) |> 
+  arrange(-m) |> 
+  mutate(n = paste0(n, " / ", n.observer))
+d |> 
+  mutate(vid = factor(vid)) |> 
+  ggplot(aes(reorder(vid, n_sid), n_sid, colour = Eftirlitsmaður)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  labs(x = "Skipaskárnúmer", y = "Fjöldi landaðra tegunda",
+       caption = "Fiskibotnvarpa") +
+  scale_colour_brewer(palette = "Set1") +
+  coord_flip()
+```
+
+Let take some extreme vessels when it comes to median number of species and run a glm-model:
+
+```{r}
+
+m
+summary(m)
+1 - (m$deviance/m$null.deviance) # variance explained
+a <- 
+  d2 %>% 
+  add_predictions(m) %>% 
+  mutate(pred = exp(pred))
+a |> 
+  ggplot(aes(sid, fill = observer)) +
+  geom_histogram(binwidth = 1) +
+  facet_grid(vid ~ ., scales = "free_y") +
+  scale_fill_brewer(palette = "Set1")
+
+m2 <- glm(formula = sid  ~ vid + observer, data = d2, family = poisson)
+m2
+summary(m2)
+1 - (m2$deviance/m2$null.deviance) # variance explained
+```
+
+
+
+```{r}
+d <- 
+  ln |> 
+  mutate(year = year(datel),
+         month = month(datel)) |> 
+  filter(gid_ln == 6) |> 
+  select(n_sid, vid, hid = hid_ln, month, observer = Eftirlitsmaður) |> 
+  mutate(vid = factor(vid),
+         hid = factor(hid),
+         month = factor(month),
+         observer = factor(observer))
+m <- glm(formula = n_sid  ~ vid, data = d, family = poisson)
+m <- glm(formula = n_sid  ~ vid + hid + month + observer, data = d, family = poisson)
+#m <- glm(formula = n_sid  ~ observer, data = d)
+summary(m)
+summary(residuals(m))
+m$null.deviance
+m$deviance
+1 - (m$deviance/m$null.deviance)
+plot(m)
+anova(m, test = "F")
+
+a <- 
+  d %>% 
+  add_predictions(m) %>% 
+  add_residuals(m)
+a |> count(pred)
+ggplot(a, 
+       aes(resid)) + 
+  geom_histogram(aes(y=after_stat(density),), position="identity", alpha=0.5, col='grey50', fill='grey50')+
+  geom_density(aes(resid),adjust=2.5,color='blue') +
+  ylab("Density") + xlab("Model residuals")
+mt <- 
+  m |> 
+  tidy() |> 
+  mutate(mean = estimate,
+         lower.ci = mean - 2 * std.error,
+         upper.ci = mean + 2 * std.error)
+mt |> 
+  filter(str_starts(term, "hid")) |> 
+  ggplot() +
+  geom_pointrange(aes(reorder(term, mean), y = mean, ymin = lower.ci, ymax = upper.ci)) +
+  coord_flip()
+mt |> 
+  filter(str_starts(term, "month")) |> 
+  mutate(term = str_remove(term, "month"),
+         term = as.integer(term)) |> 
+  ggplot() +
+  geom_pointrange(aes(term, y = mean, ymin = lower.ci, ymax = upper.ci))  +
+  scale_x_continuous(breaks = 1:12)
+mt |> 
+  filter(str_starts(term, "vid")) |> 
+  ggplot() +
+  geom_pointrange(aes(reorder(term, mean), y = mean, ymin = lower.ci, ymax = upper.ci)) +
+  coord_flip()
+```
+

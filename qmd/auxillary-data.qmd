@@ -17,7 +17,7 @@ The shorelines are taken [programmatically](https://github.com/einarhjorleifsson
 The shoreline object can be accessed within the project via:
 
 ```{r}
-read_sf("data-aux/shoreline.gpkg") |> plot()
+read_sf(here::here("data-aux/shoreline.gpkg")) |> plot()
 ```
 
 ## Harbours
@@ -27,7 +27,7 @@ Harbour polygons are generated from the ...
 The harbour polygons can be accessed within the project via:
 
 ```{r}
-read_sf("data-aux/harbours.gpkg") |> select(harbour) |> plot()
+read_sf(here::here("data-aux/harbours.gpkg")) |> select(harbour) |> plot()
 ```
 
 ## Gears

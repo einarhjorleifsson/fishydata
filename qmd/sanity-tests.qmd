@@ -36,7 +36,7 @@ ais_by_vid_month_year <-
   count(vid, year, month) |> 
   collect()
 
-lb <- read_rds("data/logbooks/station.rds")
+lb <- read_rds(here::here("data/logbooks/station.rds"))
 lb_by_vid_month_year <- 
   lb |> 
   mutate(year = year(date),

@@ -1,0 +1,39 @@
+---
+title: "Potential observer trips"
+---
+
+```{r}
+library(tidyverse)
+library(omar)
+con <- connect_mar()
+q <-
+  ch_station(con, trim = FALSE) |>
+  select(.stid:bt, cruise = leidangur) |> 
+  left_join(ch_sample(con, trim = FALSE) |> 
+              select(.stid:towlength, landsyni, gear = veidarfaeri_heiti)) |> 
+  filter(sclass %in% c(1, 8),
+         landsyni == 0)
+d <- 
+  q |> 
+  select(.stid, cruise,  .id, vid, gear, date) |> 
+  collect() |> 
+  mutate(date = as_date(date)) |> 
+  collect() |> 
+  arrange(vid, date)
+
+d |> 
+  mutate(year = year(date)) |> 
+  count(year, cruise) |> 
+  view()
+
+d |> 
+  filter(year(date) > 2000,
+         gear == "Botnvarpa (eitt skip)") |> 
+  mutate(date = floor_date(date, "month")) |> 
+  count(vid, gear, date) |> 
+  ggplot(aes(date, factor(vid), colour = gear)) +
+  geom_point() +
+  scale_colour_brewer(palette = "Set1")
+  
+```
+

@@ -6,7 +6,7 @@ format:
 ---
 
 ```{r, echo = FALSE}
-knitr::include_graphics("data-aux/diagrams.svg")
+knitr::include_graphics(here::here("data-aux/diagrams.svg"))
 ```
 
 **this space is dynamic**: meaning that you will get different versions depending on your access time

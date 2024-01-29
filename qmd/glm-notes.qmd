@@ -1,0 +1,408 @@
+---
+title: "GLM notes"
+echo: FALSE
+---
+
+```{r}
+library(arrow)
+library(tidyverse)
+library(ggfortify)
+library(patchwork)
+library(broom)
+library(ciTools)
+library(modelr)
+# landings ---------------------------------------------------------------------
+gear <-  
+  read_rds(here::here("data/landings/agf_gear.rds")) |> 
+  select(gid_ln = gid, heiti)
+ob <- 
+  read_rds(here::here("data/landings/agf_observers.rds")) |> 
+  filter(use) |> 
+  select(.lid) |> 
+  mutate(observer = "yes")
+CT <- read_rds(here::here("data/landings/agf_catch.rds"))
+ca <- 
+  CT |> 
+  group_by(.lid) |> 
+  summarise(n_sid = n_distinct(sid))
+ln <- 
+  read_rds(here::here("data/landings/agf_stations.rds")) |> 
+  left_join(ca) |> 
+  left_join(ob) |> 
+  left_join(gear) |> 
+  mutate(observer = replace_na(observer, "no"),
+         year = year(datel),
+         gear = paste0(str_pad(gid_ln, width = 2, pad = "0"),
+                       " ",
+                       heiti))
+# # logbooks ---------------------------------------------------------------------
+# pth = "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
+# lb_species <- 
+#   arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet")) |> 
+#   group_by(.sid) |> 
+#   summarise(n.species = n_distinct(sid)) |> 
+#   collect()
+# TRIP_VISIR <- 
+#   arrow::open_dataset("trip_visir.parquet") |> 
+#   filter(!is.na(.sid))
+# lb <- 
+#   arrow::open_dataset(paste0(pth, "logbooks/station-for-ais.parquet")) |> 
+#   left_join(TRIP_VISIR |> 
+#               select(vid, .sid, .cid)) |> 
+#   collect() |> 
+#   left_join(lb_species) |> 
+#   arrange(vid, date, t1) |> 
+#   group_by(vid, .cid) |> 
+#   mutate(tow.n = 1:n(),
+#          n.stations = max(tow.n)) |> 
+#   ungroup()
+species <- 
+  omar::tbl_mar(omar::connect_mar(), "agf.aflagrunnur_v") |> 
+  select(starts_with("fisktegund")) |> 
+  distinct() |> 
+  collect() |> 
+  select(sid = fisktegund, tegund = fisktegund_heiti)
+
+# # auxillary --------------------------------------------------------------------
+# vids <- 
+#   read_rds("data-aux/vessels.rds") |> 
+#   select(vid, length)
+
+# filters ----------------------------------------------------------------------
+ln <- 
+  ln |> 
+  filter(year >= 2016,
+         gid_ln %in% c(2, 3, 6, 7, 9, 11, 12, 13, 21)) |> 
+  mutate(date = floor_date(datel, "month"),
+         Eftirlitsmaður = ifelse(observer == "yes", "Já", "Nei"))
+
+
+```
+
+
+## Simple case
+
+* Let's limit our analsys to  trawlers where observer have been on-board at least once
+* Let's take a very simple case of only two trawlers, selected because they are:
+  * At the extreme range of the number of species landed
+  * Have some few trips where observer was onboard
+
+```{r}
+obs.vids <- 
+  ln |> 
+  filter(gid_ln == 6,
+         Eftirlitsmaður == "Já") |> 
+  pull(vid) |> 
+  unique()
+d <-
+  ln |> 
+  filter(gid_ln == 6,
+         vid %in% obs.vids)
+
+d2 <- 
+  d |> 
+  filter(vid %in% c(1937, 2170)) |> 
+  select(vid, sid = n_sid, observer = Eftirlitsmaður) |> 
+  mutate(vid = as.factor(vid),
+         observer = as.factor(observer))
+```
+
+A simple histogram of the observations ...
+
+```{r}
+p <-
+  d2 |> 
+  count(vid, sid) |> 
+  ggplot() +
+  theme_bw() +
+  geom_col(aes(sid, n),
+           fill = "grey") +
+  facet_grid(vid ~ ., scales = "free_y") +
+  labs(x = "Number of species",
+       y = "Number of trips")
+p
+```
+
+#### Fit a GLM to the data
+
+Here let's start by using gaussian-distribution (read: normal-distribution) just because it is simple to interpret the parameter estimates. A statistician may argue that we should use the poisson-distribution because we are dealing with counts (and we can not have negative count). Need to check that at some stage.
+
+```{r}
+m <- glm(formula = sid  ~ vid, data = d2, family = gaussian)
+m |> 
+  broom::glance() |> 
+  knitr::kable(digits = 1)
+m |> 
+  broom::tidy(conf.int = TRUE) |> 
+  knitr::kable(digits = 2)
+autoplot(m)
+```
+
+
+* The estimated mean number of species for the first vessel (vid = 1937) is 8.55 species, with a 95% confidence interval between 8.31-8.80. This vessel servers as our ground-zero when interpreting the meaning of the parameter values of the second vessel.
+* For vessel 2170 we have a value of 6.45 with a confidence interval of 5.89-701. The value of the estimate here is actually relative to the value of the first vessel (vid = 1937), ergo the mean number of species is 8.55 + 6.45 = 15.00
+
+In order to get the actual mean estimate of the number of species for the second vessel we could do something like:
+
+
+```{r}
+pred <- 
+  d2 |> 
+  add_ci(m, alpha = 0.1) %>%
+  select(vid, pred:UCB0.95) |> 
+  distinct() |> 
+  janitor::clean_names() 
+pred |> 
+  knitr::kable(digits = 2)
+p +
+  geom_rect(data = pred,
+            aes(xmin =  lcb0_05,
+                xmax = ucb0_95,
+                ymin = -Inf,
+                ymax =  Inf),
+            fill = "red",
+            alpha = 0.5) +
+  geom_vline(data = pred, 
+             aes(xintercept = pred),
+             colour = "blue")
+```
+
+## Considering observers
+
+Looking at the distribution adding the observer we have:
+
+```{r}
+p2 <- 
+  d2 |>
+  count(vid, observer, sid) |> 
+  ggplot() +
+  theme_bw() +
+  geom_col(aes(sid, n, fill = observer)) +
+  facet_grid(vid ~ ., scales = "free_y") +
+  labs(x = "Number of species",
+       y = "Number of trips") +
+  scale_fill_brewer(palette = "Set1")
+p2
+```
+
+We observe:
+
+* The number of observer trips is a small proportion of the total trips
+* When observer is on board the number of species landed tend to be in the uppper range of the distribution
+
+Could get a quick summary view of the mean and the confidence interval via:
+
+```{r}
+d2 |> 
+  ggplot(aes(vid, sid, colour = observer)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  scale_colour_brewer(palette = "Set1") +
+  labs(x = "Vessel",
+       y = "Number of species") +
+  scale_y_continuous(breaks = 8:20)
+```
+
+So, a quick analysis indicates that we have significantly higher number of species landed when observer is on-board. Let's estimate the parameters:
+
+```{r}
+m <- glm(formula = sid  ~ vid + observer, data = d2, family = gaussian)
+m |> 
+  broom::glance() |> 
+  knitr::kable(digits = 1)
+m |> 
+  broom::tidy(conf.int = TRUE) |> 
+  knitr::kable(digits = 2)
+autoplot(m)
+```
+
+So again the statistics are significant, both the vessel factor and the observer factor. Take note that the intercept is now different, 8.55 (species), is now  12.62. 
+
+The meaning of 12.61 can be considered as the expected mean number of species landed by the first vessel when the observer is on-board, taken into account the estimated mean difference in the number of species (based on both vessels).
+
+```{r}
+pred <- 
+  d2 |> 
+  add_ci(m, alpha = 0.1) %>%
+  select(vid, observer, pred:UCB0.95) |> 
+  distinct() |> 
+  janitor::clean_names() 
+pred |> 
+  knitr::kable(digits = 2)
+```
+
+
+#### Adding quarter
+
+```{r}
+d2 <- 
+  d |> 
+  mutate(quarter = quarter(date)) |> 
+  filter(vid %in% c(1937, 2170)) |> 
+  select(vid, sid = n_sid, q = quarter, observer = Eftirlitsmaður) |> 
+  mutate(vid = as.factor(vid),
+         q = as.factor(q),
+         observer = as.factor(observer))
+d2 |> count(vid, q, observer) |> spread(observer, n)
+d2 |> 
+  ggplot(aes(q, sid, colour = observer)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_grid(vid ~ .) +
+  scale_colour_brewer(palette = "Set1")
+```
+
+```{r}
+m <- glm(formula = sid  ~ vid + observer + q, data = d2, family = gaussian)
+m |> 
+  broom::glance() |> 
+  knitr::kable(digits = 1)
+m |> 
+  broom::tidy(conf.int = TRUE) |> 
+  knitr::kable(digits = 2)
+autoplot(m)
+```
+
+So adding quarter is not significant (so in a stepwise model this model should not be part of the final model).
+
+#### Adding harbour
+
+A bit meaningless
+
+```{r}
+d2 <- 
+  d |> 
+  filter(vid %in% c(1937, 2170)) |> 
+  select(vid, sid = n_sid, hid = hid_ln, observer = Eftirlitsmaður) |> 
+  mutate(vid = as.factor(vid),
+         hid = as.factor(hid),
+         observer = as.factor(observer))
+d2 |> count(vid, hid, observer) |> spread(observer, n)
+d2 |> 
+  ggplot(aes(hid, sid, colour = observer)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_grid(vid ~ .) +
+  scale_colour_brewer(palette = "Set1")
+```
+
+```{r}
+m <- glm(formula = sid  ~ vid + observer + hid, data = d2, family = gaussian)
+m |> 
+  broom::glance() |> 
+  knitr::kable(digits = 1)
+m |> 
+  broom::tidy(conf.int = TRUE) |> 
+  knitr::kable(digits = 2)
+```
+
+
+### The full dataset
+
+```{r}
+d <- 
+  ln |> 
+  mutate(year = year(datel),
+         month = month(datel)) |> 
+  filter(gid_ln == 6,
+         vid %in% obs.vids) |> 
+  select(sid = n_sid, vid, hid = hid_ln, month, observer = Eftirlitsmaður) |> 
+  mutate(vid = factor(vid),
+         hid = factor(hid),
+         month = factor(month),
+         observer = factor(observer))
+m <- glm(formula = sid  ~ vid + observer + vid, data = d, family = gaussian)
+m |> 
+  broom::glance() |> 
+  knitr::kable(digits = 1)
+# m |> 
+#   broom::tidy(conf.int = TRUE) |> 
+#   knitr::kable(digits = 2)
+autoplot(m)
+
+pred <- 
+  d |> 
+  add_ci(m, alpha = 0.1) %>%
+  select(vid, observer, pred:UCB0.95) |> 
+  distinct() |> 
+  janitor::clean_names() 
+pred |> 
+  ggplot() +
+  geom_pointrange(aes(reorder(vid, pred),
+                      y = pred,
+                      ymin = lcb0_05, 
+                      ymax = ucb0_95,
+                      colour = observer)) +
+  scale_colour_brewer(palette = "Set1") +
+  scale_y_continuous(breaks = 0:25) +
+  labs(x = "Vessel",
+       y = "Number of species landed") +
+  coord_flip()
+```
+
+Notes for the statistician:
+
+* Error bar the same for no observer vs observer
+* Constant difference in the number of species - need an interactive term?
+
+### Add interactive term
+
+```{r}
+m <- glm(formula = sid  ~ vid + observer + vid * observer, data = d, family = gaussian)
+m |> 
+  broom::glance() |> 
+  knitr::kable(digits = 1)
+# m |> 
+#   broom::tidy(conf.int = TRUE) |> 
+#   knitr::kable(digits = 2)
+autoplot(m)
+
+pred <- 
+  d |> 
+  add_ci(m, alpha = 0.1) %>%
+  select(vid, observer, pred:UCB0.95) |> 
+  distinct() |> 
+  janitor::clean_names() 
+pred |> 
+  ggplot() +
+  geom_pointrange(aes(reorder(vid, pred),
+                      y = pred,
+                      ymin = lcb0_05, 
+                      ymax = ucb0_95,
+                      colour = observer)) +
+  scale_colour_brewer(palette = "Set1") +
+  scale_y_continuous(breaks = 0:25) +
+  labs(x = "Vessel",
+       y = "Number of species landed") +
+  coord_flip()
+```
+
+### Try poisson (because these are counts)
+
+```{r}
+m <- glm(formula = sid  ~ vid + observer + vid * observer, data = d, family = poisson)
+m |> 
+  broom::glance() |> 
+  knitr::kable(digits = 1)
+# m |> 
+#   broom::tidy(conf.int = TRUE) |> 
+#   knitr::kable(digits = 2)
+autoplot(m)
+
+pred <- 
+  d |> 
+  add_ci(m, alpha = 0.1) %>%
+  select(vid, observer, pred:UCB0.95) |> 
+  distinct() |> 
+  janitor::clean_names() 
+pred |> 
+  ggplot() +
+  geom_pointrange(aes(reorder(vid, pred),
+                      y = pred,
+                      ymin = lcb0_05, 
+                      ymax = ucb0_95,
+                      colour = observer)) +
+  scale_colour_brewer(palette = "Set1") +
+  scale_y_continuous(breaks = 0:25) +
+  labs(x = "Vessel",
+       y = "Number of species landed") +
+  coord_flip()
+```
+

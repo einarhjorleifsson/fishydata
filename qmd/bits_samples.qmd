@@ -1,0 +1,14 @@
+---
+title: "Sýni"
+---
+
+```{r}
+library(tidyverse)
+library(omar)
+con <- connect_mar()
+omar::ch_station(con) |> 
+  left_join(omar::ch_sample(con, trim = FALSE) |> 
+              select(.stid:towlength, landsyni)) |> 
+  glimpse()
+```
+

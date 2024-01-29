@@ -7,7 +7,7 @@ library(sf)
 library(mapview)
 library(tidyverse)
 library(arrow)
-source("R/read.R")
+source(here::here("R/read.R"))
 # parquet files:
 pth = "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
 LB <- arrow::open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
@@ -17,9 +17,9 @@ AIS |>
   filter(vms == "yes") |> 
   count(vid, .cid, .sid) |> 
   collect() |> 
-  arrow::write_dataset("trip_visir.parquet")
+  arrow::write_dataset(here::here("trip_visir.parquet"))
 TRIP_VISIR <- 
-  arrow::open_dataset("trip_visir.parquet") |> 
+  arrow::open_dataset(here::here("trip_visir.parquet")) |> 
   filter(!is.na(.sid))
 LB <- 
   LB |> 
@@ -230,5 +230,3 @@ trips |>
   labs(x = "Hlutfall", y = "Tegund") +
   scale_x_continuous(breaks = seq(0, 0.20, by = 0.02))
 ```
-
-

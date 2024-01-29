@@ -1,0 +1,8 @@
+---
+title: "Redfish closure"
+---
+
+* [Semantic Segmentation of AIS Trajectories for Detecting Complete Fishing Activities](https://ieeexplore.ieee.org/document/9861189)
+* [Anomaly Detection in Maritime AIS Tracks: A Review of Recent Approaches](https://www.comsys.rwth-aachen.de/fileadmin/papers/2022/2022-wolsing-aistracks.pdf)
+
+* [Adding a blog to your existing Quarto website](https://samanthacsik.github.io/posts/2022-10-24-quarto-blogs)

@@ -1,0 +1,55 @@
+---
+title: "Vocabulary"
+warning: false
+message: false
+---
+
+```{r}
+library(tidyverse)
+```
+
+## Vessels
+
+```{r}
+vids <- read_rds(here::here("data-aux/vessels.rds"))
+vids |> glimpse()
+```
+
+## Gears
+
+TODO:
+
+* Add mapping to landings database gears
+* Map to FAO code: Here though would need to apply local "target" sub-unit
+* Use this source (data-aux/gear_codes.rds) in downstream code
+
+```{r}
+gids <- read_rds(here::here("data-aux/gear_codes.rds"))
+gids |> 
+  arrange(gid) |> 
+  knitr::kable()
+```
+
+## Logbooks
+
+```{r}
+lgs <- read_rds(here::here("data/logbooks/station.rds"))
+lgs |> glimpse()
+```
+
+TODO: merge sweeps and plow_width - these are both measure of gear-width
+
+Key variables: 
+
+* **.sid**: a unique station identifier ("visir" in the old logbooks)
+* **vid**: vessel identification number, aka "skipaskrárnúmer"
+* **gid**: gear id
+
+```{r}
+lgs |> 
+  count(gid, name = "Number of stations") |> 
+  left_join(gids |> 
+              select(gid, lysing)) |> 
+  knitr::kable()
+```
+

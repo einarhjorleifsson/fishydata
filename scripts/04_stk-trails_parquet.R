@@ -3,7 +3,7 @@
 
 # ------------------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2023_12-29.log &
+#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2024_01-24.log &
 #
 
 
@@ -321,6 +321,14 @@ for(v in 1:length(VID)) {
       
       res2$x <- xy$X
       res2$y <- xy$Y
+      
+      # 2024-01-24 NOTE: Could calculate the step distance here
+      res2 <- 
+        res2 |> 
+        group_by(.cid) |> 
+        mutate(dist = traipse::track_distance(lon, lat),
+               dist = replace_na(dist, 0)) |> 
+        ungroup()
       
       # and now for the save ...
       #  here only save positive trips with more than 5 pings
