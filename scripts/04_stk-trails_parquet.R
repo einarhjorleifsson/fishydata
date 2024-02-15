@@ -3,7 +3,7 @@
 
 # ------------------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2024_01-24.log &
+#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2024-02-12.log &
 #
 
 
@@ -13,7 +13,7 @@
 #  STK (stk.trail)
 #  Harbour data (see below)
 # Output:
-#  At trail of each vessel by year: stasi/gis/AIS_TRAIL/trails
+#  A trail of each vessel: stasi/fishydata/data/ais
 #  Contains the following additional variables:
 #   trip id (.cid): A sequential number identifying trips of each vessel
 #    Negative numbers: Boat in harbour
@@ -68,11 +68,14 @@ harbour <- read_sf("data-aux/harbours.gpkg")
 harbours.standards <- 
   readxl::read_excel("data-aux/harbours.xlsx") |> 
   select(hid, hid_std)
-LB <- read_rds("data/logbooks/station-for-ais.rds")
+LB <- read_rds("data/logbooks/rds/station-for-ais.rds")
 
 con <- connect_mar()
 
-YEARS <- 2009:2022
+YEARS <- 2007:2024
+
+Y1 <- min(YEARS)
+Y2 <- max(YEARS)
 D1 <- paste0(min(YEARS), "-01-01")
 D2 <- paste0(max(YEARS), "-12-31")
 
@@ -198,7 +201,7 @@ for(v in 1:length(VID)) {
       fill(hid_arr, .direction = "updown") |> 
       ungroup() |> 
       # should not be needed
-      filter(between(year(time), 2009, 2023)) |> 
+      filter(between(year(time), Y1, Y2)) |> 
       select(vid, time, .cid, lon, lat, speed, hid_dep, hid_arr, .rid, vms) |> 
       # filter(.cid > 0) |> 
       group_by(vid, .cid) |> 

@@ -3,7 +3,7 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-4_logbooks-for-ais.R --vanilla > lgs/02-4_logbooks-for-ais_2023-12-29.log &
+#  nohup R < scripts/02-4_logbooks-for-ais.R --vanilla > lgs/02-4_logbooks-for-ais_2023-02-12.log &
 lubridate::now()
 
 # Input:  data/logbooks/station-processing.rds
@@ -22,8 +22,10 @@ tic()
 # Input ------------------------------------------------------------------------
 library(arrow)
 library(tidyverse)
-lb <- read_rds("data/logbooks/station-processing.rds")
-ca <- read_rds("data/logbooks/catch.rds")
+lb <- 
+  read_rds("data/logbooks/rds/station-processing.rds") |> 
+  filter(year(date) >= 2008)
+ca <- read_rds("data/logbooks/rds/catch.rds")
 
 # Filter out records -----------------------------------------------------------
 
@@ -82,11 +84,11 @@ lb <-
 lb |> glimpse()
 
 # Save -------------------------------------------------------------------------
-lb |> write_rds("data/logbooks/station-for-ais.rds")
-ca |> write_rds("data/logbooks/catch-for-ais.rds")
+lb |> write_rds("data/logbooks/rds/station-for-ais.rds")
+ca |> write_rds("data/logbooks/rds/catch-for-ais.rds")
 
-lb |> write_parquet("data/logbooks/station-for-ais.parquet")
-ca |> write_parquet("data/logbooks/catch-for-ais.parquet")
+lb |> write_parquet("data/logbooks/parquet/station-for-ais.parquet")
+ca |> write_parquet("data/logbooks/parquet/catch-for-ais.parquet")
 
 # Info -------------------------------------------------------------------------
 toc()

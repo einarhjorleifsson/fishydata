@@ -3,15 +3,19 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2023-12-28.log &
-library(tictoc)
-tic()
+#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2024-02-12.log &
 
-lubridate::now()
+## 2024-02-12 changes
+# * Go back to 2001
+# * Set id for older logbooks to negative values
+# * create both parquet and rds files, store in new subdirectories in data/logbooks
+# * use the new vessel database
 
 # Input:  Oracle database
-# Output: data/logbooks/station.rds
-#         data/logbooks/catch.rds
+# Output: data/logbooks/rds/station.rds
+#         data/logbooks/rds/catch.rds
+#         data/logbooks/parquet/station.parquet
+#         data/lgobooks/parquet/catch.parquet
 # Downstream usage: R/02-2_logbooks-gear-correction.R
 
 ## Brief summary ---------------------------------------------------------------
@@ -24,9 +28,15 @@ lubridate::now()
 #
 # Processing data loss are related to orphan effort files
 
-# NOTE: If using years further back: need to double check that visir and station_id
+# NOTE: If using years further back than 2009: need to double check that visir and station_id
 #       are not the same.
-YEARS <- 2022:2009
+
+library(tictoc)
+tic()
+
+lubridate::now()
+
+YEARS <- 2024:2001
 
 library(data.table)
 library(tidyverse)
@@ -45,7 +55,7 @@ GEARS_trim <-
   select(gid, veidarfaeri, gclass, m4, m5)
 # Only Icelandic vessels
 q_vessels_icelandic <- 
-  omar::vessels_vessels(con) |> 
+  omar::vessel(con) |> 
   filter(!vid %in% c(0, 1, 3:5, 9999)) %>% 
   filter(!between(vid, 3700, 4999)) |> 
   select(vid)
@@ -219,7 +229,7 @@ lb_catch_new <- function(con) {
 ## Only records not in old logbooks --------------------------------------------
 BASE_new <- 
   lb_base_new(con) |> 
-  filter(year(t1) %in% 2021:2022) |> 
+  filter(year(t1) >= 2021) |> 
   collect(n = Inf) |> 
   select(vid:z2, trip_id, datel = T2, source:whack) |> 
   mutate(date = as_date(t1),
@@ -370,17 +380,40 @@ CATCH_new <-
   filter(station_id %in% BASE_new$station_id) |> 
   select(.sid = station_id, sid, catch)
 
+# Do we have to worry about id (visir)
+LGS_old |> 
+  select(.sid, base) |> 
+  mutate(.sid.in.new = ifelse(.sid %in% LGS_new$.sid,
+                                 "screeeeeeam",
+                                 "ok")) |> 
+  count(.sid.in.new)
+LGS_new |> 
+  select(.sid, base) |> 
+  mutate(.sid.in.old = ifelse(.sid %in% LGS_old$.sid,
+                              "screeeeeeam",
+                              "ok")) |> 
+  count(.sid.in.old)
+LGS_old |> 
+  select(.sid, base) |> 
+  mutate(.sid.in.new = ifelse(.sid %in% LGS_new$.sid,
+                              "screeeeeeam",
+                              "ok")) |> 
+  filter(.sid.in.new == "screeeeeeam")
+
 # 3. Merge the old and the new logbooks ----------------------------------------
 LGS <- 
   bind_rows(LGS_old, 
-            LGS_new) 
+            LGS_new)
 CATCH <- 
   bind_rows(CATCH_old,
             CATCH_new)
 
 # 4. Save the stuff ------------------------------------------------------------
-LGS |> write_rds("data/logbooks/station.rds")
-CATCH |> write_rds("data/logbooks/catch.rds")
+LGS |> write_rds("data/logbooks/rds/station.rds")
+CATCH |> write_rds("data/logbooks/rds/catch.rds")
+library(arrow)
+LGS |> arrow::write_csv_arrow("data/logbooks/parquet/stations.parquet")
+CATCH |> arrow::write_csv_arrow("data/logbooks/parquet/catch.parquet")
 
 # 7. Info ----------------------------------------------------------------------
 toc()

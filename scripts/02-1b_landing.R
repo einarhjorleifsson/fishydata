@@ -11,7 +11,7 @@
 # 
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-1b_landing.R --vanilla > lgs/02-1b_landing_2023-12-29.log &
+#  nohup R < scripts/02-1b_landing.R --vanilla > lgs/02-1b_landing_2024-02-12.log &
 library(tictoc)
 
 tic()
@@ -21,7 +21,7 @@ lubridate::now()
 
 # NOTE: If using years further back: need to double check that visir and station_id
 #       are not the same.
-YEARS <- 2022:2009
+YEARS <- 2024:2001
 
 library(tidyverse)
 library(omar)

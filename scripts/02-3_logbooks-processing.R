@@ -3,15 +3,15 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-3_logbooks-processing.R --vanilla > lgs/02-3_logbooks-processing_2023-12-29.log &
+#  nohup R < scripts/02-3_logbooks-processing.R --vanilla > lgs/02-3_logbooks-processing_2024-02-12.log &
 library(tictoc)
 tic()
 lubridate::now()
 
-# Input:  data/logbooks/station_landings-merge.rds
-#         data/logbooks/catch.rds
+# Input:  data/logbooks/rds/station_landings-merge.rds
+#         data/logbooks/rds/catch.rds
 #         data-aux/gear_codes.rds
-# Output: data/logbooks/station-processing.rds"
+# Output: data/logbooks/rds/station-processing.rds"
 # Downstream usage: scripts/02-4_logbooks-for_ais.R
 
 # Input ------------------------------------------------------------------------
@@ -19,8 +19,8 @@ library(omar)
 library(tidyverse)
 con <- connect_mar()
 
-lb <- read_rds("data/logbooks/station_landings-merge.rds")
-ca <- read_rds("data/logbooks/catch.rds")
+lb <- read_rds("data/logbooks/rds/station_landings-merge.rds")
+ca <- read_rds("data/logbooks/rds/catch.rds")
 gears <- read_rds("data-aux/gear_codes.rds")
 
 
@@ -264,7 +264,7 @@ paste("Number of records:", nrow(lb))
 # Determine what records to filter downstream ----------------------------------
 
 # Save -------------------------------------------------------------------------
-lb |> write_rds("data/logbooks/station-processing.rds")
+lb |> write_rds("data/logbooks/rds/station-processing.rds")
 
 # X. Info ----------------------------------------------------------------------
 

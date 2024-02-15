@@ -1,11 +1,11 @@
 # Objective --------------------------------------------------------------------
 # Match landings id and landings gear to logbooks
 #
-# Input:  Logbooks: data/logbooks/station.rds
-#         Catch:    data/logbooks/catch.rds
+# Input:  Logbooks: data/logbooks/rds/station.rds
+#         Catch:    data/logbooks/rds/catch.rds
 #         Landings: data/landings/agf_stations.rds
 #                   data/landings/lods_stations.rds
-# Output: data/logbooks/station_landings-merge.rds
+# Output: data/logbooks/rds/station_landings-merge.rds
 #
 # The matching is done by date not time. Landings data are hence consolidated
 #  by date, the landings id is the lowest landings id value within a date
@@ -15,7 +15,7 @@
 # 
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-2_logbooks-landings-coupling.R --vanilla > lgs/02-2_logbooks-landings-coupling_2023-12-29.log &
+#  nohup R < scripts/02-2_logbooks-landings-coupling.R --vanilla > lgs/02-2_logbooks-landings-coupling_2024-02-12.log &
 library(tictoc)
 
 tic()
@@ -25,15 +25,15 @@ lubridate::now()
 
 # NOTE: If using years further back: need to double check that visir and station_id
 #       are not the same.
-YEARS <- 2022:2009
+YEARS <- 2024:2001
 
 library(data.table)
 library(tidyverse)
 library(lubridate)
 
 # Read data from previous step -------------------------------------------------
-LGS <- read_rds("data/logbooks/station.rds")
-CATCH <- read_rds("data/logbooks/catch.rds")
+LGS <- read_rds("data/logbooks/rds/station.rds")
+CATCH <- read_rds("data/logbooks/rds/catch.rds")
 LODS <- read_rds("data/landings/lods_stations.rds")
 AGF <- read_rds("data/landings/agf_stations.rds")
 
@@ -155,7 +155,7 @@ LGS |>
 
 
 # 6. Save ----------------------------------------------------------------------
-LGS   |> write_rds("data/logbooks/station_landings-merge.rds")
+LGS   |> write_rds("data/logbooks/rds/station_landings-merge.rds")
 
 # 7. Info ----------------------------------------------------------------------
 toc()
