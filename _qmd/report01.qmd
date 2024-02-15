@@ -75,7 +75,7 @@ ln <-
 # logbooks ---------------------------------------------------------------------
 pth = "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
 lb_species <- 
-  arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet")) |> 
+  arrow::open_dataset(paste0(pth, "logbooks/parquet/catch-for-ais.parquet")) |> 
   group_by(.sid) |> 
   summarise(n.species = n_distinct(sid)) |> 
   collect()
@@ -83,7 +83,7 @@ TRIP_VISIR <-
   arrow::open_dataset(here::here("trip_visir.parquet")) |> 
   filter(!is.na(.sid))
 lb <- 
-  arrow::open_dataset(paste0(pth, "logbooks/station-for-ais.parquet")) |> 
+  arrow::open_dataset(paste0(pth, "logbooks/parquet/station-for-ais.parquet")) |> 
   left_join(TRIP_VISIR |> 
               select(vid, .sid, .cid)) |> 
   collect() |> 
@@ -299,7 +299,7 @@ tmp.sum |>
 #| label: fig-pertow2
 #| fig-cap: "Uppsafnaður meðalfjöldi skráðra tegunda í afladagbókum skipstjóra eftir númer togs í fiskibotnvörpu tímabilinu 2016-2022. Litir gefa til kynna hámarksfjölda toga í túr."
 lb_catch <- 
-  arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet")) |> 
+  arrow::open_dataset(paste0(pth, "logbooks/parquet/catch-for-ais.parquet")) |> 
   collect()
 
 # for range of tows in trip

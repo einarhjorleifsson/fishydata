@@ -69,7 +69,7 @@ ln <-
 # logbooks ---------------------------------------------------------------------
 pth = "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
 lb_species <- 
-  arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet")) |> 
+  arrow::open_dataset(paste0(pth, "logbooks/parquet/catch-for-ais.parquet")) |> 
   group_by(.sid) |> 
   summarise(n.species = n_distinct(sid)) |> 
   collect()
@@ -77,7 +77,7 @@ TRIP_VISIR <-
   arrow::open_dataset(here::here("trip_visir.parquet")) |> 
   filter(!is.na(.sid))
 lb <- 
-  arrow::open_dataset(here::here(paste0(pth, "logbooks/station-for-ais.parquet"))) |> 
+  arrow::open_dataset(paste0(pth, "logbooks/parquet/station-for-ais.parquet")) |> 
   left_join(TRIP_VISIR |> 
               select(vid, .sid, .cid)) |> 
   collect() |> 
@@ -132,12 +132,11 @@ ln |>
   facet_wrap(~ gear, scale = "free_y")
 ```
 
-
 ### Fjöldi landaðra tegunda
 
 Sem fyrsta skref var gerður samanburður á fjölda tegunda sem skráðar eru úr veiðiferð við löndun þegar eftirlitsmaður er um borð eða ekki. Annars vegar eftir mánuðum og veiðarfærum (@fig-landspecies1) og hinsvegar eftir veiðarfærum (@fig-landspecies2) og eftir stærð skipa fyrir botnvörpu og línu (@fig-landspecies3). Í öllum veiðarfærum nema flotvörpu er að meðaltali fleiri tegundum landað þegar eftirlitsmaður er um borð. Þannig er meðalfjöldi tegunda í botnvörpu innan við 10.5 þegar eftirlitsmaður er um borð samanborið við 13-14 tegundir ef eftirlitsmaður er um borð. Munur á fjöldi landaðra tegunda í línu er nokkuð minni en í botnvörpu en munur í fjölda eftir því hvort eftirlitsmaður er um borð eða ekki u.þ.b. 1 tegund.
 
-Ef úrtakið á eftirlitsferðum er tilviljunarkennt þá eru þetta sterkar vísbendingar um tegundarháð brottkast. Saman mynstur kemur þó upp fyrir botnvörpu og línu ef greiningin er bundin einungis við skip þar sem eftirlitsmaður hefur verið um borð i a.m.k. einu tilfelli (niðurstöður ekki sýndar).
+Ef úrtakið á eftirlitsferðum er tilviljunarkennt þá eru þetta sterkar vísbendingar um tegundarháð brottkast. Saman mynstur kemur þó upp fyrir botnvörpu og línu ef greiningin er bundin einungis við skip þar sem eftirlitsmaður hefur verið um borð i a.m.k. einu tilfelli (@fig-landspecies4).
 
 ```{r}
 #| label: fig-landspecies1
@@ -295,7 +294,7 @@ tmp.sum |>
 #| label: fig-pertow2
 #| fig-cap: "Uppsafnaður meðalfjöldi skráðra tegunda í afladagbókum skipstjóra eftir númer togs í fiskibotnvörpu tímabilinu 2016-2022. Litir gefa til kynna hámarksfjölda toga í túr."
 lb_catch <- 
-  arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet")) |> 
+  arrow::open_dataset(paste0(pth, "logbooks/parquet/catch-for-ais.parquet")) |> 
   collect()
 
 # for range of tows in trip
@@ -329,9 +328,6 @@ tmp |>
   labs(x = "Númer togs í túr", y = "Uppsafnaður fjöldi tegunda")
 ```
 
-## Útbreiðsla veiða eftir tegundum
-
-
 ## Niðurlag
 
 Í upphafi var markmið þessa verkefnis að skoða hvort hægt væri að meta umfang á brottkasti meðaflategunda með því að samþætta löndunargögn, afladagbækur og stk gögn ásamt gögnum um veiðiferðir með eftirlitsmönnum.
@@ -339,77 +335,3 @@ tmp |>
 Mestur tími verkefnisins fór í að þróa aðferðarfræði til að spyrða saman gagnasettin. Þeirri vinnu er að mestu lokið og er hún aðgengileg á eftirfarandi síðu: https://github.com/einarhjorleifsson/fishydata
 
 Samanburður á tegundarsamsetningu í lönduðum afla eftir því hvort eftirlitsmaður er um borð eður ei bendir til að tegundabrottkast geti verið umtalsvert. Þar sem veiðar á hverri tegund er háð staðsetningu þá var ætlunin að nýta slíkar upplýsingar úr afladagbókum sem og úr stk gögnum til að greina betur meint tegundarbrottkast. Greining á afladagbókum bendir þó til að skráning á aflasamsetningu í hverju togi þegar kemur að tegundum er mjög svo ónákvæm. Á þessu stigi er ekki ljóst hvaða áhrif sú bjögun myndi hafa á slíka greiningu né hvort að hægt sé með einhverjum hætti að taka tillit til hennar með einhverjum hætti.
-
-## Viðbætur
-
-
-### Vessel possition data
-
-* Live feed data, every 10 minutes
-* Ekki einkvæmur lykill við skipaskrárnúmer. ...
-* Signal ekki þegar gögn eru í höfn
-* Virðist vera mikið villum sem koma fram þegar skip er skráð að koma inn eða úr höfn
-* Hafnir skilgreindar sem flákar.
-
-Vessel position data from 2009 onwards were obtained from the Icelandic Coast Guard. The archieved data were less freque.
-
-Gögn fyrir staðsetningu skipa koma frá Landhelgisgæslunni (Sjálvirk tilkynningarskilda skip, STK).
-
-Tenging við skipaskrárnúmer eru að mestu fengin með því að
-
-## Landings records
-
-
-```{r}
-#| label: tbl-landspecies1
-#| tbl-cap: "Fjöldi mælinga (n), meðalfjöldi tegunda landað, mismunir í fjölda og staðalskekkja."
-ln |> 
-  group_by(gear, Eftirlitsmaður) |> 
-  summarise(n = n(),
-            Tegundir = mean(n_sid),
-            Staðalfrávik = sd(n_sid),
-            Staðalskekkja = Staðalfrávik / sqrt(n),
-            .groups = "drop") |> 
-  group_by(gear) |> 
-  mutate(mismunur = Tegundir - lead(Tegundir)) |> 
-  ungroup() |> 
-  select(Veiðdarfæri = gear, Eftirlitsmaður:Tegundir, mismunur, Staðalskekkja) |> 
-  knitr::kable(digits = 2, escape = )
-```
-
-or this way ...
-
-```{r}
-#| label: tbl-landspecies2
-ln |> 
-  group_by(gear, Eftirlitsmaður) |> 
-  summarise(Tegundir = mean(n_sid),
-            .groups = "drop") |> 
-  spread(Eftirlitsmaður, Tegundir) |> 
-  mutate(#Mismunur = Já - Nei,
-         Hlutfall = Já / Nei) |> 
-  rename(Veiðarfæri = gear) |> 
-  arrange(desc(Hlutfall)) |> 
-  knitr::kable(caption = "Meðalfjöldi tegunda landað eftir veiðarfærum eftir því hvort eftirlitsmaður er um borð (Já) eða ekki (Nei) og hlutfallslegur fjöldi sem er landað þegar eftirlitsmaður er um borð.", digits = 2, escape = )
-```
-
-
-## Logbooks
-
-The logbook records from 2009 onwards are stored in two different databases where the structure are to some degree different.
-
-* Frá árinu 20xx var tekið upp nýtt kerfi
-* Eldra og yngra kerfi
-
-The structure of the logbook database is somewhat complicated in the sense that effort data for each gear are stored in different xxx
-
-The xxx of the 
-
-## Vessel registry
-
-## Auxillary data
-
-## Merging data
-
-STK gögnin 
-

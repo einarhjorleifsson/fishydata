@@ -37,9 +37,9 @@ knitr::include_graphics(here::here("data-aux/diagrams.svg"))
 library(omar)
 library(tidyverse)
 library(arrow)
-pth <- "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
+library(here)
 ais <- 
-  open_dataset(paste0(pth, "ais")) |> 
+  open_dataset(here("data/ais")) |> 
   filter(vms == "yes") |> 
   mutate(year = year(time)) |> 
   count(year) |> 
@@ -49,7 +49,7 @@ stk_trail(con) |>
   mutate(year = year(time)) |> 
   count(year) |> 
   collect(n = Inf) |> 
-  filter(between(year, 2009, 2023)) |> 
+  filter(between(year, 2007, 2024)) |> 
   ggplot(aes(year, n / 1e6)) +
   theme_bw(base_size = 16) +
   geom_point() +
@@ -70,17 +70,18 @@ stk_trail(con) |>
       * Can have two landings records per day, in different harbours
 
 ```{r}
-mar::landadur_afli(con) |> 
-  mutate(year = year(l_dags)) |> 
-  filter(year >= 2009) |> 
+read_rds(here("data/landings/agf_stations.rds")) |> 
+  group_by(vid, datel) |> 
+  summarise(n = n_distinct(datel) / 1e3,
+            .groups = "drop") |> 
+  mutate(year = year(datel)) |> 
   group_by(year) |> 
-  summarise(n = n_distinct(komunr)) |> 
-  filter(between(year, 2009, 2023)) |> 
-  ggplot(aes(year, n / 1e3)) +
+  summarise(n = sum(n)) |> 
+  ggplot(aes(year, n)) +
   theme_bw(base_size = 16) +
   geom_point() +
-  labs(x = NULL, y = "Landings [thousands]") +
-  scale_x_continuous(breaks = seq(2010, 2022, by = 2)) +
+  labs(x = NULL, y = "Number of landings [thousands]") +
+  scale_x_continuous(breaks = seq(2000, 2030, by = 2)) +
   scale_y_continuous(breaks = seq(0, 100, by = 10))
 ```
 
@@ -96,18 +97,18 @@ mar::landadur_afli(con) |>
     * Quality control: Minimal
     
 ```{r}
-LB <- open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
+LB <- open_dataset(here("data/logbooks/parquet/station-for-ais.parquet"))
 LB |> 
   mutate(year = year(date)) |> 
   group_by(year) |> 
   summarise(n = n()) |> 
   collect() |> 
-  filter(between(year, 2009, 2023)) |> 
+  filter(between(year, 2007, 2023)) |> 
   ggplot(aes(year, n / 1e3)) +
   theme_bw(base_size = 16) +
   geom_point() +
   labs(x = NULL, y = "Logbook records [thousands]") +
-  scale_x_continuous(breaks = seq(2010, 2022, by = 2)) +
+  scale_x_continuous(breaks = seq(2000, 2030, by = 2)) +
   scale_y_continuous(breaks = seq(0, 200, by = 5))
 ```
 
@@ -124,7 +125,16 @@ LB |>
 * MMSI does not migrate between vessels
   * MMSI hence equivalent to IMO
 
-## Current code flow
+
+## Code flow
+
+1. Standardize the landings database
+2. Merge and standardize the old and the new logbooks
+3. Merge logbook and landings data
+describe the details
+
+
+### Old code flow
 
 [https://github.com/einarhjorleifsson/ices_vms_data_call](https://github.com/einarhjorleifsson/ices_vms_data_call)
 
@@ -152,9 +162,7 @@ LB |>
   * Mobile: Match ais event to logbook intervals, apply speed filter
   * Static Match ais event to logbooks date invervals, apply speed filter
 
-## New code flow
 
-* Define trips first!
 
 ## Data usage
 
@@ -232,7 +240,7 @@ mapdeck(data = vms.kelp,
 
 ### Aquaculture
 
-```{r}
+```{r, eval = FALSE}
 vid.kvi <- 
   mar:::vessel_registry(con) %>% 
   select(vessel = nafnskips,
@@ -276,7 +284,7 @@ vms.kvi %>%
 
 ### Dredging / mining
 
-```{r}
+```{r eval = FALSE}
 Class <- 
   mar:::vessel_class(con) %>% 
   filter(flokkur %in% c("DÝPK. OG SANDSKIP", "DÝPKUNARSKIP")) %>% 

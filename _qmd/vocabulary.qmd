@@ -33,7 +33,7 @@ gids |>
 ## Logbooks
 
 ```{r}
-lgs <- read_rds(here::here("data/logbooks/station.rds"))
+lgs <- read_rds(here::here("data/logbooks/rds/station.rds"))
 lgs |> glimpse()
 ```
 

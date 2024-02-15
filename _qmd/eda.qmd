@@ -2,7 +2,6 @@
 title: "Assign trip-id to logbooks"
 ---
 
-
 ```{r base}
 library(sf)
 library(mapview)
@@ -11,8 +10,8 @@ library(arrow)
 source(here::here("R/read.R"))
 # parquet files:
 pth = "/net/hafkaldi.hafro.is/export/home/haf/einarhj/stasi/fishydata/data/"
-LB <- arrow::open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
-CT <- arrow::open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet"))
+LB <- arrow::open_dataset(paste0(pth, "logbooks/parquet/station-for-ais.parquet"))
+CT <- arrow::open_dataset(paste0(pth, "logbooks/parquet/catch-for-ais.parquet"))
 AIS <- fd_stk_arrow() |> filter(vms == "yes")
 ```
 

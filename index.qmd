@@ -4,6 +4,11 @@ warning: false
 message: false
 ---
 
+TODO:
+
+* Landings - save only as parquet
+
+
 i am here: [https://heima.hafro.is/~einarhj/fishydata](https://heima.hafro.is/~einarhj/fishydata/)
 
 older [fishydata](https://heima.hafro.is/~einarhj/fishydata_older)
@@ -85,20 +90,20 @@ sc_arrow <-
   mutate(gid = as.integer(gid)) |> 
   arrow::as_arrow_table()
 # parquet files:
-LB <- open_dataset(paste0(pth, "logbooks/station-for-ais.parquet"))
-CT <- open_dataset(paste0(pth, "logbooks/catch-for-ais.parquet"))
+LB <- open_dataset(paste0(pth, "logbooks/parquet/station-for-ais.parquet"))
+CT <- open_dataset(paste0(pth, "logbooks/parquet/catch-for-ais.parquet"))
 con_ais <- 
   open_dataset(paste0(pth, "ais")) |> 
   left_join(sc_arrow)
 # How many records:
-con_ais |> count() |> pull()
+# con_ais |> count() |> pull()
 ```
 
 ### Relative effort
 
 Here a simple relative effort of longline and bottom fishtrawl for all the years (2009-2022)
 
-```{r d_effort0}
+```{r d_effort0, eval = FALSE}
 #| fig.width: 9
 #| fig.height: 9
 #| fig.cap: "Relative efffort by gear based on 2009 to 2022 data."
@@ -140,7 +145,7 @@ m
 
 ### Change in effort
 
-```{r d_effort1}
+```{r d_effort1, eval = FALSE}
 #| fig.cap: "Change in effort, 2009-2010 vs 2021-2022."
 dx <- 2000
 ais <-
@@ -189,7 +194,7 @@ p1 <-
 p1
 ```
 
-```{r d_effort2}
+```{r d_effort2, eval = FALSE}
 #| fig.cap: "Change in effort, 2009-2010 vs 2021-2022 - ordinary scale."
 p2 <- 
   full_join(ais |> filter(var == "one") |> rename(one = z) |> select(-var),
@@ -221,7 +226,7 @@ Catch distribution of Greenland halibut and Slope redfish for all years 2009-202
 
 Done because of contemporaneous interest in bottom trawl closure off west Iceland.
 
-```{r species1}
+```{r species1, eval = FALSE}
 dx <- 300 # grid width
 SID <- 61
 # need to compute the pings per station id
@@ -307,7 +312,7 @@ p <-
 p
 ```
 
-```{r species2}
+```{r species2, eval = FALSE}
 ## area closures ---------------------------------------------------------------
 closure <- 
   tribble(~lat, ~lon,
@@ -349,7 +354,7 @@ p +
   coord_equal(xlim = c(-3.2e6, -2.8e6), ylim = c(9.5e6, 10e6))
 ```
 
-```{r species3}
+```{r species3, eval = FALSE}
 catch |> 
   filter(z > 0) |> 
   full_join(catch61 |> rename(z61 = z)) |> 
