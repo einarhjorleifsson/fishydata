@@ -2,16 +2,23 @@
 # Consolidate landings databases
 #
 # Input:  Landings: Oracle database
-# Output: data/landings/agf_catch.rds
-#         data/landings/agf_stations.rds
-#         data/landings/lods_catch.rds
-#         data/landings/lods_stations.rds
+# Output: data/landings/agf/catch.parquet
+#         data/landings/agf/stations.parquet
+#         data/landings/lods/catch.parquet
+#         data/landings/lods/stations.parquet
 #
 # Downstream usage: 02-2_logbooks-landings-coupling.R
 # 
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-1b_landing.R --vanilla > lgs/02-1b_landing_2024-02-12.log &
+#  nohup R < scripts/01_landings.R --vanilla > lgs/01_landing_2024-02-16.log &
+#
+## Brief summary ---------------------------------------------------------------
+# For each of the two versions of the landings database (lods and agf) the
+#  data are consolidated by landing date.
+# A new id, the lowest on each landing date is created.
+#
+
 library(tictoc)
 
 tic()
@@ -24,6 +31,7 @@ lubridate::now()
 YEARS <- 2024:2001
 
 library(tidyverse)
+library(arrow)
 library(omar)
 con <- connect_mar()
 
@@ -112,12 +120,13 @@ CA <-
   group_by(.lid, sid) |> 
   summarise(wt = sum(wt),
             .groups = "drop")
+
 ## Save stuff ------------------------------------------------------------------
 LN |> 
   arrange(vid, datel) |> 
-  write_rds("data/landings/agf_stations.rds")
+  write_parquet("data/landings/agf/stations.parquet")
 CA |> 
-  write_rds("data/landings/agf_catch.rds")
+  write_parquet("data/landings/agf/catch.parquet")
 
 
 # LODS landings ----------------------------------------------------------------
@@ -209,13 +218,15 @@ CA2 <-
   LN_raw2 |> 
   group_by(.lid, sid) |> 
   summarise(wt = sum(wt),
-            .groups = "drop")
+            .groups = "drop") |> 
+  # herring, capelin and mackerel are reported in kt
+  mutate(wt = ifelse(sid %in% c(30, 31, 34), wt * 1e3, wt))
 ## Save stuff ------------------------------------------------------------------
 LN2 |> 
   arrange(vid, datel) |> 
-  write_rds("data/landings/lods_stations.rds")
+  write_parquet("data/landings/lods/stations.parquet")
 CA2 |> 
-  write_rds("data/landings/lods_catch.rds")
+  write_parquet("data/landings/lods/catch.parquet")
 
 # AGF-LODS crosschecks ---------------------------------------------------------
 # Note that the record numbers from AGF and LODS are different
@@ -227,8 +238,8 @@ check <-
   full_join(LN2 |> 
               select(vid, datel, .lid_lods = .lid)) |> 
   mutate(what = case_when(!is.na(.lid_agf) & !is.na(.lid_lods) ~ "both",
-                          !is.na(.lid_agf) &  is.na(.lid_lods) ~ "lods",
-                           is.na(.lid_agf) & !is.na(.lid_lods) ~ "agf",
+                          !is.na(.lid_agf) &  is.na(.lid_lods) ~ "agf",
+                          is.na(.lid_agf) & !is.na(.lid_lods) ~ "lods",
                           .default = NA)) 
 check |> count(what)
 check |> 
@@ -236,32 +247,67 @@ check |>
   count(year, what) |> 
   spread(what, n) |> 
   knitr::kable(caption = "Difference in vid-datel records in AGF vs LODS")
-# So mostly in 2022 where 13% of records in AGF but not in LODS, needs checking
+# So mostly in 2022 where 13% of records in LODS but not in AGF, needs checking
+#  This is mostly associated with period of 2022-05-30 to 2022-06-16
 
-# Catch records are substantially different, likely the units in for the pelagics
-
-sum(CA$wt)
-sum(CA2$wt)
-CA |> 
+# Catch records are somewhat differernt:
+CA_2009_2023 <-
+  LN |> 
+  filter(year(datel) %in% 2009:2023) |> 
+  select(.lid) |> 
+  left_join(CA) |>
   group_by(sid) |> 
-  summarise(wt_agf = sum(wt) / 1e6) |> 
-  full_join(CA2 |> 
-              group_by(sid) |> 
-              summarise(wt_lods = sum(wt) / 1e6)) |> 
+  summarise(wt_agf = sum(wt) / 1e6)
+CA2_2009_2023 <-
+  LN2 |> 
+  filter(year(datel) %in% 2009:2023) |> 
+  select(.lid) |> 
+  left_join(CA2) |>
+  group_by(sid) |> 
+  summarise(wt_lods = sum(wt) / 1e6)
+CA_2009_2023 |> 
+  full_join(CA2_2009_2023) |> 
   mutate(diff = wt_agf - wt_lods,
-         p = wt_lods / wt_agf) |> 
+         p = round(wt_lods / wt_agf, 3),
+         wt_agf = round(wt_agf, 3),
+         wt_lods = round(wt_lods, 3),
+         diff = round(diff, 3)) |> 
+  arrange(p) |> 
   knitr::kable(caption = "Difference in weight reported")
 
-# agf gear ---------------------------------------------------------------------
+# agf auxillary ----------------------------------------------------------------
+## agf gear --------------------------------------------------------------------
 tbl_mar(con, "agf.aflagrunnur_v") |> 
   select(starts_with("veidarfaeri")) |> 
   distinct() |> 
   rename(gid = 1,
          gid_id = 2,
-         heiti = 3) |> 
+         veidarfaeri = 3) |> 
   collect() |> 
   arrange(gid) |> 
-  write_rds("data/landings/agf_gear.rds")
+  write_parquet("data/auxillary/agf_gear.parquet")
+
+## agf species -----------------------------------------------------------------
+tbl_mar(con, "agf.aflagrunnur_v") |> 
+  select(starts_with("fisktegund")) |> 
+  distinct() |> 
+  rename(sid = 1,
+         sid_id = 2,
+         tegund = 3) |> 
+  collect() |> 
+  arrange(sid) |> 
+  write_parquet("data/auxillary/agf_species.parquet")
+
+## agf harbour -----------------------------------------------------------------
+tbl_mar(con, "agf.aflagrunnur_v") |> 
+  select(starts_with("hafnarnumer")) |> 
+  distinct() |> 
+  rename(hid = 1,
+         hid_id = 2,
+         harbour = 3) |> 
+  collect() |> 
+  arrange(hid) |> 
+  write_parquet("data/auxillary/agf_harbour.parquet")
 
 
 # Info -------------------------------------------------------------------------
