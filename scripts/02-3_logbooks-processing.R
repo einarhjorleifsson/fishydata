@@ -3,7 +3,7 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-3_logbooks-processing.R --vanilla > lgs/02-3_logbooks-processing_2024-02-12.log &
+#  nohup R < scripts/02-3_logbooks-processing.R --vanilla > lgs/02-3_logbooks-processing_2024-03-08.log &
 library(tictoc)
 tic()
 lubridate::now()
@@ -128,13 +128,13 @@ lb <-
 # Lump some gears --------------------------------------------------------------
 lb <-
   lb %>% 
-  mutate(gid = case_when(gid %in% c(10, 12) ~ 4,   # purse seines
+  mutate(gid = case_when(#gid %in% c(10, 12) ~ 4,   # purse seines
                          gid %in% c(18, 39) ~ 18,      # traps
                          TRUE ~ gid)) %>% 
   # make the rest a negative number
   mutate(gid = ifelse(is.na(gid), -666, gid)) %>% 
   # "skip" these also in downstream processing
-  mutate(gid = ifelse(gid %in% c(4, 12, 42), -666, gid)) %>% 
+  mutate(gid = ifelse(gid %in% c(42), -666, gid)) %>% 
   # lump dredges into one single gear
   mutate(gid = ifelse(gid %in% c(15, 37, 38, 40), 15, gid))
 

@@ -3,7 +3,7 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-4_logbooks-for-ais.R --vanilla > lgs/02-4_logbooks-for-ais_2023-02-12.log &
+#  nohup R < scripts/02-4_logbooks-for-ais.R --vanilla > lgs/02-4_logbooks-for-ais_2023-03-08.log &
 lubridate::now()
 
 # Input:  data/logbooks/station-processing.rds

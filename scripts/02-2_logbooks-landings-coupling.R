@@ -3,8 +3,8 @@
 #
 # Input:  Logbooks: data/logbooks/rds/station.rds
 #         Catch:    data/logbooks/rds/catch.rds
-#         Landings: data/landings/agf_stations.rds
-#                   data/landings/lods_stations.rds
+#         Landings: data/landings/agf/stations.parquet
+#                   data/landings/lods/stations.parquet
 # Output: data/logbooks/rds/station_landings-merge.rds
 #
 # The matching is done by date not time. Landings data are hence consolidated
@@ -15,7 +15,7 @@
 # 
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-2_logbooks-landings-coupling.R --vanilla > lgs/02-2_logbooks-landings-coupling_2024-02-12.log &
+#  nohup R < scripts/02-2_logbooks-landings-coupling.R --vanilla > lgs/02-2_logbooks-landings-coupling_2024-03-08.log &
 library(tictoc)
 
 tic()
@@ -30,12 +30,14 @@ YEARS <- 2024:2001
 library(data.table)
 library(tidyverse)
 library(lubridate)
+library(arrow)
 
 # Read data from previous step -------------------------------------------------
 LGS <- read_rds("data/logbooks/rds/station.rds")
 CATCH <- read_rds("data/logbooks/rds/catch.rds")
-LODS <- read_rds("data/landings/lods_stations.rds")
-AGF <- read_rds("data/landings/agf_stations.rds")
+
+LODS <- open_dataset("data/landings/lods/stations.parquet") |> collect()
+AGF <-  open_dataset("data/landings/agf/stations.parquet") |> collect()
 
 # 4. Add "target" species to each setting --------------------------------------
 # Should really have this upstream in the code
@@ -161,3 +163,4 @@ LGS   |> write_rds("data/logbooks/rds/station_landings-merge.rds")
 toc()
 
 print(devtools::session_info())
+

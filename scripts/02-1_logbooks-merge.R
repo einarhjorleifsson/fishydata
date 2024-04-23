@@ -3,8 +3,10 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2024-02-12.log &
+#  nohup R < scripts/02-1_logbooks-merge.R --vanilla > lgs/02-1_logbooks-merge_2024-03-08.log &
 
+## 2024-03-08 changes
+# * added gear 10 and 12 to mobile - approach like as is done for demersal seine
 ## 2024-02-12 changes
 # * Go back to 2001
 # * Set id for older logbooks to negative values
@@ -67,7 +69,7 @@ MOBILE_old <-
   omar::lb_mobile(con, correct_gear = FALSE, trim = TRUE) |> 
   filter(year %in% YEARS,
          # only towing gear
-         gid %in% c(5, 6, 7, 8, 9, 14, 15, 38, 40)) |> 
+         gid %in% c(5, 6, 7, 8, 9, 10, 12, 14, 15, 38, 40)) |> 
   # limit to Icelandic vesssels
   inner_join(q_vessels_icelandic %>% select(vid),
              by = join_by(vid)) |> 

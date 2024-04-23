@@ -3,7 +3,7 @@
 
 # ------------------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2024-02-12.log &
+#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2024-03-08.log &
 #
 
 
