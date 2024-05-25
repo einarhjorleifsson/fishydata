@@ -210,8 +210,8 @@ lb_base_new <- function(con) {
                         -lon,
                         lon),
            lon2 = ifelse(whack == "mirror",
-                         -lon,
-                         lon))
+                         -lon2,
+                         lon2))
 }
 lb_catch_new <- function(con) {
   tbl_mar(con, "adb.catch") |> 

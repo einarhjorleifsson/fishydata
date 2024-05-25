@@ -3,9 +3,13 @@
 
 # ------------------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2024-03-08.log &
+#  nohup R < scripts/04_stk-trails_parquet.R --vanilla > lgs/04_stk-trails_parquet_2024-05-22F.log &
 #
 
+# 2024-05-23 Add ASTD trails
+
+
+# 2024-05-01 Added habitat and depth variable
 
 #
 # Input:
@@ -46,8 +50,10 @@
 test <- FALSE
 lubridate::now()
 
+library(arrow)
 library(data.table)
 library(sf)
+sf::sf_use_s2(FALSE)
 #library(mapdeck)
 #source("~/R/Pakkar2/ramb/TOPSECRET.R")
 library(tidyverse)
@@ -57,7 +63,7 @@ library(ramb)
 library(omar)
 library(argosfilter)
 library(arrow)
-
+con <- connect_mar()
 # Auxilary data ----------------------------------------------------------------
 island <- 
   read_sf("data-aux/shoreline.gpkg") |> 
@@ -68,9 +74,42 @@ harbour <- read_sf("data-aux/harbours.gpkg")
 harbours.standards <- 
   readxl::read_excel("data-aux/harbours.xlsx") |> 
   select(hid, hid_std)
+eusm <- read_sf("data-aux/EUSeaMap_2023.gpkg")
+eusm <- 
+  eusm |> 
+  select(habitat = MSFD_BBHT)
+# read_rds("~/prj2/garbage/ICES-VMS-and-Logbook-Data-Call/ICES-VMS-and-Logbook-Data-Call/ICES_GEBCO.rds") |> 
+#   write_sf("data-aux/ices_gebco.gpkg")
+gebco_z <- read_sf("data-aux/ices_gebco.gpkg")
 LB <- read_rds("data/logbooks/rds/station-for-ais.rds")
+# 2024-05-22 Add mmsi
+mmsi_isl <-
+  bind_rows(omar::mmsi_icelandic_registry(con) |> collect(),
+            omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20220405") |> collect(),
+            omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20201215") |> collect(),
+            omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20190627") |> collect()) |>
+  select(mmsi, vid) |>
+  distinct() |>
+  mutate(mmsi = as.integer(mmsi))
+# Houston, we have a problem
+mmsi_isl |> 
+  group_by(mmsi) |> 
+  mutate(n = n()) |> 
+  ungroup() |> 
+  filter(n > 1) |> 
+  arrange(mmsi)
 
-con <- connect_mar()
+astd <- 
+  open_dataset("data/astd") |> 
+  filter(flag == "ISL") |> 
+  select(mmsi,
+         time = date_time_utc,
+         lon = longitude,
+         lat = latitude,
+         speed_d = speed) |> 
+  left_join(mmsi_isl |> 
+              arrow_table())
+
 
 YEARS <- 2007:2024
 
@@ -120,16 +159,36 @@ VID <-
   pull(vid) |> 
   sort() |> 
   unique()
-
-# 2023-08-31: start from next vessel after 3010
+# Temporary
+VID <- VID[686:1787]
 for(v in 1:length(VID)) {
   VIDv <- VID[v]
   print(VIDv)
+  
+  astdv <- 
+    astd |> 
+    filter(vid == VIDv) |> 
+    collect() |> 
+    select(vid, time, lon, lat, speed = speed_d) |> 
+    arrange(time) |> 
+    mutate(ref = "astd")
   trailv <- 
     trail |> 
     filter(vid == VIDv) |> 
     select(-c(t1, t2)) |> 
     collect(n = Inf) |> 
+    mutate(ref = "lhg")
+  
+  if(nrow(astdv) > 100) {
+    trailv <- 
+      bind_rows(trailv,
+                astdv) |> 
+      distinct(time, .keep_all = TRUE) |> 
+      arrange(time)
+  }
+
+  trailv <- 
+    trailv |> 
     arrange(time) |> 
     filter(between(lon, -35, 30),
            between(lat, 50, 79)) %>%
@@ -192,6 +251,7 @@ for(v in 1:length(VID)) {
     ### define trips -------------------------------------------------------------
     trailv <- 
       tmp |> 
+      arrange(time) |> 
       # cruise id (aka tripid), negative values: in harbour
       mutate(.cid = ramb::rb_trip(!is.na(hid_std))) |>
       mutate(hid_dep = hid_std,
@@ -202,14 +262,15 @@ for(v in 1:length(VID)) {
       ungroup() |> 
       # should not be needed
       filter(between(year(time), Y1, Y2)) |> 
-      select(vid, time, .cid, lon, lat, speed, hid_dep, hid_arr, .rid, vms) |> 
+      select(vid, time, .cid, lon, lat, speed, hid_dep, hid_arr, .rid, vms, ref) |> 
       # filter(.cid > 0) |> 
+      arrange(time) |> 
+      distinct(time, .keep_all = TRUE) |> 
       group_by(vid, .cid) |> 
       mutate(v = ifelse(n() > 5 & .cid > 0,
-                        # Note: FIRST arguement is lat
-                        vmask(lat, lon, time, vmax = rb_kn2ms(30)),
+                        try(vmask(lat, lon, time, vmax = rb_kn2ms(30)), TRUE),
                         "short")) |> 
-      ungroup() |> 
+      ungroup() |>
       mutate(v = as.character(v))
     
     if(test) {
@@ -331,7 +392,13 @@ for(v in 1:length(VID)) {
         group_by(.cid) |> 
         mutate(dist = traipse::track_distance(lon, lat),
                dist = replace_na(dist, 0)) |> 
-        ungroup()
+        ungroup() |> 
+        st_as_sf(coords = c("lon", "lat"),
+                 crs = 4326,
+                 remove = FALSE) |> 
+        st_join(eusm, join = st_intersects) |> 
+        st_join(gebco_z, join = st_intersects) |> 
+        st_drop_geometry()
       
       # and now for the save ...
       #  here only save positive trips with more than 5 pings
