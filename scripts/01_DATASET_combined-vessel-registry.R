@@ -6,6 +6,10 @@
 #  * Add loa, kw and other things if available
 #  * Check another source for norwegian vessels, one that has mmsi
 # NEWS -------------------------------------------------------------------------
+# 2024-10-27
+#  * Icelandic registry
+#    * Include the note, note_date and note_fate form mmsi into the vessel
+#      registry
 # 2024-10-26
 #  * Icelandic vessels 3700:4999:
 #    * Extract the cs from the vessel name
@@ -39,11 +43,17 @@ mmsi_ISL <-
 # Test: Duplicate MMSI
 mmsi_ISL |>
   group_by(mmsi) |>
-  mutate(n.mmsi = n()) |>
+  mutate(n.vid = n_distinct(vid)) |>
+  ungroup() |>
+  filter(n.vid > 1) |>
+  arrange(mmsi, mmsi_t2) |>
+  knitr::kable(caption = "Same MMSI on more than one vessel. Created in: 00_DATASET_mmsi_ISL.R")
+mmsi_ISL |>
+  group_by(vid) |>
+  mutate(n.mmsi = n_distinct(mmsi)) |>
   ungroup() |>
   filter(n.mmsi > 1) |>
-  arrange(mmsi, mmsi_t2) |>
-  knitr::kable()
+  knitr::kable(caption = "Vessel with more than one MMSI (expect) none")
 vessel_ISL <-
   mar::tbl_mar(con, "vessel.vessel") |>
   dplyr::select(vid = registration_no,
@@ -120,7 +130,7 @@ vessel_ISL |>
 vessel_ISL <-
   vessel_ISL |>
   left_join(mmsi_ISL |>
-              select(vid, mmsi, cs_mmsi = cs, mmsi_t1, mmsi_t2, zombie_no),
+              select(vid, mmsi, cs_mmsi = cs, mmsi_t1, mmsi_t2, zombie_no, note_date, note_fate),
             by = join_by(vid)) |>
   mutate(cs = case_when(is.na(cs) & !is.na(cs_mmsi) ~ cs_mmsi,
                         .default = cs)) |>
@@ -254,28 +264,11 @@ vessel_registry <-
 vessel_registry |>
   nanoparquet::write_parquet("data/vessels/vessel-registry.parquet")
 
-
-nanoparquet::read_parquet("data/vessels/vessel-registry.parquet") |>
-  # This stuff should be fixed upstream
-  mutate(vessel = str_squish(vessel),
-         vessel = case_when(vessel == "Tuugaalik )OZBW)" ~ "Tuugaalik (OZBW)",
-                            vessel == "Silver Fjord (3FWE9" ~ "Silver Fjord (3FWE9)",
-                            .default = vessel),
-         cs =
-           case_when(
-             source == "ISL" & vid %in% 3700:4999 & is.na(cs) ~ str_extract_between_parenthesis(vessel)[,1],,
-             .default = cs),
-         vessel =
-           case_when(
-             source == "ISL" & vid %in% 3700:4999 ~ str_remove(vessel, paste0("\\(", cs, "\\)")),
-             .default = vessel),
-         vessel = str_squish(vessel))
-
 # Usage example ---------------------------------------------------------------
 vessel_ASTD |>
   select(mmsi, vessel2 = vessel, flag2 = flag) |>
   inner_join(vessel_registry |>
-              filter(source == "ISL") |>
+               filter(source == "ISL") |>
                select(mmsi, cs, imo, uid, vessel, vid) |>
                drop_na(mmsi)) |>
   arrange(vid)
@@ -294,27 +287,18 @@ vessel_registry |>
   slice(1:600) |>
   knitr::kable()
 
-
-## Icelandic duals ------------------------------------------------------------
-# Expected some doubles here, need to check older code
-vessel_registry |>
-  filter(source == "ISL",
-         !is.na(mmsi)) |>
-  group_by(mmsi) |>
-  mutate(n.mmsi = n()) |>
-  ungroup() |>
-  filter(n.mmsi > 1)
-
-
 ### Check if still missing -----------------------------------------------------
 # Some (non exclusive) mmsi picked up in astd that are note in mmsi registry
-tibble(~mmsi, ~sknr, ~vessel_note,
-       251396098, NA, "NIELS JONSSON EA106",
-       251216100, NA, "GUNNA VALGEIRS",
-       251857270, NA, "SIF",
-       251139000, NA, "HUGINN",
-       251513101, NA, NA,
-       251068418, NA, NA)
+missing <-
+  tribble(~mmsi, ~sknr, ~vessel_note,
+          251396098, NA, "NIELS JONSSON EA106",
+          251216100, NA, "GUNNA VALGEIRS",
+          251857270, NA, "SIF",
+          251139000, NA, "HUGINN",
+          251513101, NA, NA,
+          251068418, NA, NA)
+
+vessel_registry |> filter(mmsi %in% as.character(missing$mmsi))
 
 ### ISL vessel - in landings?
 # check if vessels that have landed have mmsi
