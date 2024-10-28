@@ -246,7 +246,15 @@ stk <-
 drop <- stk |> filter(drop) |> select(-mmsi_cat)
 keep <- stk |> filter(!drop) |> select(-drop, -mmsi_cat)
 
-# what is yet not known --------------------------------------------------------
+# Export -----------------------------------------------------------------------
+
+
+# ISSUES -----------------------------------------------------------------------
+
+
+
+
+## what is yet not known -------------------------------------------------------
 keep |> lh()
 ## Neither loid nor glid classified --------------------------------------------
 keep |> filter(is.na(.loid) & is.na(.glid)) |> arrange(-pings)
@@ -273,7 +281,7 @@ tribble(
   100512, "2951X", "2951X", "An Icelandic jigger, possibly 2951", NA, 2951
 )
 
-# Create variables from loid and glid ------------------------------------------
+## Create variables from loid and glid ------------------------------------------
 keep |> lh()
 keep2 <-
   keep |>
@@ -301,7 +309,7 @@ keep2 <-
   )
 
 
-# Icelandic vessels ------------------------------------------------------------
+## Icelandic vessels ------------------------------------------------------------
 vessels.is <-
   vessels |>
   filter(source == "ISL" & flag == "ISL")
@@ -401,7 +409,7 @@ stk_trail(con) |>
 
 
 
-# History explorations ---------------------------------------------------------
+## History explorations ---------------------------------------------------------
 # seems like history of call sign is not in the data
 history <- tbl_mar(con, "vessel.vessel_identification_hist") |> collect()
 history |>
@@ -434,7 +442,7 @@ hist <-
          t2 = as_date(t2))
 
 
-# May be of use ----------------------------------------------------------------
+## May be of use ----------------------------------------------------------------
 read_csv("~/prj2/vms/data-dumps/2019-03_from-jrc/vesselRecap-2019-03-25.csv")
 v <-
   readxl::read_excel("~/stasi/hreidar/data-raw/HREIDAR_Islensk_skip.xlsx", guess_max = Inf) |>

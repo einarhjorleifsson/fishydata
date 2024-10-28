@@ -366,8 +366,7 @@ data <-
              nafn %in% c("Radíómiðun hf", "Brimrún hf",
                          "Stefja ehf Ánanaustum 15") ~ "testing",
              .default = mmsi_cat))
-# Why is this guy here?
-data |> filter(mmsi %in% c("291990101"))
+
 
 
 ## Extract likely date information from note -----------------------------------
@@ -423,7 +422,14 @@ data |>
 
 ## ISSUES ----------------------------------------------------------------------
 
-### Icelandic MMSI in ASTD that are not in mmsi-registry compiled above
+### Why is this guy here? ------------------------------------------------------
+data |> filter(mmsi %in% c("291990101")) |> glimpse()
+
+### Icelandic MMSI in ASTD that are not in fjarskiptastofa registry ------------
+# This done at 2024-10-28
+fs <-
+  readxl::read_excel("data-raw/vessels/ISL/mmsi-iceland_fjarskiptastofa_2024-08-21.xlsx") |>
+  janitor::clean_names()
 astd <-
   open_dataset("data/astd") |>
   filter(flag == "ISL") |>
@@ -433,9 +439,66 @@ astd <-
             t2 = max(time),
             .groups = "drop") |>
   collect()
-astd |>
+astd_missing <-
+  astd |>
   filter(pings > 100) |>
   mutate(mmsi = as.character(mmsi)) |>
-  filter(!mmsi %in% data$mmsi) |>
-  arrange(desc(t2)) |>
+  arrange(mmsi, vessel) |>
+  group_by(mmsi) |>
+  fill(vessel) |>
+  group_by(mmsi, vessel) |>
+  reframe(pings = sum(pings),
+            t1 = min(t1),
+            t2 = max(t2)) |>
+  filter(!mmsi %in% fs$mmsi_nr) |>
+  arrange(mmsi)
+
+astd_missing |>
   knitr::kable(caption = "ASTD ISL vessels not in MMSI registry (more than 100 pings)")
+
+#  Some copy-paste from marinetraffic
+fil <- "data-raw/vessels/marinetraffic/mmsi_2024-10-27_web-copy.txt"
+mt <-
+  read_delim(fil,
+             col_names = c("var", "val"), comment = "#",
+             delim = "\t") |>
+  mutate(id = ifelse(var == "Name", 1, 0),
+         id = cumsum(id),
+         var = tolower(var),
+         var = str_replace_all(var, " ", "_"),
+         val = str_trim(val),
+         val = ifelse(val == "-", NA, val)) |>
+  spread(var, val) |>
+  select(id,
+         name,
+         mmsi,
+         imo,
+         cs = call_sign,
+         flag,
+         vessel_class = general_vessel_type,
+         vessel_type = detailed_vessel_type,
+         ais_class = ais_transponder_class,
+         vessels_local_time = `vessel's_local_time`)
+mt |> view()
+
+astd_missing |>
+  left_join(mt)
+
+
+
+# One way for correction
+#  sknr and mmsi_nr found via searching fs-data by vessel name
+tribble(~sknr, ~mmsi_nr, ~mmsi_astd, ~note,  ~note2,
+        2411, "251439000", "251139000", "Huginn", "mmsi_nr ekki á marine traffic",
+        2935, "251216110", "251216100", "Gunna Valgeirs", "mmsi_nr ekki á marine traffic",
+        1357, "251454110", "251396098", "Níels Jónsson", "bæði númer á marine traffic, mmsi_nr ekki sést í 6 ár")
+
+astd |> filter(mmsi == "251454110")
+astd |> filter(mmsi == "251396098")
+
+
+
+#fil <- "data-raw/vessels/marinetraffic/mmsi_2024-02-19_web-copy.txt"
+
+
+
