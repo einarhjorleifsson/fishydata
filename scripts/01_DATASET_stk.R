@@ -179,8 +179,6 @@ VID <-
   pull(vid) |>
   as.character()
 
-
-
 stk <-
   stk_summary |>
   # The order matters in the case_when
@@ -191,10 +189,10 @@ stk <-
              loid %in% VID ~ "vid",
              numbers_only(loid) & nchar(loid) == 9  ~ "mmsi",
              loid %in% CS ~ "cs",
+             loid %in% UID ~ "uid",
              str_sub(loid, 1, 2) %in% cs.prefix$cs_prefix &
                !numbers_only(str_trim(loid)) &
                !str_starts(loid, "MOB_")  ~ "cs2",
-             loid %in% UID ~ "uid",
              numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_child ~ "mmsi_other",
              numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_aid ~ "mmsi_other",
              .default = NA)) |>
@@ -209,10 +207,10 @@ stk <-
              glid %in% VID ~ "vid",
              numbers_only(glid) & nchar(glid) == 9 ~ "mmsi",
              glid %in% CS ~ "cs",
+             glid %in% UID ~ "uid",
              str_sub(glid, 1, 2) %in% cs.prefix$cs_prefix &
                !numbers_only(str_trim(glid)) &
                !str_starts(glid, "MOB_")  ~ "cs2",
-             glid %in% UID ~ "uid",
              numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_child ~ "mmsi_other",
              numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_aid ~ "mmsi_other",
              .default = NA)) |>
@@ -275,7 +273,7 @@ keep <-
   )
 
 
-# MATCH ------------------------------------------------------------------------
+# MATCH. Icelandic vessels only ------------------------------------------------
 # Only create variables vid, cs and uid if
 #   * vessel is icelandic
 #   * vessel has mmsi
@@ -345,7 +343,7 @@ match.vid.vid <-
   keep.is |>
   filter(.loid == "vid", .glid == "vid") |>
   select(mid:.glid, vid) |>
-  left_join(vessels.is) |>
+  inner_join(vessels.is) |>
   mutate(match = "vid.vid", .before = mid)
 keep.is <- keep.is |> filter(!mid %in% match.vid.vid$mid)
 keep.is |> lh()
@@ -354,7 +352,7 @@ match.vid.cs <-
   keep.is |>
   filter(.loid == "vid", .glid == "cs") |>
   select(mid:.glid, vid, cs) |>
-  left_join(vessels.is) |>
+  inner_join(vessels.is |> filter(!is.na(cs))) |>
   mutate(match = "vid.cs", .before = mid)
 keep.is <- keep.is |> filter(!mid %in% match.vid.cs$mid)
 keep.is |> lh()
@@ -363,7 +361,7 @@ match.uid.cs <-
   keep.is |>
   filter(.loid == "uid", .glid == "cs") |>
   select(mid:.glid, uid, cs) |>
-  left_join(vessels.is) |>
+  inner_join(vessels.is |> filter(!is.na(uid), !is.na(cs))) |>
   mutate(match = "uid.cs", .before = mid)
 keep.is <- keep.is |> filter(!mid %in% match.uid.cs$mid)
 keep.is |> lh()
@@ -372,7 +370,7 @@ match.NA.mmsi <-
   keep.is |>
   filter(is.na(.loid), .glid == "mmsi") |>
   select(mid:.glid, mmsi) |>
-  left_join(vessels.is) |>
+  inner_join(vessels.is) |>
   mutate(match = "NA.mmsi", .before = mid)
 keep.is <- keep.is |> filter(!mid %in% match.NA.mmsi$mid)
 keep.is |> lh()
