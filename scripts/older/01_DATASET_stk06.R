@@ -378,3 +378,250 @@ keep.is <- keep.is |> filter(!mid %in% match.NA.mmsi$mid)
 keep.is |> lh()
 
 
+# OLDER BELOW ------------------------------------------------------------------
+
+
+
+
+
+
+# ______________________________________________________________________________
+# TEST: mid not yet classified
+keep |> filter(is.na(.loid) & is.na(.glid)) |> arrange(-pings)
+# for now suggest put these aside - not many icelandic vessels missing
+# here is an initial attempt at filling in the blanks
+#  there is actually no point in
+tribble(
+  ~mid, ~loid, ~glid, ~note, ~mmsi, ~vid,
+  133897, "unkown", "-", "FRO - likely a buoy", NA, NA,
+  100881, "0", "0A", "Likely a ferry - Baldur?", NA, NA,
+  127245, "unkown", "MBDZ9", "Aquaculture service boat", 232008557, NA,
+  101763, "9999", "9999", "An Icelandic longliner", NA, NA,
+  100512, "2951X", "2951X", "An Icelandic jigger, possibly 2951", NA, 2951
+)
+unknowns <-
+  keep |>
+  filter(is.na(.loid) & is.na(.glid)) |>
+  arrange(-pings) |>
+  slice(1:999) |>
+  pull(mid)
+stk_trail(con) |>
+  filter(mid %in% unknowns) |>
+  collect() |>
+  mutate(speed = ifelse(speed > 15, 15, speed)) |>
+  rb_mapdeck(radius = 100, add_harbour = FALSE)
+# TEST end _____________________________________________________________________
+
+# Create variables from loid and glid ------------------------------------------
+## vid-vid match ---------------------------------------------------------------
+vessels.is <-
+  vessels |>
+  filter(source == "ISL" & flag == "ISL")
+keep.vid.vid <-
+  keep |>
+  filter(.loid == "vid", .glid == "vid") |>
+  filter(!is.na(vid)) |>
+  #filter(pings > 10) |>
+  select(mid:t2, vid) |>
+  left_join(vessels.is) |>
+  mutate(by = "vid", .before = mid) |>
+  arrange(desc(t2))
+# ______________________________________________________________________________
+# TEST: Recent pings in stk but no MMSI are suspect
+keep.vid.vid |>
+  arrange(desc(t2)) |>
+  filter(is.na(mmsi))
+MID <- 101360
+stk_trail(con) |>
+  filter(mid %in% MID) |>
+  collect() |>
+  mutate(speed = ifelse(speed > 15, 15, speed)) |>
+  rb_mapdeck(radius = 100, add_harbour = FALSE)
+# TEST end _____________________________________________________________________
+drop.vid.vid <-
+  keep.vid.vid |>
+  filter(pings < 400 & is.na(mmsi))
+keep.vid.vid <-
+  keep.vid.vid |>
+  filter(!mid %in% drop.vid.vid$mid)
+# TODO: Get the mmsi for these vessels
+keep.vid.vid |>
+  filter(is.na(mmsi))
+## vid-cs match ----------------------------------------------------------------
+keep.vid.cs <-
+  keep |>
+  filter(.loid == "vid", .glid == "cs") |>
+  filter(!is.na(vid)) |>
+  #filter(pings > 10) |>
+  select(mid:t2, vid, cs_stk = cs) |>
+  left_join(vessels.is) |>
+  mutate(by = "vid", .before = mid)
+keep.vid.cs.with.mmsi <-
+  keep.vid.cs |>
+  filter(!is.na(mmsi))
+
+keep.vid.cs.without.mmsi <-
+  keep.vid.cs |>
+  filter(!mid %in% keep.vid.cs.with.mmsi$mid) |>
+  select(-c(vid, mmsi:note_date)) |>
+  rename(cs = cs_stk)
+
+keep.vid.cs.without.mmsi |>
+  left_join(vessels.is |> filter(!is.na(mmsi)) |> select(vid, cs, mmsi)) |>
+  view()
+
+
+
+
+## Here I am checking against having defined MMSI ------------------------------
+# i.e. I am being very negative ------------------------------------------------
+# join by vid
+
+keep_vid |>
+  # why do we not have mmsi for these:
+  filter(is.na(mmsi)) |>
+  arrange(desc(t2), -pings) |>
+  slice(1:200) |>
+  view()
+stk_trail(con) |>
+  filter(mid %in% 101673) |>
+  collect() |>
+  mutate(speed = ifelse(speed > 15, 15, speed)) |>
+  rb_mapdeck(radius = 100, add_harbour = FALSE)
+
+# joins by cs
+keep_cs <-
+  keep2 |>
+  filter(str_starts(cs, "TF")) |>
+  select(mid:t2, cs) |>
+  left_join(vessels.is |>
+              # now this is not really valid but still
+              filter(!is.na(mmsi)),
+            by = join_by(cs)) |>
+  mutate(by = "cs", .before = mid)
+keep_cs |>
+  # why do we not have mmsi for these:
+  filter(is.na(mmsi)) |>
+  arrange(desc(t2), -pings) |>
+  slice(1:30) |>
+  knitr::kable()
+# joins by uid
+keep_uid <-
+  keep2 |>
+  filter(!is.na(uid)) |>
+  select(mid:t2, uid) |>
+  left_join(vessels.is |>
+              # now this is not really valid but still
+              filter(!is.na(mmsi)),
+            by = join_by(uid))  |>
+  mutate(by = "uid", .before = mid)
+
+keep_uid |>
+  # why do we not have mmsi for these:
+  arrange(desc(t2), -pings) |>
+  slice(1:30) |>
+  knitr::kable()
+
+# joins by mmsi
+keep_mmsi <-
+  keep2 |>
+  filter(!is.na(mmsi)) |>
+  filter(str_starts(mmsi, "251")) |>
+  select(mid:t2, mmsi) |>
+  left_join(vessels.is |>
+              # now this is not really valid but still
+              filter(!is.na(mmsi)),
+            by = join_by(mmsi)) |>
+  mutate(by = "mmsi", .before = mid)
+
+keep_mmsi |>
+  # why do we not have mmsi for these:
+  arrange(desc(t2), -pings) |>
+  slice(1:500) |>
+  view()
+
+### bind the stuff
+bind_rows(keep_vid, keep_cs, keep_uid, keep_mmsi) |>
+  group_by(mid) |>
+  mutate(n.mid = n(),
+         n.vid = n_distinct(vid, na.rm = TRUE)) |>
+  ungroup() |>
+  filter(n.mid > 1,
+         n.vid > 1) |>
+  arrange(mid) |>
+  #slice(1:200) |>
+  view()
+
+stk_trail(con) |>
+  filter(mid %in% 100013) |>
+  collect() |>
+  mutate(speed = ifelse(speed > 15, 15, speed)) |>
+  ggplot(aes(time, speed)) +
+  geom_point(size = 0.2)
+
+
+
+## History explorations ---------------------------------------------------------
+# seems like history of call sign is not in the data
+history <- tbl_mar(con, "vessel.vessel_identification_hist") |> collect()
+history |>
+  select(vessel_iden_hist_id:home_port) |>
+  group_by(vessel_id) |>
+  summarise(n.cs = n_distinct(call_sign, na.rm = TRUE)) |>
+  ungroup() |>
+  filter(n.cs > 1)
+vessel <-
+  tbl_mar(con, "vessel.vessel") |>
+  select(.id = vessel_id, vid = registration_no, vessel = name, imo = imo_no, status) |>
+  collect() |>
+  arrange(vid)
+hist <-
+  tbl_mar(con, "vessel.vessel") |> glimpse()
+  select(.id = vessel_id,
+         vid = registration_no) |>
+  left_join(tbl_mar(con, "vessel.vessel_identification_hist") |>
+              select(.id = vessel_id,
+                     .hid = vessel_iden_hist_id,
+                     t1 = valid_from,
+                     t2 = valid_to,
+                     uch = region_acronym,
+                     uno = region_no,
+                     cs = call_sign,
+                     hb = home_port)) |>
+  collect() |>
+  arrange(vid, .hid) |>
+  mutate(t1 = as_date(t1),
+         t2 = as_date(t2))
+
+
+## May be of use ----------------------------------------------------------------
+read_csv("~/prj2/vms/data-dumps/2019-03_from-jrc/vesselRecap-2019-03-25.csv")
+v <-
+  readxl::read_excel("~/stasi/hreidar/data-raw/HREIDAR_Islensk_skip.xlsx", guess_max = Inf) |>
+  janitor::clean_names()
+
+
+fil <- here("data-raw/vessels/marinetraffic/mmsi_2024-10-27_web-copy.txt")
+mt <-
+  read_delim(fil,
+             col_names = c("var", "val"), comment = "#",
+             delim = "\t") |>
+  mutate(id = ifelse(var == "Name", 1, 0),
+         id = cumsum(id),
+         var = tolower(var),
+         var = str_replace_all(var, " ", "_"),
+         val = str_trim(val),
+         val = ifelse(val == "-", NA, val)) |>
+  spread(var, val) |>
+  select(id,
+         name,
+         mmsi,
+         imo,
+         cs = call_sign,
+         flag,
+         mobileid,
+         vessel_class = general_vessel_type,
+         vessel_type = detailed_vessel_type,
+         ais_class = ais_transponder_class,
+         vessels_local_time = `vessel's_local_time`,
+         date_of_retrieval)
