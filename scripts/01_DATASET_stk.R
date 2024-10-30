@@ -272,6 +272,8 @@ keep <-
              .default = NA),
   )
 
+## Export ----------------------------------------------------------------------
+match |> nanoparquet::write_parquet("data/stk-isl-vessel-match.parquet")
 
 # MATCH. Icelandic vessels only ------------------------------------------------
 # Only create variables vid, cs and uid if
@@ -329,6 +331,8 @@ keep <-
              .loid == "uid" & loid %in% UID ~ loid,
              .default = NA),
   )
+
+# should possibly
 vessels.is <-
   vessels |>
   filter(!is.na(vid), !is.na(mmsi), source == "ISL", flag == "ISL") |>
@@ -336,7 +340,8 @@ vessels.is <-
 
 keep.is <-
   keep |>
-  filter(!is.na(vid) | !is.na(mmsi) | !is.na(cs) | !is.na(uid))
+  filter(!is.na(vid) | !is.na(mmsi) | !is.na(cs) | !is.na(uid)) |>
+  filter(pings > 144)  # pings at minimum equivalent 1 day (assuming dt is 10 minutes)
 keep.is |> lh()
 
 match.vid.vid <-
@@ -375,4 +380,69 @@ match.NA.mmsi <-
 keep.is <- keep.is |> filter(!mid %in% match.NA.mmsi$mid)
 keep.is |> lh()
 
+# Things are getting more dubious
+match.NA.vid <-
+  keep.is |>
+  filter(is.na(.loid), .glid == "vid") |>
+  select(mid:.glid, vid) |>
+  inner_join(vessels.is,
+             by = join_by(vid))
+keep.is <- keep.is |> filter(!mid %in% match.NA.vid$mid)
+keep.is |> lh()
 
+match.NA.cs <-
+  keep.is |>
+  filter(is.na(.loid), .glid == "cs") |>
+  filter(!is.na(cs)) |>
+  select(mid:.glid, cs) |>
+  inner_join(vessels.is |> filter(!is.na(cs)),
+             by = join_by(cs))
+keep.is <- keep.is |> filter(!mid %in% match.NA.cs$mid)
+
+match <-
+  bind_rows(
+    match.vid.vid |> mutate(match = "vid.vid", .before = mid),
+    match.vid.cs  |> mutate(match = "vid.cs", .before = mid),
+    match.uid.cs  |> mutate(match = "uid.cs", .before = mid),
+    match.NA.mmsi |> mutate(match = "NA.mmsi", .before = mid),
+    match.NA.vid  |> mutate(match = "NA.vid", .before = mid),
+    match.NA.cs   |> mutate(match = "NA.cs", .before = mid)
+  )
+
+keep.is.store <- keep.is
+keep.is |> lh()
+
+# these are the remainders of glid-cs, loid can be different cats
+#  Note here we first exclude vid already matched
+match.XX.cs <-
+  keep.is |>
+  filter(.glid == "cs") |>
+  filter(!is.na(cs)) |>
+  select(mid:.glid, cs) |>
+  inner_join(vessels.is |> filter(!is.na(cs)) |> filter(!vid %in% match$vid),
+             by = join_by(cs))
+keep.is <- keep.is |> filter(!mid %in% match.XX.cs$mid)
+
+match <-
+  bind_rows(
+    match,
+    match.XX.cs   |> mutate(match = "XX.cs", .before = mid)
+  )
+
+
+# The remainder ----------------------------------------------------------------
+keep.is |> lh()
+## Try manual approach
+keep.is |> arrange(t2) |> knitr::kable()
+keep.is |>
+  pull(mid) ->
+  MID
+trail <-
+  stk_trail(con) |>
+  filter(mid %in% MID) |>
+  collect()
+trail |>
+  mutate(speed = ifelse(speed > 15, 15, speed)) |>
+  ggplot(aes(time, speed)) +
+  geom_point(size = 0.2, alpha = 0.1) +
+  facet_wrap(~ mid)
