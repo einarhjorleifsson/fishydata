@@ -7,14 +7,17 @@
 #  best have that in a separate script that starts by reading the output
 #  generated here.
 #
+# 2024-10-30:
+# * Add likely missing vessels
+# * Did corrections on existing mmsi
 # 2024-10-25:
 # * The code consolidate older archives of data obtained over time from
 #   https://www.fjarskiptastofa.is
 # * Why not relay solely on tbl_mar(con, "vessel.vessel_mmsi") ?
 #   * Does not contain all the data in the fjarskiptastofa file
 #   * That dataset is a recent, but not quite up to date snapshot of the
-#     data from https://www.fjarskiptastofa.is. It seems that the snapshots
-#     to not contain all the archive MMSI numbers.
+#     data from https://www.fjarskiptastofa.is.
+#   * It seems that the snapshots do not contain all the archive MMSI numbers.
 #   * We have mmsi takeovers - newer vessel can take over an mmsi number
 #   * The child mmsi (starting with 99MID [99251]) migrate between
 #     mother mmsi over time
@@ -82,7 +85,7 @@ current |>
   mutate(n = n()) |>
   ungroup() |>
   filter(n > 1) |>
-  knitr::kable(caption = "Duplicate MMSI - expect zero")
+  knitr::kable(caption = "Duplicate MMSI (expect none)")
 # TEST - is current in database
 vessel_current <- current |> pull(mmsi)
 database |>
@@ -111,7 +114,7 @@ current <-
       filter(!mmsi %in% mmsi_in_database)
   )
 # TEST: any duplicate MMSI
-current |> count(mmsi) |> filter(n > 1)
+current |> count(mmsi) |> filter(n > 1) |> knitr::kable(caption = "Duplicate mmsi (expect none)")
 
 current <-
   current |>
@@ -161,13 +164,39 @@ history |>
 d <-
   bind_rows(current |> mutate(source = 5, .after = nafn),
             history)
+
+
 d_rest <-
   d |>
   filter(!str_starts(mmsi, "251")) |>
   arrange(-source) |>
   distinct(mmsi, .keep_all = TRUE) |>
   select(mmsi, sknr, cs, nafn, note, source)
+
 d <- d |> filter(str_starts(mmsi, "251"))
+
+## Correction -------------------------------------------------------------------
+# should possibly be done more upstream
+d <-
+  d |>
+  # These need verification from Fjarskiptastofa
+  mutate(mmsi = case_when(mmsi == "251439000" ~ "251139000",  # 2411-Huginn: based on ASTD - verification pending
+                          mmsi == "251216110" ~ "251216100",  # 2935-Gunna Valgeirs:   ditto
+                          mmsi == "251454110" ~ "251396098",  # 1357-Níels Jónsson":   ditto
+                          .default = mmsi))
+## Additions -------------------------------------------------------------------
+# should possibly be done more upstream
+add <-
+  tribble(~mmsi, ~vid, ~cs, ~nafn, ~note,
+          "251066110", 84,   "TFQZ", "Kristbjörg", "manual add - marine traffic",
+          "251434110", 2855, "TFQG", "Hugur", "manual add - marine traffic",
+          #"251700001", 2905,     NA, "Eskey", "manual add - marine traffic - could be vid = 2905, but that also found under mmsi = 251849340",
+          "251857270", 3002, "TFGT", "Sif", "manual add - marine traffic")
+d <-
+  bind_rows(d,
+            add)
+
+
 
 d |>
   select(mmsi, sknr, cs, nafn, note, source) |>
@@ -180,6 +209,19 @@ d |>
   knitr::kable(caption = "Duplicate MMSI - expect zero")
 
 ### Vessel with more than one MMSI ---------------------------------------------
+d |>
+  filter(!is.na(vid)) |>
+  select(vid, mmsi, source) |>
+  arrange(-source) |>
+  distinct(vid, mmsi, .keep_all = TRUE) |>
+  group_by(vid) |>
+  mutate(n = n()) |>
+  ungroup() |>
+  filter(n > 1) |>
+  arrange(vid) |>
+  #mutate(mmsi = as.integer(mmsi)) |>
+  left_join(history) |>
+  knitr::kable(caption = "Vessels with more than one MMSI (expect none)")
 
 #### Vessel 2988 ---------------------------------------------------------------
 d |> filter(sknr == "2988") |> select(mmsi:vid)
@@ -187,6 +229,7 @@ d |> filter(sknr == "2988") |> select(mmsi:vid)
 #  VID: 2988 (a sailing boat)
 #   * MMSI: 251573110 in ASTD dataset from 2019 onwards
 #   * MMSI: 251573000 not in ASTD, not in marine traffic
+#           Only appeared in source = 1, the oldest sourc
 #   * SUGGEST: remove vid = 2988 and mmsi = 251573000 from the dataset
 d <-
   d |>
@@ -223,6 +266,8 @@ d |>
   #mutate(mmsi = as.integer(mmsi)) |>
   left_join(history) |>
   knitr::kable(caption = "Vessels with more than one MMSI (expect none)")
+
+
 
 ### MMSI on more than one vessel -----------------------------------------------
 # This can happen but not at the same time
@@ -423,6 +468,7 @@ data |>
 ## ISSUES ----------------------------------------------------------------------
 
 ### Why is this guy here? ------------------------------------------------------
+# Not icelandic MID, not on marine traffic
 data |> filter(mmsi %in% c("291990101")) |> glimpse()
 
 ### Icelandic MMSI in ASTD that are not in fjarskiptastofa registry ------------
@@ -448,9 +494,9 @@ astd_missing <-
   fill(vessel) |>
   group_by(mmsi, vessel) |>
   reframe(pings = sum(pings),
-            t1 = min(t1),
-            t2 = max(t2)) |>
-  filter(!mmsi %in% fs$mmsi_nr) |>
+          t1 = min(t1),
+          t2 = max(t2)) |>
+  filter(!mmsi %in% c(fs$mmsi_nr, data$mmsi)) |>
   arrange(mmsi)
 
 astd_missing |>
@@ -479,26 +525,12 @@ mt <-
          vessel_type = detailed_vessel_type,
          ais_class = ais_transponder_class,
          vessels_local_time = `vessel's_local_time`)
-mt |> view()
+mt
 
 astd_missing |>
   left_join(mt)
 
 
-
-# One way for correction
-#  sknr and mmsi_nr found via searching fs-data by vessel name
-tribble(~sknr, ~mmsi_nr, ~mmsi_astd, ~note,  ~note2,
-        2411, "251439000", "251139000", "Huginn", "mmsi_nr ekki á marine traffic",
-        2935, "251216110", "251216100", "Gunna Valgeirs", "mmsi_nr ekki á marine traffic",
-        1357, "251454110", "251396098", "Níels Jónsson", "bæði númer á marine traffic, mmsi_nr ekki sést í 6 ár")
-
-astd |> filter(mmsi == "251454110")
-astd |> filter(mmsi == "251396098")
-
-
-
-#fil <- "data-raw/vessels/marinetraffic/mmsi_2024-02-19_web-copy.txt"
 
 
 
