@@ -463,7 +463,7 @@ if(FALSE) {
 ## SAVE ------------------------------------------------------------------------
 data |>
   arrange(mmsi_cat, mmsi) |>
-  nanoparquet::write_parquet("data/vessels/mmsi_ISL.parquet")
+  nanoparquet::write_parquet("data/vessels/mmsi_iceland_archieves.parquet")
 
 ## ISSUES ----------------------------------------------------------------------
 
@@ -529,8 +529,5 @@ mt
 
 astd_missing |>
   left_join(mt)
-
-
-
 
 
