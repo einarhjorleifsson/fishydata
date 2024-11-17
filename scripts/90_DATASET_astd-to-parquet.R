@@ -5,7 +5,7 @@
 
 # nohup run --------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < data-raw/00_DATASET_astd-to-parquet.R --vanilla > data-raw/00_DATASET_astd-to-parquet_2024-10-07.log &
+#  nohup R < scripts/90_DATASET_astd-to-parquet.R --vanilla > scripts/log//90_DATASET_astd-to-parquet_2024-11-15.log &
 #
 # Wish list
 #  NOTE: variables that were added later not appearing when open_dataset
@@ -31,7 +31,7 @@
 #
 # 2024-06-10
 #  Corrupt 202304 is now fixed
-#  Added 202404 and 202405 to the csvs
+#  Added 202404 and 202405 to the csv
 # 2024-05-20
 #  Move distinct to upmost part of code
 #  Add spatial variables:
@@ -75,9 +75,10 @@
 library(arrow)
 library(tidyverse)
 library(sf)
+
 library(tictoc)
 
-fil <- "~/stasi/gis/gisland/external/CAFF_Boundary_4326.zip"
+fil <- "~/stasi/gis/gisland_data/gisland/external/CAFF_Boundary_4326.zip"
 files <- unzip(fil, list = TRUE)
 unzip(zipfile = fil, exdir = tempdir())
 caff <-
@@ -183,8 +184,8 @@ base_date <- c("202311",
                "202403",
                "202404")
 
-fil <- fil[140:length(fil)]
-base <- base[140:length(base)]
+fil <- fil[142:length(fil)]
+base <- base[142:length(base)]
 
 for(i in 1:length(fil)) {
   tic()
