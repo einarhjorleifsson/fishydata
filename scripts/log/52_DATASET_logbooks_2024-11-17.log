@@ -1,0 +1,834 @@
+
+R version 4.4.1 (2024-06-14) -- "Race for Your Life"
+Copyright (C) 2024 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> # Objective --------------------------------------------------------------------
+> # Merge the old (schema afli) and the new logbook files (schema adb)
+> #
+> # Preamble ---------------------------------------------------------------------
+> # run this as:
+> #  nohup R < scripts/52_DATASET_logbooks.R --vanilla > scripts/log/52_DATASET_logbooks_2024-11-17.log &
+> 
+> ## 2024-05-30
+> # * incorporated 02-2_logbooks-landings-coupling.R into this script
+> ## 2024-05-29
+> # * Changed output dump, no longer saving rds
+> ## 2024-03-08 changes
+> # * added gear 10 and 12 to mobile - approach like as is done for demersal seine
+> ## 2024-02-12 changes
+> # * Go back to 2001
+> # * Set id for older logbooks to negative values
+> # * create both parquet and rds files, store in new subdirectories in data/logbooks
+> # * use the new vessel database
+> 
+> # Input:  Oracle database
+> # Output: data/logbooks/rds/station.rds
+> #         data/logbooks/rds/catch.rds
+> #         data/logbooks/parquet/station.parquet
+> #         data/lgobooks/parquet/catch.parquet
+> # Downstream usage: R/02-2_logbooks-gear-correction.R
+> 
+> ## Brief summary ---------------------------------------------------------------
+> # The main output file is just a flat file containing station information as 
+> #   well as basic effort information. The latter are for some historical reasons
+> #   stored in tables for different "gear types".
+> # In the merge, new database takes precedents over the old database for logbook
+> #  data for the same vessel on the same logbook date entry.
+> # In addition, the catch by species is also dumped
+> #
+> # Processing data loss are related to orphan effort files
+> 
+> # NOTE: If using years further back than 2009: need to double check that visir and station_id
+> #       are not the same.
+> 
+> library(tictoc)
+> tic()
+> 
+> lubridate::now()
+[1] "2024-11-17 10:52:58 GMT"
+> 
+> YEARS <- 2024:2001
+> 
+> library(arrow)
+Some features are not enabled in this build of Arrow. Run `arrow_info()` for more information.
+
+Attaching package: ‘arrow’
+
+The following object is masked from ‘package:utils’:
+
+    timestamp
+
+> library(data.table)
+
+Attaching package: ‘data.table’
+
+The following object is masked from ‘package:tictoc’:
+
+    shift
+
+> library(tidyverse)
+── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
+✔ dplyr     1.1.4     ✔ readr     2.1.5
+✔ forcats   1.0.0     ✔ stringr   1.5.1
+✔ ggplot2   3.5.1     ✔ tibble    3.2.1
+✔ lubridate 1.9.3     ✔ tidyr     1.3.1
+✔ purrr     1.0.2     
+── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+✖ dplyr::between()      masks data.table::between()
+✖ lubridate::duration() masks arrow::duration()
+✖ dplyr::filter()       masks stats::filter()
+✖ dplyr::first()        masks data.table::first()
+✖ lubridate::hour()     masks data.table::hour()
+✖ lubridate::isoweek()  masks data.table::isoweek()
+✖ dplyr::lag()          masks stats::lag()
+✖ dplyr::last()         masks data.table::last()
+✖ lubridate::mday()     masks data.table::mday()
+✖ lubridate::minute()   masks data.table::minute()
+✖ lubridate::month()    masks data.table::month()
+✖ lubridate::quarter()  masks data.table::quarter()
+✖ lubridate::second()   masks data.table::second()
+✖ purrr::transpose()    masks data.table::transpose()
+✖ lubridate::wday()     masks data.table::wday()
+✖ lubridate::week()     masks data.table::week()
+✖ lubridate::yday()     masks data.table::yday()
+✖ lubridate::year()     masks data.table::year()
+ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+> library(lubridate)
+> library(omar)
+> #### Function
+> match_nearest_date <- function(lb, ln) {
++   
++   lb.dt <-
++     lb %>%
++     select(vid, datel) %>%
++     distinct() %>%
++     setDT()
++   
++   ln.dt <-
++     ln %>%
++     select(vid, datel) %>%
++     distinct() %>%
++     mutate(dummy = datel) %>%
++     setDT()
++   
++   res <-
++     lb.dt[, date.ln := ln.dt[lb.dt, dummy, on = c("vid", "datel"), roll = "nearest"]] %>%
++     as_tibble()
++   
++   lb %>%
++     left_join(res,
++               by = c("vid", "datel")) %>%
++     left_join(ln %>% select(vid, date.ln = datel, gid_ln, .lid),
++               by = c("vid", "date.ln"))
++   
++ }
+> 
+> con <- connect_mar()
+> 
+> GEARS <- 
++   omar::gid_orri_plus(con) |> 
++   collect(n = Inf) |> 
++   rename(gclass = gid2,
++          m4 = dcf4,
++          m5 = dcf5b)
+> GEARS_trim <-
++   GEARS |> 
++   select(gid, veidarfaeri, gclass, m4, m5)
+> # Only Icelandic vessels
+> q_vessels_icelandic <- 
++   omar::tbl_mar(con, "vessel.vessel_v") |> 
++   select(vid = registration_no) |> 
++   filter(!vid %in% c(0, 1, 3:5, 9999)) %>% 
++   filter(!between(vid, 3700, 4999))
+> 
+> # 1 Old logbooks ---------------------------------------------------------------
+> 
+> ## Mobile gear ----------------------------------------------------------------
+> MOBILE_old <-
++   omar::lb_mobile(con, correct_gear = FALSE, trim = TRUE) |> 
++   filter(year %in% YEARS,
++          # only towing gear
++          gid %in% c(5, 6, 7, 8, 9, 10, 12, 14, 15, 38, 40)) |> 
++   # limit to Icelandic vesssels
++   inner_join(q_vessels_icelandic %>% select(vid),
++              by = join_by(vid)) |> 
++   select(visir, vid, gid, date, t1, t2, lon, lat, lon2, lat2, z1, z2, datel, effort, effort_unit,
++          sweeps, plow_width) |> 
++   collect(n = Inf) |> 
++   mutate(table = "mobile",
++          date = as_date(date),
++          datel = as_date(datel))
+> 
+> ## Static gear -----------------------------------------------------------------
+> STATIC_old <-
++   omar::lb_static(con, correct_gear = FALSE, trim = TRUE) |> 
++   filter(year %in% YEARS,
++          gid %in% c(1, 2, 3)) |> 
++   # limit to Icelandic vesssels
++   inner_join(q_vessels_icelandic %>% select(vid),
++              by = join_by(vid)) |> 
++   select(visir, vid, gid, date, t0, t1, t2, lon, lat, lon2, lat2, z1, z2, datel, effort, effort_unit) |> 
++   collect(n = Inf) |> 
++   mutate(table = "static",
++          date = as_date(date),
++          datel = as_date(datel))
+> 
+> ## Traps -----------------------------------------------------------------------
+> TRAP_old <- 
++   omar::lb_trap(con, correct_gear = FALSE, trim = TRUE) |> 
++   filter(year %in% YEARS,
++          # only towing gear
++          gid %in% c(18, 39))  |> 
++   # limit to Icelandic vesssels
++   inner_join(q_vessels_icelandic %>% select(vid),
++              by = join_by(vid)) |> 
++   select(visir, vid, gid, date, lon, lat, lon2, lat2, datel, effort, effort_unit) |> 
++   collect(n = Inf) |> 
++   mutate(table = "trap",
++          date = as_date(date),
++          datel = as_date(datel))
+> 
+> ## Pelagic seine ---------------------------------------------------------------
+> SEINE_old <-
++   omar::lb_seine(con, correct_gear = FALSE, trim = TRUE) |> 
++   filter(year %in% YEARS,
++          # only towing gear
++          gid %in% c(10, 12))  |> 
++   # limit to Icelandic vesssels
++   inner_join(q_vessels_icelandic %>% select(vid),
++              by = join_by(vid)) |> 
++   select(visir, vid, gid, date, t1, lon, lat, datel, effort, effort_unit) |> 
++   collect(n = Inf) |> 
++   mutate(table = "seine",
++          date = as_date(date),
++          datel = as_date(datel))
+> 
+> ## Combine the logbooks --------------------------------------------------------
+> LGS_old <-
++   bind_rows(MOBILE_old,
++             STATIC_old,
++             SEINE_old,
++             TRAP_old) |> 
++   mutate(base = "old") |> 
++   rename(.sid = visir)
+> LGS_old <- 
++   LGS_old |> 
++   select(.sid, vid, gid, date, t1, t2, lon, lat, lon2, lat2, z1, z2,
++          datel, effort, effort_unit, sweeps, plow_width, base, t0)
+> 
+> ## The catch -------------------------------------------------------------------
+> CATCH_old <-
++   lb_catch(con) |> 
++   collect(n = Inf) |> 
++   rename(.sid = visir) |> 
++   filter(.sid %in% LGS_old$.sid)
+> 
+> ## Checks ----------------------------------------------------------------------
+> ### Data loss ------------------------------------------------------------------
+> n0 <- 
++   lb_base(con) |> 
++   filter(year %in% YEARS) |> 
++   count() |> 
++   collect() |> 
++   pull(n)
+> n1 <- nrow(LGS_old)
+> print(paste0("Original settings: ", n0, " Settings retained: ", n1))
+[1] "Original settings: 3054506 Settings retained: 3052124"
+> print(paste0("Records lossed: ", n0-n1, " Proportion retained: ", n1/n0))
+[1] "Records lossed: 2382 Proportion retained: 0.999220168498605"
+> 
+> ### Missingness ----------------------------------------------------------------
+> LGS_old |> 
++   mutate(no_effort = is.na(effort)) |> 
++   count(gid, no_effort) |> 
++   spread(no_effort, n) |> 
++   knitr::kable()
+
+
+| gid|   FALSE| TRUE|
+|---:|-------:|----:|
+|   1|  393253| 1364|
+|   2|  230103| 1361|
+|   3|  351275| 3785|
+|   5|  562952|   NA|
+|   6| 1116561|    9|
+|   7|   96158| 1018|
+|   8|       1|   NA|
+|   9|   85850|    6|
+|  10|    8582|    1|
+|  12|   27275|   36|
+|  14|  134363|   12|
+|  15|   11154|   48|
+|  18|     203|  593|
+|  38|   17462|  121|
+|  39|    1128| 1453|
+|  40|    5854|  143|
+> 
+> 
+> # 2 New logbooks ---------------------------------------------------------------
+> # The new logbooks are in principle a total mess that need to be fixed upstream
+> #  Following is thus just an interrim hack. The function call to the new data
+> #  are a little different since it is still in development.
+> 
+> ## Functions -------------------------------------------------------------------
+> # should possible move functions to the omar-package
+> lb_trip_new <- function(con) {
++   tbl_mar(con, "adb.trip_v") |> 
++     select(trip_id, 
++            vid = vessel_no,
++            T1 = departure,
++            hid1 = departure_port_no,
++            T2 = landing,
++            hid2 = landing_port_no,
++            source)
++ }
+> lb_station_new0 <- function(con) {
++   tbl_mar(con, "adb.station_v") |> 
++     select(trip_id,
++            station_id,
++            gid = gear_no,
++            t1 = fishing_start,
++            t2 = fishing_end,
++            lon = longitude,
++            lat = latitude,
++            lon2 = longitude_end,
++            lat2 = latitude_end,
++            z1 = depth,
++            z2 = depth_end,
++            tow_start,
++            everything())
++ }
+> lb_base_new <- function(con) {
++   lb_trip_new(con) |> 
++     inner_join(lb_station_new0(con) |> 
++                  select(trip_id:tow_start),
++                by = "trip_id") |> 
++     select(vid, gid, t1:tow_start, everything()) |> 
++     mutate(whack = case_when(between(lon, 10, 30) & between(lat, 62.5, 67.6) ~ "mirror",
++                              between(lon, -3, 3) & gid != 7 ~ "ghost",
++                              .default = "ok"),
++            lon = ifelse(whack == "mirror",
++                         -lon,
++                         lon),
++            lon2 = ifelse(whack == "mirror",
++                          -lon2,
++                          lon2))
++ }
+> lb_catch_new <- function(con) {
++   tbl_mar(con, "adb.catch") |> 
++     mutate(catch = case_when(condition == "GUTT" ~ quantity / 0.8,
++                              condition == "UNGU" ~ quantity,
++                              .default = NA)) |> 
++     select(station_id = fishing_station_id,
++            sid = species_no, 
++            catch, 
++            weight, 
++            quantity, 
++            condition, 
++            catch_type = source_type)
++ }
+> 
+> 
+> ## Only records not in old logbooks --------------------------------------------
+> BASE_new <- 
++   lb_base_new(con) |> 
++   filter(year(t1) >= 2021) |> 
++   filter(year(t1) %in% YEARS) |> 
++   collect(n = Inf) |> 
++   select(vid:z2, trip_id, datel = T2, source:whack) |> 
++   mutate(date = as_date(t1),
++          datel = as_date(datel),
++          base = "new")
+> BASE_new_n0 <- nrow(BASE_new)
+> # only data where the date fishing and vessels are not already in the old
+> #  logbooks. This reduces the number of records from ~212 thousand to
+> #  ~88 thousand
+> BASE_new <-
++   BASE_new |> 
++   left_join(LGS_old |> 
++               select(vid, date) |> 
++               distinct() |> 
++               mutate(in.old = "yes"),
++             #multiple = "all",
++             by = join_by(vid, date)) |> 
++   mutate(in.old = replace_na(in.old, "no"))
+> BASE_new |> 
++   count(source, in.old) |> 
++   spread(in.old, n) |> 
++   knitr::kable(caption = "Number of records in new database that are also in the old database.")
+
+
+Table: Number of records in new database that are also in the old database.
+
+|source                                        |     no|   yes|
+|:---------------------------------------------|------:|-----:|
+|APP TÖFLUR                                    |     19|    NA|
+|Fishtech raun                                 |    381|    NA|
+|Fishtech raun - GAFL AUTO                     |     13|    NA|
+|Fontos raun                                   |   3380|    NA|
+|Fontos raun - GAFL AUTO                       |    191|    NA|
+|FRA GAFLI - AUTO                              |     12|    NA|
+|FRA GAFLI - AUTO - Skrifstofa VES             |      7|    NA|
+|FRA TAKTIKAL                                  |   6983|     7|
+|FRA TAKTIKAL - GAFL AUTO                      |      9|    NA|
+|GAFL BÓK UPPFÆRÐ FRÁ TAKTIKAL                 |      2|    NA|
+|Jóhann Gíslason raun                          |   2389|     7|
+|Jóhann Gíslason raun - GAFL AUTO              |      5|    NA|
+|Marína raun                                   |   9222|    NA|
+|Marína raun - GAFL AUTO                       |    241|    NA|
+|Marína raun - Skrifstofa VES                  |      4|    NA|
+|PAPPÍR                                        |    224|  2787|
+|Reiknistofa fiskmarkaða raun                  |      6|    NA|
+|Reiknistofa fiskmarkaða raun - Skrifstofa VES |      1|    NA|
+|STOKKUR                                       |  22759|   201|
+|TRACKWELL                                     |   1856| 93661|
+|TRACKWELL - GAFL AUTO                         |     NA|   113|
+|TRACKWELL BAEKUR                              |     27| 28810|
+|Trackwell raun                                | 219223|   377|
+|Trackwell raun - GAFL AUTO                    |   3489|    NA|
+|Trackwell raun - Skrifstofa VES               |    127|    NA|
+> BASE_new <- 
++   BASE_new |> 
++   filter(in.old == "no") |> 
++   select(-in.old)
+> 
+> ## Checks ----------------------------------------------------------------------
+> ### Should one remove whacks?? - not if using positions from ais ---------------
+> #   mirror: record where lon is positive but should be negative
+> #   ghost: records around the meridian
+> BASE_new |> 
++   count(source, whack) |> 
++   spread(whack, n)
+# A tibble: 24 × 4
+   source                            ghost mirror    ok
+   <chr>                             <int>  <int> <int>
+ 1 APP TÖFLUR                           NA     19    NA
+ 2 Fishtech raun                        NA    381    NA
+ 3 Fishtech raun - GAFL AUTO            NA     13    NA
+ 4 Fontos raun                           1   3274   105
+ 5 Fontos raun - GAFL AUTO              NA    191    NA
+ 6 FRA GAFLI - AUTO                     NA     NA    12
+ 7 FRA GAFLI - AUTO - Skrifstofa VES    NA     NA     7
+ 8 FRA TAKTIKAL                        215     NA  6768
+ 9 FRA TAKTIKAL - GAFL AUTO             NA     NA     9
+10 GAFL BÓK UPPFÆRÐ FRÁ TAKTIKAL        NA     NA     2
+# ℹ 14 more rows
+> ### Any abberrant trend in the number of sets by month? ------------------------
+> bind_rows(
++   LGS_old |>   select(gid, date, base),
++   BASE_new  |> select(gid, date, base)) |> 
++   left_join(GEARS_trim |> mutate(gclass = paste(str_pad(gid, 2, pad = "0"), veidarfaeri)) |> select(gid, gclass)) |> 
++   mutate(date = floor_date(date, "month")) |> 
++   count(date, gclass) |> 
++   filter(year(date) %in% 2018:2022) |> 
++   ggplot(aes(date, n)) +
++   geom_point(size = 0.5) +
++   facet_wrap(~ gclass, scales = "free_y")
+Joining with `by = join_by(gid)`
+> 
+> ## Mobile gear -----------------------------------------------------------------
+> MOBILE_new <- 
++   BASE_new |> 
++   inner_join(
++     tbl_mar(con, "adb.trawl_and_seine_net_v") |> collect(n = Inf),
++     by = join_by(station_id)
++   ) |> 
++   mutate(effort = case_when(gid %in% c(6, 7) ~ as.numeric(difftime(t2, t1, units = "hours")),
++                             gid %in% 5 ~ 1,
++                             .default = NA),
++          effort_unit = case_when(gid %in% c(6, 7) ~ "hours towed",
++                                  gid %in% 5  ~  "setting",
++                                  .default = NA)) |> 
++   rename(sweeps = bridle_length) |> 
++   select(station_id, sweeps, effort, effort_unit)
+> ## Static gear -----------------------------------------------------------------
+> STATIC_new <- 
++   BASE_new |> 
++   inner_join(
++     tbl_mar(con, "adb.line_and_net_v") |> collect(n = Inf),
++     by = join_by(station_id)
++   ) |> 
++   mutate(dt = as.numeric(difftime(t2, t1, unit = "hours")),
++          effort = case_when(gid == 3 ~ dt,
++                             gid %in% c(2, 11, 25, 29, 91, 92) ~ dt/24 * nets,
++                             gid %in% 1 ~ hooks,
++                             .default = NA),
++          effort_unit = case_when(gid == 3 ~ "hookhours",
++                                  gid %in% c(2, 11, 25, 29, 91, 92) ~ "netnights",
++                                  gid %in% 1 ~ "hooks",
++                                  .default = NA)) |> 
++   select(station_id, effort, effort_unit)
+> ## Dredge gear -----------------------------------------------------------------
+> DREDGE_new <- 
++   BASE_new |> 
++   inner_join(
++     tbl_mar(con, "adb.dredge_v") |> collect(n = Inf),
++     by = join_by(station_id)
++   ) |> 
++   mutate(effort = as.numeric(difftime(t2, t1, units = "hours")),
++          effort_unit = "hours towed",
++          plow_width = 2) |> 
++   select(station_id, plow_width, effort, effort_unit)
+> ## Trap gear -------------------------------------------------------------------
+> TRAP_new <- 
++   BASE_new |> 
++   inner_join(
++     tbl_mar(con, "adb.trap_v") |> collect(n = Inf),
++     by = join_by(station_id)
++   ) |> 
++   mutate(dt = as.numeric(difftime(t2, t1, units = "hours")),
++          effort = dt * number_of_traps,
++          effort_unit = "trap hours") |> 
++   select(station_id, effort, effort_unit)
+> ## Seine gear ------------------------------------------------------------------
+> SEINE_new <- 
++   BASE_new |> 
++   inner_join(
++     tbl_mar(con, "adb.surrounding_net_v") |> collect(n = Inf),
++     by = join_by(station_id)
++   ) |> 
++   mutate(effort = 1,
++          effort_unit = "setting") |> 
++   select(station_id, effort, effort_unit)
+> 
+> BASE_new_aux <- 
++   bind_rows(MOBILE_new,
++             STATIC_new,
++             DREDGE_new,
++             TRAP_new,
++             SEINE_new)
+> 
+> ## Check -----------------------------------------------------------------------
+> ### Orphan effort files --------------------------------------------------------
+> n1 <- nrow(BASE_new)
+> n2 <- nrow(BASE_new_aux)
+> print(paste0("Records in base: ", n1, " Records in auxillary: ", n2))
+[1] "Records in base: 270570 Records in auxillary: 245936"
+> BASE_new |> 
++   mutate(orphan = ifelse(station_id %in% BASE_new_aux$station_id, "no", "yes")) |> 
++   count(source, orphan) |> 
++   spread(orphan, n) |> 
++   knitr::kable(caption = "Source of effort orphan files")
+
+
+Table: Source of effort orphan files
+
+|source                                        |     no|   yes|
+|:---------------------------------------------|------:|-----:|
+|APP TÖFLUR                                    |     19|    NA|
+|Fishtech raun                                 |    381|    NA|
+|Fishtech raun - GAFL AUTO                     |     13|    NA|
+|Fontos raun                                   |   3380|    NA|
+|Fontos raun - GAFL AUTO                       |    191|    NA|
+|FRA GAFLI - AUTO                              |     NA|    12|
+|FRA GAFLI - AUTO - Skrifstofa VES             |     NA|     7|
+|FRA TAKTIKAL                                  |   6983|    NA|
+|FRA TAKTIKAL - GAFL AUTO                      |      9|    NA|
+|GAFL BÓK UPPFÆRÐ FRÁ TAKTIKAL                 |      2|    NA|
+|Jóhann Gíslason raun                          |   2389|    NA|
+|Jóhann Gíslason raun - GAFL AUTO              |      5|    NA|
+|Marína raun                                   |   9222|    NA|
+|Marína raun - GAFL AUTO                       |    241|    NA|
+|Marína raun - Skrifstofa VES                  |      4|    NA|
+|PAPPÍR                                        |    224|    NA|
+|Reiknistofa fiskmarkaða raun                  |      6|    NA|
+|Reiknistofa fiskmarkaða raun - Skrifstofa VES |      1|    NA|
+|STOKKUR                                       |     NA| 22759|
+|TRACKWELL                                     |     NA|  1856|
+|TRACKWELL BAEKUR                              |     27|    NA|
+|Trackwell raun                                | 219223|    NA|
+|Trackwell raun - GAFL AUTO                    |   3489|    NA|
+|Trackwell raun - Skrifstofa VES               |    127|    NA|
+> BASE_new |> 
++   mutate(orphan = ifelse(station_id %in% BASE_new_aux$station_id, "no", "yes")) |> 
++   filter(orphan == "yes") |> 
++   count(source, gid) |> 
++   spread(gid, n) |> 
++   knitr::kable(caption = "Gear list of effort orphan files")
+
+
+Table: Gear list of effort orphan files
+
+|source                            |   1|   2|     3|   5|    6|  7|   25| 29| 91|  99|
+|:---------------------------------|---:|---:|-----:|---:|----:|--:|----:|--:|--:|---:|
+|FRA GAFLI - AUTO                  |   1|   2|     9|  NA|   NA| NA|   NA| NA| NA|  NA|
+|FRA GAFLI - AUTO - Skrifstofa VES |   2|  NA|     5|  NA|   NA| NA|   NA| NA| NA|  NA|
+|STOKKUR                           | 550| 555| 18963|  NA|   NA| NA| 2165|  2| 94| 430|
+|TRACKWELL                         | 146|  85|   141| 332| 1139| 13|   NA| NA| NA|  NA|
+> 
+> ## Combine the (new) logbooks --------------------------------------------------
+> LGS_new <- 
++   BASE_new |> 
++   left_join(BASE_new_aux,
++             by = join_by(station_id)) |> 
++   select(.sid = station_id, vid, gid, date, t1, t2, lon, lat, lon2, lat2, z1, z2,
++          datel, effort, effort_unit, sweeps, plow_width, base)
+> 
+> ## Catch -----------------------------------------------------------------------
+> CATCH_new <- 
++   lb_catch_new(con) |> 
++   collect(n = Inf) |> 
++   filter(station_id %in% BASE_new$station_id) |> 
++   select(.sid = station_id, sid, catch)
+> 
+> # Do we have to worry about id (visir)
+> LGS_old |> 
++   select(.sid, base) |> 
++   mutate(.sid.in.new = ifelse(.sid %in% LGS_new$.sid,
++                               "screeeeeeam",
++                               "ok")) |> 
++   count(.sid.in.new)
+# A tibble: 2 × 2
+  .sid.in.new       n
+  <chr>         <int>
+1 ok          3051736
+2 screeeeeeam     388
+> LGS_new |> 
++   select(.sid, base) |> 
++   mutate(.sid.in.old = ifelse(.sid %in% LGS_old$.sid,
++                               "screeeeeeam",
++                               "ok")) |> 
++   count(.sid.in.old)
+# A tibble: 2 × 2
+  .sid.in.old      n
+  <chr>        <int>
+1 ok          270182
+2 screeeeeeam    388
+> LGS_old |> 
++   select(.sid, base) |> 
++   mutate(.sid.in.new = ifelse(.sid %in% LGS_new$.sid,
++                               "screeeeeeam",
++                               "ok")) |> 
++   filter(.sid.in.new == "screeeeeeam")
+# A tibble: 388 × 3
+    .sid base  .sid.in.new
+   <dbl> <chr> <chr>      
+ 1  8252 old   screeeeeeam
+ 2  8254 old   screeeeeeam
+ 3  8278 old   screeeeeeam
+ 4  8279 old   screeeeeeam
+ 5  8281 old   screeeeeeam
+ 6  8285 old   screeeeeeam
+ 7  8286 old   screeeeeeam
+ 8  8287 old   screeeeeeam
+ 9  8288 old   screeeeeeam
+10  8289 old   screeeeeeam
+# ℹ 378 more rows
+> 
+> # 3. Merge the old and the new logbooks ----------------------------------------
+> LGS <- 
++   bind_rows(LGS_old |> rename(lb_base = base),
++             LGS_new |> rename(lb_base = base))
+> CATCH <- 
++   bind_rows(CATCH_old |> mutate(lb_base = "old"),
++             CATCH_new |> mutate(lb_base = "new"))
+> 
+> # 4. Add "target" species to each setting --------------------------------------
+> #  Used downstream when attempting to correct gear
+> catch_target <- 
++   CATCH |> 
++   group_by(.sid, lb_base) |> 
++   mutate(total = sum(catch, na.rm = TRUE),
++          p = ifelse(total > 0, catch / total, NA),
++          .groups = "drop") |> 
++   # highest catch, lowest species number
++   #   ... so in case of equal proportion, species 1 rules over 2 over ...
++   arrange(.sid, lb_base, desc(p), sid) |> 
++   group_by(.sid, lb_base) |> 
++   slice(1) |> 
++   ungroup() |> 
++   select(.sid, lb_base, sid_target = sid, p_target = p, catch_total = total)
+> 
+> print(paste0("Number of logbook records with no catch: ", 
++              nrow(LGS) - nrow(catch_target),
++              " (",
++              100 * (1 - round(nrow(catch_target) / nrow(LGS), 3)),
++              "%)"))
+[1] "Number of logbook records with no catch: 13648 (0.4%)"
+> LGS <- 
++   LGS |> 
++   left_join(catch_target,
++             by = join_by(.sid, lb_base)) |> 
++   mutate(sid_target = replace_na(sid_target, 0),
++          p_target = replace_na(p_target, 0),
++          catch_total = replace_na(catch_total, 0))
+> 
+> # 5. Add landings id and gear --------------------------------------------------
+> # Match landings id and landings gear to logbooks
+> # The matching is done by date not time. Landings date have hence been consolidated
+> #  by date, the landings id is the lowest landings id value within a date
+> # Read in landings data
+> LODS <- open_dataset("data/landings/lods_stations.parquet") |> collect()
+> AGF <-  open_dataset("data/landings/agf_stations.parquet") |> collect()
+> 
+> ## Landings data - agf ---------------------------------------------------------
+> 
+> n_before_nearest_match <- nrow(LGS)
+> LGS <-
++   LGS |> 
++   match_nearest_date(AGF) |> 
++   rename(date_ln = date.ln)
+> n_after_nearest_match <- nrow(LGS)
+> print(c(n_before_nearest_match, n_after_nearest_match))
+[1] 3322694 3322694
+> LGS <- 
++   LGS |> 
++   rename(date_ln_agf = date_ln,
++          gid_ln_agf = gid_ln,
++          .lid_agf = .lid)
+> ### Checks ---------------------------------------------------------------------
+> LGS |> 
++   mutate(has.lid = !is.na(.lid_agf)) |> 
++   count(has.lid) |> 
++   mutate(p = n / sum(n)) |> 
++   knitr::kable(caption = "Missing AGF landings id")
+
+
+Table: Missing AGF landings id
+
+|has.lid |       n|         p|
+|:-------|-------:|---------:|
+|FALSE   |  211231| 0.0635722|
+|TRUE    | 3111463| 0.9364278|
+> LGS |> 
++   filter(is.na(.lid_agf)) |> 
++   mutate(year = year(date)) |> 
++   count(year) |> 
++   knitr::kable(caption = "Missing AGF landings id by year (high numbers prior to 2008 expected)")
+
+
+Table: Missing AGF landings id by year (high numbers prior to 2008 expected)
+
+| year|     n|
+|----:|-----:|
+| 2001| 57198|
+| 2002| 46407|
+| 2003| 39292|
+| 2004| 32763|
+| 2005| 21520|
+| 2006| 10715|
+| 2007|  2965|
+| 2008|     1|
+| 2009|    30|
+| 2010|    16|
+| 2011|    52|
+| 2012|    54|
+| 2013|    18|
+| 2014|    22|
+| 2015|     8|
+| 2016|     1|
+| 2017|     2|
+| 2018|    24|
+| 2019|     7|
+| 2020|    39|
+| 2021|    20|
+| 2022|    60|
+| 2023|     2|
+| 2024|    15|
+> 
+> LGS |> 
++   filter(year(date) >= 2008) |> 
++   mutate(dt = as.integer(difftime(datel, date_ln_agf, units = "days")),
++          dt = ifelse(dt <= -5, -5, dt),
++          dt = ifelse(dt >=  5,  5, dt)) |> 
++   count(dt) |> 
++   mutate(p = n / sum(n) * 100,
++          pc = cumsum(p),
++          p = round(p, 2),
++          pc = round(pc, 2)) |> 
++   knitr::kable(caption = "Difference in matched logbook and landings dates")
+
+
+Table: Difference in matched logbook and landings dates
+
+| dt|       n|     p|     pc|
+|--:|-------:|-----:|------:|
+| -5|    8557|  0.42|   0.42|
+| -4|    1251|  0.06|   0.48|
+| -3|    3009|  0.15|   0.62|
+| -2|    8999|  0.44|   1.06|
+| -1|   50024|  2.43|   3.49|
+|  0| 1929220| 93.83|  97.32|
+|  1|   33017|  1.61|  98.93|
+|  2|    6147|  0.30|  99.23|
+|  3|    3083|  0.15|  99.38|
+|  4|    1640|  0.08|  99.46|
+|  5|   10762|  0.52|  99.98|
+| NA|     421|  0.02| 100.00|
+> 
+> ## Landings data - kvoti-lods --------------------------------------------------
+> n_before_nearest_match <- nrow(LGS)
+> LGS <-
++   LGS |> 
++   match_nearest_date(LODS) |> 
++   rename(date_ln = date.ln)
+> n_after_nearest_match <- nrow(LGS)
+> print(c(n_before_nearest_match, n_after_nearest_match))
+[1] 3322694 3322694
+> LGS <- 
++   LGS |> 
++   rename(date_ln_lods = date_ln,
++          gid_ln_lods = gid_ln,
++          .lid_lods = .lid)
+> ### Checks ---------------------------------------------------------------------
+> LGS |> 
++   mutate(has.lid = !is.na(.lid_lods)) |> 
++   count(has.lid) |> 
++   mutate(p = n / sum(n)) |> 
++   knitr::kable(caption = "Missing landings id")
+
+
+Table: Missing landings id
+
+|has.lid |       n|         p|
+|:-------|-------:|---------:|
+|FALSE   |     490| 0.0001475|
+|TRUE    | 3322204| 0.9998525|
+> LGS |> 
++   mutate(dt = as.integer(difftime(datel, date_ln_lods, units = "days")),
++          dt = ifelse(dt <= -5, -5, dt),
++          dt = ifelse(dt >=  5,  5, dt)) |> 
++   count(dt) |> 
++   mutate(p = n / sum(n) * 100,
++          pc = cumsum(p),
++          p = round(p, 2),
++          pc = round(pc, 2)) |> 
++   knitr::kable(caption = "Difference in matched logbook and landings dates")
+
+
+Table: Difference in matched logbook and landings dates
+
+| dt|       n|     p|     pc|
+|--:|-------:|-----:|------:|
+| -5|    8674|  0.26|   0.26|
+| -4|    2906|  0.09|   0.35|
+| -3|    6316|  0.19|   0.54|
+| -2|   18063|  0.54|   1.08|
+| -1|   93985|  2.83|   3.91|
+|  0| 3053539| 91.90|  95.81|
+|  1|   95561|  2.88|  98.69|
+|  2|   17689|  0.53|  99.22|
+|  3|    7406|  0.22|  99.44|
+|  4|    5780|  0.17|  99.62|
+|  5|   12234|  0.37|  99.98|
+| NA|     541|  0.02| 100.00|
+> 
+> # 6. Save the stuff ------------------------------------------------------------
+> 
+> LGS   |> nanoparquet::write_parquet("data/logbooks/stations.parquet")
+Error in nanoparquet::write_parquet(LGS, "data/logbooks/stations.parquet") : 
+  Cannot write unknown column type
+Execution halted

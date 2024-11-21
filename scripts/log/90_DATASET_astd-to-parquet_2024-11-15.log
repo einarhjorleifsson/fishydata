@@ -1,0 +1,597 @@
+
+R version 4.4.1 (2024-06-14) -- "Race for Your Life"
+Copyright (C) 2024 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> # Converting astd csv files to parquet
+> 
+> # ISSUES -----------------------------------------------------------------------
+> # Match of vessel id 2654 suspect
+> 
+> # nohup run --------------------------------------------------------------------
+> # run this in terminal as:
+> #  nohup R < scripts/90_DATASET_astd-to-parquet.R --vanilla > scripts/log//90_DATASET_astd-to-parquet_2024-11-15.log &
+> #
+> # Wish list
+> #  NOTE: variables that were added later not appearing when open_dataset
+> #  mid: only accept 3 digits (now have sometimes things like "0")
+> #  Make sure/add schema prior to saving arrow file - note different variables
+> #   in use at different times
+> #  Think about using some polar coordinates
+> #  Think about uber H3
+> #
+> # 2024-10-21
+> #  Export data to /u3/haf/fishydata/ais/data/astd
+> # 2024-10-07
+> #  Moved astd stuff out of stasi/fishydata to stasi/astd
+> #  Got the 202408 and 202409 files
+> # 2024-06-27
+> #  Got a new version of the 202309
+> #   convert from csv to parquet "manually", i.e. did not rerun the whole lot
+> # 2024-06-15
+> #  make caff and pca boolean to make arrow query faster
+> #  use standard terminology: time, vessel, lon, lat
+> #  DO NOT DROP DISTINCT TIME PER MMSI - to that downstream
+> #   but instead add a variable: mmsi_time_distinct
+> #
+> # 2024-06-10
+> #  Corrupt 202304 is now fixed
+> #  Added 202404 and 202405 to the csv
+> # 2024-05-20
+> #  Move distinct to upmost part of code
+> #  Add spatial variables:
+> #   eez
+> #     issue: joint disputed Canada/Alaska missing
+> #   fao fishing areas
+> #   caff
+> #   polar code area
+> #
+> # 2024-05-19
+> #  Partitioning by year and month
+> #  Remove time duplicates for same mmsi
+> #  Add x and y based on crs = 3857
+> #
+> # 2024-05-17
+> # unziped and moved recently downloaded zip files to /u3/geo/pame
+> #  ASTD_area_level1_202108.zip to ASTD_area_level1_202403.zip
+> #  changed then the script below accordingly
+> #
+> # 2024-05-16
+> #  csv files in "ASTD_area_level1_202304.zip", "ASTD_area_level1_202308.zip",
+> #   "ASTD_area_level1_202309.zip" and "ASTD_area_level1_202309.zip" are skipped
+> #   because of problems
+> #
+> # 2024-05-15 seeding
+> #  convert csv files to parquet
+> #   partitioning: by year and flag state
+> #  flag state is here determined by the first three digits in the mmsi
+> #  additional derived variables are:
+> #   speed in knots, derived from adjacent position and time
+> #    note if vessel leaves area and then comes in at another point and time
+> #    the speed measure will be wrong
+> #   imo, same as imonumber if passes validity check
+> #   vid: for icelandic vessels, unique vessel identifier
+> 
+> # Shapes
+> #  CAFF: https://geoportal.arctic-sdi.org
+> #  https://map.arcticportal.org/cesium-dev/
+> 
+> 
+> library(arrow)
+Some features are not enabled in this build of Arrow. Run `arrow_info()` for more information.
+
+Attaching package: ‘arrow’
+
+The following object is masked from ‘package:utils’:
+
+    timestamp
+
+> library(tidyverse)
+── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
+✔ dplyr     1.1.4     ✔ readr     2.1.5
+✔ forcats   1.0.0     ✔ stringr   1.5.1
+✔ ggplot2   3.5.1     ✔ tibble    3.2.1
+✔ lubridate 1.9.3     ✔ tidyr     1.3.1
+✔ purrr     1.0.2     
+── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+✖ lubridate::duration() masks arrow::duration()
+✖ dplyr::filter()       masks stats::filter()
+✖ dplyr::lag()          masks stats::lag()
+ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+> library(sf)
+Linking to GEOS 3.9.0, GDAL 3.2.2, PROJ 7.2.1; sf_use_s2() is TRUE
+> 
+> library(tictoc)
+> 
+> fil <- "~/stasi/gis/gisland_data/gisland/external/CAFF_Boundary_4326.zip"
+> files <- unzip(fil, list = TRUE)
+> unzip(zipfile = fil, exdir = tempdir())
+> caff <-
++   read_sf(paste0(tempdir(), "/", "CAFF_Boundary_Polygon_4326.shp")) |>
++   mutate(caff = TRUE) |>
++   select(caff)
+> hs <-
++   read_sf("~/stasi/gis/eez/World_High_Seas_v1_20200826_gpkg/High_Seas_v1.gpkg") |>
++   st_cast("POLYGON") |>
++   mutate(id = 1:n()) |>
++   filter(id %in% c(8, 9, 10, 14)) |>
++   mutate(eez = case_when(id == 8 ~ "Smugan",
++                          id == 9 ~ "Sildarsmugan",
++                          id == 10 ~ "Arctic",
++                          id == 14 ~ "Atlantic",
++                          .default = NA)) |>
++   select(eez) |>
++   rename(geometry = geom)
+Warning message:
+In st_cast.sf(read_sf("~/stasi/gis/eez/World_High_Seas_v1_20200826_gpkg/High_Seas_v1.gpkg"),  :
+  repeating attributes for all sub-geometries for which they may not be constant
+> eez <-
++   read_sf("~/stasi/gis/eez/EEZ_land_union_v3_202003/EEZ_land_union_v3_202003/EEZ_Land_v3_202030.shp") |>
++   janitor::clean_names() |>
++   filter(pol_type == "Union EEZ and country") |>
++   filter(iso_ter1 %in% c("NOR", "FIN", "SWE", "DNK", "USA", "CAN", "GRL", "FRO", "ISL", "RUS",
++                          "SJM", "NOR", "SJM", "GBR", "EST", "LVA", "LTU", "GER", "IRL") |
++            territory1 %in% c("Alaska")) |>
++   mutate(iso_ter1 = ifelse(is.na(iso_ter1) & territory1 == "Alaska",
++                            "Alaska",
++                            iso_ter1)) |>
++   select(eez = iso_ter1) |>
++   bind_rows(hs)
+> fao <-
++   read_sf("~/stasi/gis/fao/fao.gpkg") |>
++   rename(fao = name)
+> pr <-
++   tribble(~lat, ~lon,
++           900000, -1800000,
++           600000, -1800000,
++           600000, -0563710,
++           580000, -0420000,
++           643700, -0352700,
++           670309, -0263340,
++           704956, -0085961,
++           733160,  0190108,
++           683829,  0432308,
++           600000,  0432308,
++           600000,  1800000,
++           900000,  1800000) |>
++   mutate(lon = geo::geoconvert.1(lon),
++          lat = geo::geoconvert.1(lat)) |>
++   st_as_sf(coords = c("lon", "lat"),
++            crs = 4326) |>
++   summarise(do_union = FALSE) |>
++   st_cast("LINESTRING") |>
++   st_cast("POLYGON") |>
++   mutate(pca = TRUE)
+> #
+> # # crs: 3995   arctic
+> # # http://basemap.arctic-sdi.org/mapcache/wmts/?request=GetCapabilities&service=wmts
+> # # https://geoportal.arctic-sdi.org/
+> 
+> 
+> print(lubridate::now())
+[1] "2024-11-15 10:28:24 GMT"
+> 
+> con <- omar::connect_mar()
+> mid_flag <-
++   omar::mmsi_mid(con) |>
++   collect() |>
++   mutate(mid = as.integer(mid)) |>
++   distinct() |>
++   filter(!(mid == 306 & flag == "NLD"))
+> # for icelandic vessel get the unique vessel registry id (skipaskrarnumer)
+> mmsi_isl <-
++   bind_rows(omar::mmsi_icelandic_registry(con) |> collect(),
++             omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20220405") |> collect(),
++             omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20201215") |> collect(),
++             omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20190627") |> collect()) |>
++   select(mmsi, vid) |>
++   distinct() |>
++   mutate(mmsi = as.integer(mmsi))
+> # Houston, we have a problem
+> mmsi_isl |>
++   group_by(mmsi) |>
++   mutate(n = n()) |>
++   ungroup() |>
++   filter(n > 1) |>
++   arrange(mmsi)
+# A tibble: 48 × 3
+        mmsi   vid     n
+       <int> <dbl> <int>
+ 1 251146240  7839     2
+ 2 251146240  2450     2
+ 3 251158000  3000     2
+ 4 251158000  1337     2
+ 5 251172110  3014     2
+ 6 251172110  2299     2
+ 7 251175000  3017     2
+ 8 251175000  2154     2
+ 9 251179000  3009     2
+10 251179000  1903     2
+# ℹ 38 more rows
+> 
+> 
+> dir <-
++   fs::dir_info("/u3/geo/pame") |>
++   select(path, size:modification_time, change_time)
+> dir |>
++   knitr::kable()
+
+
+|path                                     |  size| permissions|modification_time   |change_time         |
+|:----------------------------------------|-----:|-----------:|:-------------------|:-------------------|
+|/u3/geo/pame/ASTD_area_level1_201301.csv | 1.55G|   rw-rw-r--|2019-11-06 08:51:58 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201302.csv | 1.65G|   rw-rw-r--|2019-11-06 09:17:46 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201303.csv | 1.76G|   rw-rw-r--|2019-11-06 09:44:20 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201304.csv | 1.85G|   rw-rw-r--|2019-11-06 10:11:44 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201305.csv | 1.99G|   rw-rw-r--|2019-11-06 10:45:14 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201306.csv | 1.92G|   rw-rw-r--|2019-11-06 11:17:48 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201307.csv | 1.99G|   rw-rw-r--|2019-11-06 11:50:44 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201308.csv | 2.04G|   rw-rw-r--|2019-11-06 12:22:18 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201309.csv | 1.84G|   rw-rw-r--|2019-11-06 13:00:30 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201310.csv | 2.07G|   rw-rw-r--|2019-11-06 13:38:32 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201311.csv | 2.07G|   rw-rw-r--|2019-11-06 14:13:26 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201312.csv | 1.83G|   rw-rw-r--|2019-11-06 14:55:16 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201401.csv | 1.87G|   rw-rw-r--|2019-11-06 08:48:08 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201402.csv | 2.17G|   rw-rw-r--|2019-11-06 09:12:14 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201403.csv | 2.43G|   rw-rw-r--|2019-11-06 09:40:00 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201404.csv | 2.25G|   rw-rw-r--|2019-11-06 10:09:00 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201405.csv | 2.14G|   rw-rw-r--|2019-11-06 10:36:04 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201406.csv | 2.32G|   rw-rw-r--|2019-11-06 11:04:10 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201407.csv | 2.52G|   rw-rw-r--|2019-11-06 11:35:10 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201408.csv | 2.41G|   rw-rw-r--|2019-11-06 12:06:40 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201409.csv | 2.36G|   rw-rw-r--|2019-11-06 12:36:36 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201410.csv | 2.84G|   rw-rw-r--|2019-11-06 13:11:16 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201411.csv | 2.93G|   rw-rw-r--|2019-11-06 13:49:18 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201412.csv | 2.97G|   rw-rw-r--|2019-11-06 14:26:36 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201501.csv | 3.01G|   rw-rw-r--|2019-11-06 15:28:42 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201502.csv | 2.75G|   rw-rw-r--|2019-11-06 16:04:04 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201503.csv | 3.28G|   rw-rw-r--|2019-11-06 16:41:56 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201504.csv | 3.81G|   rw-rw-r--|2019-11-06 17:31:16 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201505.csv | 4.19G|   rw-rw-r--|2019-11-06 18:29:34 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201506.csv | 4.39G|   rw-rw-r--|2019-11-06 19:33:50 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201507.csv | 4.27G|   rw-rw-r--|2019-11-06 20:40:02 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201508.csv | 4.31G|   rw-rw-r--|2019-11-06 21:43:36 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201509.csv | 4.36G|   rw-rw-r--|2019-11-06 22:50:34 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201510.csv | 4.81G|   rw-rw-r--|2019-11-07 00:07:10 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201511.csv | 4.62G|   rw-rw-r--|2019-11-07 01:23:20 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201512.csv | 5.43G|   rw-rw-r--|2019-11-07 02:58:56 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201601.csv | 5.24G|   rw-rw-r--|2019-11-05 11:12:06 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201602.csv | 4.98G|   rw-rw-r--|2019-11-05 12:49:20 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201603.csv | 5.59G|   rw-rw-r--|2019-11-05 14:32:56 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201604.csv | 5.51G|   rw-rw-r--|2019-11-05 16:26:18 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201605.csv | 5.01G|   rw-rw-r--|2019-11-05 18:03:40 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201606.csv | 5.11G|   rw-rw-r--|2019-11-05 19:36:28 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201607.csv | 3.58G|   rw-rw-r--|2019-11-05 20:43:38 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201608.csv | 3.29G|   rw-rw-r--|2019-11-05 21:31:36 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201609.csv |  3.1G|   rw-rw-r--|2019-11-05 22:15:48 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201610.csv | 3.19G|   rw-rw-r--|2019-11-05 23:00:20 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201611.csv | 3.01G|   rw-rw-r--|2019-11-05 23:42:40 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201612.csv |  3.2G|   rw-rw-r--|2019-11-06 00:23:18 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201701.csv | 3.77G|   rw-rw-r--|2019-11-05 09:12:30 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201702.csv | 3.52G|   rw-rw-r--|2019-11-05 10:20:50 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201703.csv | 4.25G|   rw-rw-r--|2019-11-05 11:46:26 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201704.csv | 3.75G|   rw-rw-r--|2019-11-05 13:09:08 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201705.csv | 3.85G|   rw-rw-r--|2019-11-05 14:27:58 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201706.csv | 3.82G|   rw-rw-r--|2019-11-05 16:24:08 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201707.csv | 4.45G|   rw-rw-r--|2019-11-05 17:52:16 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201708.csv | 3.93G|   rw-rw-r--|2019-11-05 19:14:52 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201709.csv | 3.89G|   rw-rw-r--|2019-11-05 20:31:42 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201710.csv | 4.14G|   rw-rw-r--|2019-11-05 21:54:58 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201711.csv | 3.63G|   rw-rw-r--|2019-11-05 23:08:38 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201712.csv | 3.74G|   rw-rw-r--|2019-11-06 00:19:50 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201801.csv | 3.97G|   rw-rw-r--|2021-04-19 11:13:58 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201802.csv | 3.57G|   rw-rw-r--|2021-04-19 12:07:24 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201803.csv | 3.69G|   rw-rw-r--|2021-04-19 13:00:02 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201804.csv | 3.51G|   rw-rw-r--|2021-04-19 13:50:56 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201805.csv | 3.61G|   rw-rw-r--|2021-04-19 14:43:14 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201806.csv | 4.29G|   rw-rw-r--|2021-04-19 16:08:22 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201807.csv | 3.85G|   rw-rw-r--|2021-04-19 17:14:32 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201808.csv | 3.81G|   rw-rw-r--|2021-04-19 18:12:48 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201809.csv | 3.59G|   rw-rw-r--|2021-04-19 19:06:54 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201810.csv | 3.59G|   rw-rw-r--|2021-04-19 19:58:56 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201811.csv | 3.62G|   rw-rw-r--|2021-04-19 20:51:30 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201812.csv | 3.82G|   rw-rw-r--|2021-04-19 21:46:18 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201901.csv | 3.93G|   rw-rw-r--|2021-04-20 07:43:10 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201902.csv | 3.54G|   rw-rw-r--|2021-04-20 08:32:38 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201903.csv | 3.92G|   rw-rw-r--|2021-04-20 09:24:26 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201904.csv | 3.83G|   rw-rw-r--|2021-04-20 10:17:08 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201905.csv | 4.11G|   rw-rw-r--|2021-04-20 11:09:42 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201906.csv |  4.2G|   rw-rw-r--|2021-04-20 12:09:26 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201907.csv | 4.54G|   rw-rw-r--|2021-04-20 13:16:02 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201908.csv | 4.47G|   rw-rw-r--|2021-04-20 14:23:02 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201909.csv | 4.17G|   rw-rw-r--|2021-04-20 15:27:08 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201910.csv | 3.77G|   rw-rw-r--|2021-04-20 16:22:54 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201911.csv | 3.97G|   rw-rw-r--|2021-04-20 17:17:22 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_201912.csv | 4.06G|   rw-rw-r--|2021-04-20 18:15:50 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202001.csv | 4.36G|   rw-rw-r--|2021-03-12 12:10:46 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202002.csv | 4.08G|   rw-rw-r--|2021-03-12 06:10:20 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202003.csv | 4.42G|   rw-rw-r--|2021-03-12 07:17:00 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202004.csv | 4.21G|   rw-rw-r--|2021-03-12 08:24:22 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202005.csv |  4.4G|   rw-rw-r--|2021-03-12 09:32:26 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202006.csv | 4.42G|   rw-rw-r--|2021-03-12 10:43:46 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202007.csv |  4.3G|   rw-rw-r--|2021-03-12 12:49:26 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202008.csv | 4.19G|   rw-rw-r--|2021-03-12 13:26:30 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202009.csv | 3.97G|   rw-rw-r--|2021-03-12 14:03:52 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202010.csv |    4G|   rw-rw-r--|2021-03-12 14:38:42 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202011.csv | 3.86G|   rw-rw-r--|2021-03-12 15:10:10 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202012.csv | 3.62G|   rw-rw-r--|2021-03-12 15:38:42 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202101.csv | 3.68G|   rw-rw-r--|2021-03-15 16:03:24 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202102.csv | 3.39G|   rw-rw-r--|2021-03-15 18:15:46 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202103.csv | 3.66G|   rw-rw-r--|2021-04-19 08:58:00 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202104.csv | 3.51G|   rw-rw-r--|2021-05-10 10:06:56 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202105.csv | 3.65G|   rw-rw-r--|2021-06-11 03:08:44 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202106.csv |  3.5G|   rw-rw-r--|2021-08-05 16:08:34 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202107.csv | 3.95G|   rw-rw-r--|2021-08-09 09:16:34 |2022-01-31 14:19:41 |
+|/u3/geo/pame/ASTD_area_level1_202108.csv | 3.98G|   rw-r--r--|2024-05-17 11:18:21 |2024-05-17 11:18:36 |
+|/u3/geo/pame/ASTD_area_level1_202109.csv |  3.8G|   rw-r--r--|2024-05-17 11:18:52 |2024-05-17 11:19:05 |
+|/u3/geo/pame/ASTD_area_level1_202110.csv |    4G|   rw-r--r--|2024-05-17 11:19:22 |2024-05-17 11:19:36 |
+|/u3/geo/pame/ASTD_area_level1_202111.csv | 3.76G|   rw-r--r--|2024-05-17 11:19:52 |2024-05-17 11:20:06 |
+|/u3/geo/pame/ASTD_area_level1_202112.csv | 3.78G|   rw-r--r--|2024-05-17 11:20:21 |2024-05-17 11:20:34 |
+|/u3/geo/pame/ASTD_area_level1_202201.csv | 3.76G|   rw-r--r--|2024-05-17 11:20:50 |2024-05-17 11:21:04 |
+|/u3/geo/pame/ASTD_area_level1_202202.csv | 3.55G|   rw-r--r--|2024-05-17 11:21:19 |2024-05-17 11:21:31 |
+|/u3/geo/pame/ASTD_area_level1_202203.csv | 4.07G|   rw-r--r--|2024-05-17 11:21:48 |2024-05-17 11:22:03 |
+|/u3/geo/pame/ASTD_area_level1_202204.csv | 3.77G|   rw-r--r--|2024-05-17 11:22:19 |2024-05-17 11:22:32 |
+|/u3/geo/pame/ASTD_area_level1_202205.csv |    4G|   rw-r--r--|2024-05-17 11:22:50 |2024-05-17 11:23:04 |
+|/u3/geo/pame/ASTD_area_level1_202206.csv | 4.02G|   rw-r--r--|2024-05-17 11:23:21 |2024-05-17 11:23:35 |
+|/u3/geo/pame/ASTD_area_level1_202207.csv | 4.17G|   rw-r--r--|2024-05-17 11:23:53 |2024-05-17 11:24:08 |
+|/u3/geo/pame/ASTD_area_level1_202208.csv | 3.98G|   rw-r--r--|2024-05-17 11:24:25 |2024-05-17 11:24:40 |
+|/u3/geo/pame/ASTD_area_level1_202209.csv | 3.77G|   rw-r--r--|2024-05-17 11:24:56 |2024-05-17 11:25:09 |
+|/u3/geo/pame/ASTD_area_level1_202210.csv | 4.12G|   rw-r--r--|2024-05-17 11:25:27 |2024-05-17 11:25:41 |
+|/u3/geo/pame/ASTD_area_level1_202211.csv | 3.99G|   rw-r--r--|2024-05-17 11:25:58 |2024-05-17 11:26:13 |
+|/u3/geo/pame/ASTD_area_level1_202212.csv |  3.9G|   rw-r--r--|2024-05-17 11:26:29 |2024-05-17 11:26:42 |
+|/u3/geo/pame/ASTD_area_level1_202301.csv | 3.29G|   rw-r--r--|2024-05-17 11:26:55 |2024-05-17 11:27:07 |
+|/u3/geo/pame/ASTD_area_level1_202302.csv | 2.82G|   rw-r--r--|2024-05-17 11:27:19 |2024-05-17 11:27:29 |
+|/u3/geo/pame/ASTD_area_level1_202303.csv | 3.29G|   rw-r--r--|2024-05-17 11:27:42 |2024-05-17 11:27:54 |
+|/u3/geo/pame/ASTD_area_level1_202304.csv | 3.17G|   rw-r-----|2024-06-01 02:58:56 |2024-06-10 13:37:59 |
+|/u3/geo/pame/ASTD_area_level1_202305.csv | 3.92G|   rw-r--r--|2024-05-17 11:28:33 |2024-05-17 11:28:47 |
+|/u3/geo/pame/ASTD_area_level1_202306.csv | 4.38G|   rw-r--r--|2024-05-17 11:29:05 |2024-05-17 11:29:21 |
+|/u3/geo/pame/ASTD_area_level1_202307.csv | 4.32G|   rw-r--r--|2024-05-17 11:29:38 |2024-05-17 11:29:54 |
+|/u3/geo/pame/ASTD_area_level1_202308.csv | 4.92G|   rw-r-----|2024-08-06 13:53:16 |2024-08-06 13:53:16 |
+|/u3/geo/pame/ASTD_area_level1_202309.csv |  4.5G|   rw-r--r--|2024-06-28 10:11:47 |2024-06-28 10:11:47 |
+|/u3/geo/pame/ASTD_area_level1_202310.csv | 4.31G|   rw-r--r--|2024-05-17 11:31:18 |2024-05-17 11:31:34 |
+|/u3/geo/pame/ASTD_area_level1_202311.csv | 4.65G|   rw-r--r--|2024-05-17 11:31:58 |2024-05-17 11:32:15 |
+|/u3/geo/pame/ASTD_area_level1_202312.csv | 4.46G|   rw-r--r--|2024-05-17 11:32:38 |2024-05-17 11:32:54 |
+|/u3/geo/pame/ASTD_area_level1_202401.csv | 4.54G|   rw-r--r--|2024-05-17 11:33:16 |2024-05-17 11:33:33 |
+|/u3/geo/pame/ASTD_area_level1_202402.csv | 4.35G|   rw-r--r--|2024-05-17 11:33:54 |2024-05-17 11:34:10 |
+|/u3/geo/pame/ASTD_area_level1_202403.csv | 5.27G|   rw-r--r--|2024-05-17 11:34:36 |2024-05-17 11:34:54 |
+|/u3/geo/pame/ASTD_area_level1_202404.csv | 4.39G|   rw-r-----|2024-05-20 04:27:10 |2024-06-10 11:35:45 |
+|/u3/geo/pame/ASTD_area_level1_202405.csv | 4.71G|   rw-r-----|2024-06-10 04:28:02 |2024-06-10 11:23:12 |
+|/u3/geo/pame/ASTD_area_level1_202406.csv | 4.69G|   rw-r-----|2024-07-08 04:26:56 |2024-08-05 10:59:20 |
+|/u3/geo/pame/ASTD_area_level1_202407.csv | 4.98G|   rw-r-----|2024-08-05 04:23:32 |2024-08-05 11:02:03 |
+|/u3/geo/pame/ASTD_area_level1_202408.csv | 4.84G|   rw-r-----|2024-09-23 04:24:24 |2024-10-07 15:07:21 |
+|/u3/geo/pame/ASTD_area_level1_202409.csv | 4.87G|   rw-r-----|2024-10-07 04:22:58 |2024-10-07 15:09:05 |
+|/u3/geo/pame/ASTD_area_level1_202410.csv | 4.92G|   rw-r-----|2024-11-11 04:23:56 |2024-11-15 10:03:12 |
+> 
+> fil <- dir$path
+> base <- fil |> str_sub(31, 36)
+> 
+> # files with date-format MM/DD/YYYY
+> base_date <- c("202311",
++                "202312",
++                "202401",
++                "202402",
++                "202403",
++                "202404")
+> 
+> fil <- fil[142:length(fil)]
+> base <- base[142:length(base)]
+> 
+> for(i in 1:length(fil)) {
++   tic()
++   print(fil[i])
++   d <-
++     arrow::read_delim_arrow(fil[i], delim = ";") |>  #, read_options = list(block_size = 2048576L)) |>
++     mutate(.rowid = 1:n())
++ 
++   if(base[i] %in% base_date) {
++     d <-
++       d |>
++       mutate(date_time_utc = mdy_hms(date_time_utc))
++   }
++ 
++   nrow1 <- nrow(d)
++   d <-
++     d |>
++     mutate(.rid = 1:n(), .before = mmsi) |>
++     arrange(mmsi, date_time_utc) |>
++     group_by(mmsi, date_time_utc) |>
++     mutate(mmsi_time_distinct = n()) |>
++     ungroup()
++   nrow2 <- nrow(d)
++   print(paste0("Distinct: Original - ", nrow1, " Left - ", nrow2, " Dropped - ", nrow1 - nrow2))
++ 
++   # get xy-coordinates
++   d <-
++     d |>
++     st_as_sf(coords = c("longitude", "latitude"),
++              crs = 4326,
++              remove = FALSE)
++ 
++   # points in polygons
++   nrow1 <- nrow(d)
++   d <-
++     d |>
++     st_join(caff) |>
++     st_join(eez) |>
++     st_join(fao) |>
++     st_join(pr)
++   nrow2 <- nrow(d)
++   if(nrow2 > nrow1) print(paste0("Rows: ", nrow1, " vs ", nrow2))
++ 
++   d <-
++     d |>
++     st_transform(crs = 3857)
++   xy <-
++     st_coordinates(d) |>
++     as_tibble() |>
++     janitor::clean_names()
++   d$x <- xy$x
++   d$y <- xy$y
++   d <-
++     d |>
++     st_drop_geometry()
++ 
++ 
++   d <-
++     d |>
++     mutate(year = year(date_time_utc),
++            month = month(date_time_utc),
++            month = as.integer(month),
++            imo_valid = case_when(omar::vessel_valid_imo(as.character(imonumber)) & imonumber > 0 & nchar(imonumber) == 7 ~ TRUE,
++                            .default = FALSE),
++            mid = case_when(nchar(mmsi) == 9 ~ as.integer(str_sub(mmsi, 1, 3)),
++                            .default = 0L)) |>
++     left_join(mid_flag,
++               by = join_by(mid)) |>
++     #left_join(mmsi_isl,
++     #          by = join_by(mmsi)) |>
++     group_by(mmsi) |>
++     mutate(speed = ramb::rb_speed(longitude, latitude, date_time_utc)) |>
++     # vid = replace_na(vid, -9)) |>
++     ungroup()
++   print(paste0(fil[i], " rows: ", nrow(d), " columns: ", ncol(d)))
++   d |>
++     rename(time = date_time_utc,
++            vessel = vesselname,
++            lon = longitude,
++            lat = latitude) |>
++     mutate(time = force_tz(time, "UTC"),
++            imonumber = case_when(imonumber %in% c(0, -9999) ~ NA_integer_,
++                                  .default = imonumber),
++            datem = ymd(paste0(year, "-", month, "-01"), tz = "UTC"),
++            caff = replace_na(caff, FALSE),
++            pca = replace_na(pca, FALSE)) |>
++     arrow::write_dataset("/u3/haf/data/astd", format = "parquet",
++                          partitioning = c("year", "month"))
++   toc()
++ }
+/u3/geo/pame/ASTD_area_level1_202410.csv
+[1] "Distinct: Original - 26295076 Left - 26295076 Dropped - 0"
+[1] "/u3/geo/pame/ASTD_area_level1_202410.csv rows: 26295076 columns: 42"
+2122.589 sec elapsed
+> 
+> 
+> 
+> devtools::session_info()
+─ Session info ───────────────────────────────────────────────────────────────
+ setting  value
+ version  R version 4.4.1 (2024-06-14)
+ os       Debian GNU/Linux 11 (bullseye)
+ system   x86_64, linux-gnu
+ ui       X11
+ language (EN)
+ collate  is_IS.UTF-8
+ ctype    is_IS.UTF-8
+ tz       Atlantic/Reykjavik
+ date     2024-11-15
+ pandoc   2.9.2.1 @ /usr/bin/pandoc
+
+─ Packages ───────────────────────────────────────────────────────────────────
+ package     * version    date (UTC) lib source
+ arrow       * 17.0.0.1   2024-08-21 [1] CRAN (R 4.4.1)
+ assertthat    0.2.1      2019-03-21 [1] CRAN (R 4.4.1)
+ bit           4.5.0      2024-09-20 [1] CRAN (R 4.4.1)
+ bit64         4.5.2      2024-09-22 [1] CRAN (R 4.4.1)
+ cachem        1.1.0      2024-05-16 [1] CRAN (R 4.4.1)
+ class         7.3-22     2023-05-03 [2] CRAN (R 4.4.1)
+ classInt      0.4-10     2023-09-05 [1] CRAN (R 4.4.1)
+ cli           3.6.3      2024-06-21 [1] CRAN (R 4.4.1)
+ colorspace    2.1-1      2024-07-26 [1] CRAN (R 4.4.1)
+ crayon        1.5.3      2024-06-20 [1] CRAN (R 4.4.1)
+ DBI           1.2.3      2024-06-02 [1] CRAN (R 4.4.1)
+ dbplyr        2.5.0      2024-03-19 [1] CRAN (R 4.4.1)
+ devtools      2.4.5      2022-10-11 [1] CRAN (R 4.4.1)
+ digest        0.6.37     2024-08-19 [1] CRAN (R 4.4.1)
+ dplyr       * 1.1.4      2023-11-17 [1] CRAN (R 4.4.1)
+ e1071         1.7-16     2024-09-16 [1] CRAN (R 4.4.1)
+ ellipsis      0.3.2      2021-04-29 [1] CRAN (R 4.4.1)
+ evaluate      1.0.1      2024-10-10 [1] CRAN (R 4.4.1)
+ fansi         1.0.6      2023-12-08 [1] CRAN (R 4.4.1)
+ fastmap       1.2.0      2024-05-15 [1] CRAN (R 4.4.1)
+ forcats     * 1.0.0      2023-01-29 [1] CRAN (R 4.4.1)
+ fs            1.6.5      2024-10-30 [1] CRAN (R 4.4.1)
+ generics      0.1.3      2022-07-05 [1] CRAN (R 4.4.1)
+ geo           1.5-1      2024-10-15 [1] Github (hafro/geo@6deda16)
+ geodist       0.1.0      2024-05-23 [1] CRAN (R 4.4.1)
+ ggplot2     * 3.5.1      2024-04-23 [1] CRAN (R 4.4.1)
+ glue          1.8.0      2024-09-30 [1] CRAN (R 4.4.1)
+ gtable        0.3.6      2024-10-25 [1] CRAN (R 4.4.1)
+ hms           1.1.3      2023-03-21 [1] CRAN (R 4.4.1)
+ htmltools     0.5.8.1    2024-04-04 [1] CRAN (R 4.4.1)
+ htmlwidgets   1.6.4      2023-12-06 [1] CRAN (R 4.4.1)
+ httpuv        1.6.15     2024-03-26 [1] CRAN (R 4.4.1)
+ janitor       2.2.0      2023-02-02 [1] CRAN (R 4.4.1)
+ KernSmooth    2.23-24    2024-05-17 [2] CRAN (R 4.4.1)
+ knitr         1.49       2024-11-08 [1] CRAN (R 4.4.1)
+ later         1.3.2      2023-12-06 [1] CRAN (R 4.4.1)
+ lifecycle     1.0.4      2023-11-07 [1] CRAN (R 4.4.1)
+ lubridate   * 1.9.3      2023-09-27 [1] CRAN (R 4.4.1)
+ magrittr      2.0.3      2022-03-30 [1] CRAN (R 4.4.1)
+ mapdata       2.3.1      2022-11-01 [1] CRAN (R 4.4.1)
+ maps          3.4.2.1    2024-11-10 [1] CRAN (R 4.4.1)
+ memoise       2.0.1      2021-11-26 [1] CRAN (R 4.4.1)
+ mime          0.12       2021-09-28 [1] CRAN (R 4.4.1)
+ miniUI        0.1.1.1    2018-05-18 [1] CRAN (R 4.4.1)
+ munsell       0.5.1      2024-04-01 [1] CRAN (R 4.4.1)
+ omar          2024.01.29 2024-10-17 [1] Github (einarhjorleifsson/omar@b76358b)
+ pillar        1.9.0      2023-03-22 [1] CRAN (R 4.4.1)
+ pkgbuild      1.4.5      2024-10-28 [1] CRAN (R 4.4.1)
+ pkgconfig     2.0.3      2019-09-22 [1] CRAN (R 4.4.1)
+ pkgload       1.4.0      2024-06-28 [1] CRAN (R 4.4.1)
+ profvis       0.4.0      2024-09-20 [1] CRAN (R 4.4.1)
+ promises      1.3.0      2024-04-05 [1] CRAN (R 4.4.1)
+ proxy         0.4-27     2022-06-09 [1] CRAN (R 4.4.1)
+ purrr       * 1.0.2      2023-08-10 [1] CRAN (R 4.4.1)
+ R6            2.5.1      2021-08-19 [1] CRAN (R 4.4.1)
+ ramb          2023.12.05 2024-10-15 [1] Github (einarhjorleifsson/ramb@2734d55)
+ Rcpp          1.0.13-1   2024-11-02 [1] CRAN (R 4.4.1)
+ readr       * 2.1.5      2024-01-10 [1] CRAN (R 4.4.1)
+ remotes       2.5.0      2024-03-17 [1] CRAN (R 4.4.1)
+ rlang         1.1.4      2024-06-04 [1] CRAN (R 4.4.1)
+ ROracle       1.3-1.1    2021-11-10 [1] CRAN (R 4.4.1)
+ rstudioapi    0.17.1     2024-10-22 [1] CRAN (R 4.4.1)
+ s2            1.1.7      2024-07-17 [1] CRAN (R 4.4.1)
+ scales        1.3.0      2023-11-28 [1] CRAN (R 4.4.1)
+ sessioninfo   1.2.2      2021-12-06 [1] CRAN (R 4.4.1)
+ sf          * 1.0-19     2024-11-05 [1] CRAN (R 4.4.1)
+ shiny         1.9.1      2024-08-01 [1] CRAN (R 4.4.1)
+ snakecase     0.11.1     2023-08-27 [1] CRAN (R 4.4.1)
+ stringi       1.8.4      2024-05-06 [1] CRAN (R 4.4.1)
+ stringr     * 1.5.1      2023-11-14 [1] CRAN (R 4.4.1)
+ tibble      * 3.2.1      2023-03-20 [1] CRAN (R 4.4.1)
+ tictoc      * 1.2.1      2024-03-18 [1] CRAN (R 4.4.1)
+ tidyr       * 1.3.1      2024-01-24 [1] CRAN (R 4.4.1)
+ tidyselect    1.2.1      2024-03-11 [1] CRAN (R 4.4.1)
+ tidyverse   * 2.0.0      2023-02-22 [1] CRAN (R 4.4.1)
+ timechange    0.3.0      2024-01-18 [1] CRAN (R 4.4.1)
+ traipse       0.3.0      2022-10-10 [1] CRAN (R 4.4.1)
+ tzdb          0.4.0      2023-05-12 [1] CRAN (R 4.4.1)
+ units         0.8-5      2023-11-28 [1] CRAN (R 4.4.1)
+ urlchecker    1.0.1      2021-11-30 [1] CRAN (R 4.4.1)
+ usethis       3.0.0      2024-07-29 [1] CRAN (R 4.4.1)
+ utf8          1.2.4      2023-10-22 [1] CRAN (R 4.4.1)
+ vctrs         0.6.5      2023-12-01 [1] CRAN (R 4.4.1)
+ withr         3.0.2      2024-10-28 [1] CRAN (R 4.4.1)
+ wk            0.9.4      2024-10-11 [1] CRAN (R 4.4.1)
+ xfun          0.49       2024-10-31 [1] CRAN (R 4.4.1)
+ xtable        1.8-4      2019-04-21 [1] CRAN (R 4.4.1)
+
+ [1] /home/haf/einarhj/R/x86_64-pc-linux-gnu-library/4.4
+ [2] /usr/lib/R/library
+
+──────────────────────────────────────────────────────────────────────────────
+> 
+> 
+> 

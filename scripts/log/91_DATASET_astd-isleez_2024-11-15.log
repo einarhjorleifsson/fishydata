@@ -1,0 +1,122 @@
+
+R version 4.4.1 (2024-06-14) -- "Race for Your Life"
+Copyright (C) 2024 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> # nohup R < scripts/91_DATASET_astd-isleez.R --vanilla > scripts/log/91_DATASET_astd-isleez_2024-11-15.log &
+> 
+> library(arrow)
+Some features are not enabled in this build of Arrow. Run `arrow_info()` for more information.
+
+Attaching package: ‘arrow’
+
+The following object is masked from ‘package:utils’:
+
+    timestamp
+
+> library(tidyverse)
+── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
+✔ dplyr     1.1.4     ✔ readr     2.1.5
+✔ forcats   1.0.0     ✔ stringr   1.5.1
+✔ ggplot2   3.5.1     ✔ tibble    3.2.1
+✔ lubridate 1.9.3     ✔ tidyr     1.3.1
+✔ purrr     1.0.2     
+── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+✖ lubridate::duration() masks arrow::duration()
+✖ dplyr::filter()       masks stats::filter()
+✖ dplyr::lag()          masks stats::lag()
+ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+> library(sf)
+Linking to GEOS 3.9.0, GDAL 3.2.2, PROJ 7.2.1; sf_use_s2() is TRUE
+> harbours <- read_sf("/u3/haf/stasi/geoserver/misc/harbours.gpkg")
+> mmsi <- 
++   open_dataset("data/vessels/mmsi_iceland_archieves.parquet") |> 
++   filter(mmsi_cat == "vessel") |> 
++   select(vid = sknr,
++          mmsi,
++          t1 = mmsi_t1,
++          t2 = mmsi_t2) |> 
++   mutate(mmsi = as.integer(mmsi)) |> 
++   collect()
+> astd <- 
++   open_dataset("data/astd") |> 
++   filter(eez == "ISL" | flag == "ISL")
+> 
+> YEARS <- 2013:2024
+> for(y in 1:length(YEARS)) {
++   YEAR <- YEARS[y]
++   print(YEAR)
++   
++   trail <- 
++     astd |> 
++     filter(year == YEAR) |> 
++     select(.rid, mmsi, imo = imonumber, time, vessel,
++            astd_cat, dd = dist_nextpoint, dt = sec_nextpoint,
++            speed,
++            lon, lat, x, y, imo_valid, flag, caff, pca, eez) |> 
++     collect() |> 
++     left_join(mmsi,
++               by = join_by(mmsi, between(time, t1, t2))) |> 
++     select(-c(t1, t2))
++   # Get rid of mmsi with few pings
++   trail |> 
++     count(mmsi) |> 
++     arrange(n) |> 
++     filter(n > 20) |> 
++     pull(mmsi) ->
++     MMSI
++   trail <-
++     trail |> 
++     # only mmsi with more than 20 pings
++     filter(mmsi %in% MMSI) |> 
++     arrange(mmsi, time) |> 
++     # Points in harbour
++     st_as_sf(coords = c("lon", "lat"),
++            crs = 4326,
++            remove = FALSE) |> 
++     st_join(harbours |> select(hid = hid_std)) |> 
++     st_drop_geometry() |> 
++     # cruise id (aka tripid), negative values: in harbour
++     arrange(mmsi, time) |> 
++     group_by(mmsi) %>%
++     mutate(.cid = ramb::rb_trip(!is.na(hid))) |> 
++     ungroup() |> 
++     # include first and last point in harbour as part of trip
++     group_by(mmsi) |> 
++     mutate(.cid = case_when(.cid < 0 & lead(.cid) > 0 ~ lead(.cid),
++                             .cid < 0 & lag(.cid)  > 0 ~ lag(.cid),
++                             .default = .cid)) |> 
++     ungroup() |> 
++     filter(.cid > 0)
++   
++   trail |> 
++     mutate(year = year(time)) |> 
++     arrow::write_dataset("data/astd_isleez", format = "parquet",
++                          partitioning = c("year"))
++ 
++ }
+[1] 2013
+[1] 2014
+[1] 2015
+[1] 2016
+[1] 2017
+[1] 2018
+[1] 2019
+[1] 2020
+[1] 2021
+[1] 2022
+[1] 2023
+[1] 2024
+> 

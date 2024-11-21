@@ -1,4 +1,4 @@
-# nohup R < scripts/91_DATASET_astd-isleez.R --vanilla > scripts/log/91_DATASET_astd-isleez_2024-11-16.log &
+# nohup R < scripts/91_DATASET_astd-isleez.R --vanilla > scripts/log/91_DATASET_astd-isleez_2024-11-20.log &
 
 library(arrow)
 library(tidyverse)
@@ -23,7 +23,7 @@ mmsi <-
   mutate(mmsi = as.integer(mmsi)) |> 
   collect()
 astd <- 
-  open_dataset("data/astd") |> 
+  open_dataset("data/ais/astd") |> 
   filter(eez == "ISL" | flag == "ISL")
 
 YEARS <- 2013:2024
@@ -35,13 +35,14 @@ for(y in 1:length(YEARS)) {
     astd |> 
     filter(year == YEAR) |> 
     select(.rid, mmsi, imo = imonumber, time, vessel,
-           astd_cat, dd = dist_nextpoint, dt = sec_nextpoint,
+           astd_cat, dmeters = dist_nextpoint, dminutes = sec_nextpoint,
            speed,
            lon, lat, x, y, imo_valid, flag, caff, pca, eez) |> 
     collect() |> 
     left_join(mmsi,
               by = join_by(mmsi, between(time, t1, t2))) |> 
-    select(-c(t1, t2))
+    select(-c(t1, t2)) |> 
+    mutate(dminutes = dminutes / 60)
   # Get rid of mmsi with few pings
   trail |> 
     count(mmsi) |> 
@@ -63,6 +64,7 @@ for(y in 1:length(YEARS)) {
     # cruise id (aka tripid), negative values: in harbour
     arrange(mmsi, time) |> 
     group_by(mmsi) %>%
+    # NOTE: This generates trip ID within each year becuse of the loop
     mutate(.cid = ramb::rb_trip(!is.na(hid))) |> 
     ungroup() |> 
     # include first and last point in harbour as part of trip
@@ -78,7 +80,7 @@ for(y in 1:length(YEARS)) {
     mutate(year = year(time)) |> 
     mutate(date = as_date(time)) |> 
     left_join(lgs) |> 
-    arrow::write_dataset("data/astd_isleez", format = "parquet",
+    arrow::write_dataset("data/ais/astd_isleez", format = "parquet",
                          partitioning = c("year"))
 
 }

@@ -551,8 +551,8 @@ LGS |>
 
 # 6. Save the stuff ------------------------------------------------------------
 
-LGS   |> nanoparquet::write_parquet("data/logbooks/stations.parquet")
-CATCH |> nanoparquet::write_parquet("data/logbooks/catch.parquet")
+LGS   |> arrow::write_parquet("data/logbooks/stations.parquet")
+CATCH |> arrow::write_parquet("data/logbooks/catch.parquet")
 
 # 7. Info ----------------------------------------------------------------------
 toc()
