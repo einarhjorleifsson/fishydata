@@ -3,7 +3,7 @@
 #
 # Preamble ---------------------------------------------------------------------
 # run this as:
-#  nohup R < scripts/52_DATASET_logbooks.R --vanilla > scripts/log/52_DATASET_logbooks_2024-11-17.log &
+#  nohup R < scripts/52_DATASET_logbooks.R --vanilla > scripts/log/52_DATASET_logbooks_2024-11-22.log &
 
 ## 2024-05-30
 # * incorporated 02-2_logbooks-landings-coupling.R into this script
@@ -18,9 +18,9 @@
 # * use the new vessel database
 
 # Input:  Oracle database
-# Output: data/logbooks/rds/station.rds
-#         data/logbooks/rds/catch.rds
-#         data/logbooks/parquet/station.parquet
+#         data/landings/lods_stations.parquet
+#         data/landings/agf_stations.parquet
+# Output: data/logbooks/parquet/station.parquet
 #         data/lgobooks/parquet/catch.parquet
 # Downstream usage: R/02-2_logbooks-gear-correction.R
 
@@ -94,6 +94,10 @@ q_vessels_icelandic <-
   select(vid = registration_no) |> 
   filter(!vid %in% c(0, 1, 3:5, 9999)) %>% 
   filter(!between(vid, 3700, 4999))
+
+# Read in landings data
+LODS <- open_dataset("data/landings/lods_stations.parquet") |> collect()
+AGF <-  open_dataset("data/landings/agf_stations.parquet") |> collect()
 
 # 1 Old logbooks ---------------------------------------------------------------
 
@@ -477,19 +481,24 @@ LGS <-
 # Match landings id and landings gear to logbooks
 # The matching is done by date not time. Landings date have hence been consolidated
 #  by date, the landings id is the lowest landings id value within a date
-# Read in landings data
-LODS <- open_dataset("data/landings/lods_stations.parquet") |> collect()
-AGF <-  open_dataset("data/landings/agf_stations.parquet") |> collect()
+
 
 ## Landings data - agf ---------------------------------------------------------
-
+# The AGF data starts 2007-09-01 so:
+#  split the data by that date and join only the latter period with AGF
 n_before_nearest_match <- nrow(LGS)
-LGS <-
-  LGS |> 
+LGS1 <- LGS |> filter(datel < ymd("2007-09-01"))
+LGS2 <- LGS |> filter(datel >= ymd("2007-09-01"))
+
+LGS2 <-
+  LGS2 |> 
   match_nearest_date(AGF) |> 
   rename(date_ln = date.ln)
+LGS <- 
+  bind_rows(LGS1, LGS2)
 n_after_nearest_match <- nrow(LGS)
 print(c(n_before_nearest_match, n_after_nearest_match))
+
 LGS <- 
   LGS |> 
   rename(date_ln_agf = date_ln,
@@ -549,12 +558,39 @@ LGS |>
          pc = round(pc, 2)) |> 
   knitr::kable(caption = "Difference in matched logbook and landings dates")
 
+v <- 
+  read_parquet("~/stasi/fishydata/data/vessels/vessels_iceland.parquet") |> 
+  select(vid, mmsi, mmsi_t1, mmsi_t2) |> 
+  filter(!is.na(mmsi)) |> 
+  mutate(mmsi = as.integer(mmsi))
+LGS <-
+  LGS |> 
+  left_join(v,
+            by = join_by(vid, between(date, mmsi_t1, mmsi_t2)))
+
 # 6. Save the stuff ------------------------------------------------------------
 
 LGS   |> arrow::write_parquet("data/logbooks/stations.parquet")
 CATCH |> arrow::write_parquet("data/logbooks/catch.parquet")
 
-# 7. Info ----------------------------------------------------------------------
+# 7. Issues --------------------------------------------------------------------
+# We should cap the effort "a priori", check this:
+
+lgs <- 
+  read_parquet("~/stasi/fishydata/data/logbooks/stations.parquet")
+lgs |> 
+  filter(between(year(date), 2009, 2024)) |> 
+  mutate(dt = difftime(t2, t1, units = "mins"),
+         dt = as.numeric(dt)) |>  
+  filter(dt > 0) |> 
+  group_by(gid_ln_agf) |> 
+  mutate(dt = ifelse(dt > quantile(dt, 0.99), quantile(dt, 0.99), dt)) |> 
+  ggplot(aes(dt / 60)) +
+  geom_histogram() +
+  facet_wrap(~ gid_ln_agf, scales = "free")
+
+
+# 8. Info ----------------------------------------------------------------------
 toc()
 
 print(devtools::session_info())
