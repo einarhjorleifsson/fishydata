@@ -27,9 +27,6 @@
 library(tidyverse)
 library(nanoparquet)
 options(knitr.kable.NA = '')
-library(sf)
-library(mapdeck)
-set_token("pk.eyJ1IjoiZmlzaHZpY2UiLCJhIjoiY2p0MXQ5dThpMDZqeDQ5bHM0MGx4dHI5cyJ9.Fed_z7mv_TgTWDRjiavU3A")
 library(mar)
 source("R/ramb_functions.R")
 con <- connect_mar()
@@ -63,10 +60,6 @@ cs.prefix <-
 ## vessel registry
 vessels <-
   nanoparquet::read_parquet("data/vessels/vessels_iceland.parquet")
-vessels_mmsi <- 
-  vessels |>
-  filter(!is.na(mmsi))
-
 
 ## stk summary -----------------------------------------------------------------
 stk_gids <-
@@ -75,10 +68,7 @@ stk_gids <-
   collect()
 stk_summary <-
   tbl(con, dbplyr::in_schema("STK", "TRAIL")) |>
-  mutate(YEAR = year(POSDATE),
-         MONTH = month(POSDATE)) |>
-  filter(YEAR >= 2007 &  MONTH >= 6) |>
-  filter(YEAR <= 2024) |>
+  mutate(YEAR = year(POSDATE)) |>
   group_by(MOBILEID) |>
   summarise(pings = n(),
             n_years = n_distinct(YEAR),
@@ -90,16 +80,18 @@ stk_summary <-
   mutate(t1 = as_date(t1),
          t2 = as_date(t2)) |>
   arrange(mid) |>
-  left_join(stk_gids) |>
-  select(mid, loid, glid, everything())
+  full_join(stk_gids) |>
+  select(mid, loid, glid, everything()) |> 
+  arrange(mid)
 rm(stk_gids)
 
 ## Older matches ---------------------------------------------------------------
-#  not yet used
 older <- 
   tbl_mar(con, "ops$einarhj.mobile_vid") |>
   collect() |> 
-  arrange(vid)
+  select(mid, vido = vid, t1o = t1, t2o = t2, no) |> 
+  mutate(t1o = if_else(is.na(no), NA, t1o),
+         t2o = if_else(is.na(no), NA, t2o))
 
 
 ## Non-vessel localid or globalid ----------------------------------------------
@@ -197,7 +189,7 @@ UID <-
 VID <-
   vessels |>
   # NOTE: only vid's that have mmsi
-  filter(!is.na(mmsi)) |> 
+  #filter(!is.na(mmsi)) |> 
   filter(source == "ISL", !is.na(vid)) |>
   pull(vid) |>
   as.character()
@@ -246,10 +238,12 @@ stk <-
          mmsi_cat = case_when(!is.na(mmsi_cat) & mmsi_cat == "vessel" ~ mmsi_cat,
                               !is.na(mmsi_cat) & mmsi_cat != "vessel" ~ "mmsi_other",
                               .default = NA)) |>
-  select(-mmsi)
+  select(-mmsi) |> 
+  arrange(mid)
 rm(CS, UID, VID, fixed, hafro, kvi, net_glid, unknown_glid)
 
-stk |> lh()
+stk |> glimpse()
+
 
 # iterative trials ids that have not yet been classified
 stk |> 
@@ -273,6 +267,8 @@ stk <-
                 .default = FALSE))
 
 drop <- stk |> filter(drop) |> select(-mmsi_cat)
+
+
 keep <-
   stk |> filter(!drop) |>
   select(-drop, -mmsi_cat) |>
@@ -302,36 +298,35 @@ keep <-
 ## Export ----------------------------------------------------------------------
 #match |> nanoparquet::write_parquet("data/stk-isl-vessel-match.parquet")
 
-# MATCH. Icelandic vessels only ------------------------------------------------
+# MATCH ------------------------------------------------------------------------
 # Only create variables vid, cs and uid if
 #   * vessel is icelandic
 #   * vessel has mmsi
 CS <-
   vessels |>
-  filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
+  #filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
   filter(!is.na(cs)) |>
   filter(nchar(cs) %in% 4:7) |>
   pull(cs) |>
   unique()
 UID <-
   vessels |>
-  filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
+  #filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
   filter(!is.na(uid)) |>
   pull(uid) |>
   unique()
 VID <-
   vessels |>
-  filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
+  #filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
   filter(!is.na(vid)) |>
   pull(vid) |>
   as.character()
 MMSI <-
   vessels |>
-  filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
+  #filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
   filter(!is.na(vid)) |>
   pull(mmsi) |>
   as.character()
-
 keep <-
   stk |>
   filter(!drop) |>
@@ -361,7 +356,7 @@ keep <-
 
 vessels.is <-
   vessels |>
-  filter(!is.na(vid), !is.na(mmsi), source == "ISL", flag == "ISL") |>
+  #filter(!is.na(vid), !is.na(mmsi), source == "ISL", flag == "ISL") |>
   select(vid, yh1, yh2, mmsi, cs, uid, imo, vessel, mmsi_t1:note_fate)
 
 keep.is <-
@@ -442,7 +437,7 @@ match <-
   )
 
 keep.is.store <- keep.is
-keep.is |> lh()
+
 
 # these are the remainders of glid-cs, loid can be different cats
 #  Note here we first exclude vid already matched

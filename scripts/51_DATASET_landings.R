@@ -8,6 +8,13 @@
 #         data/landings/lods_catch.parquet
 #
 # Downstream usage: 52_DATASET_logbooks.R
+#
+# News:
+#   2024-11-25 Added as a cronjob
+#
+#
+# TODO:
+#  * Cronjob - try to just use append
 # 
 # Preamble ---------------------------------------------------------------------
 # run this as:
@@ -124,9 +131,15 @@ CA <-
 ## Save stuff ------------------------------------------------------------------
 LN |> 
   arrange(vid, datel) |> 
-  write_parquet("data/landings/agf_stations.parquet")
+  write_parquet("~/stasi/fishydata/data/landings/agf_stations.parquet")
 CA |> 
-  write_parquet("data/landings/agf_catch.parquet")
+  write_parquet("~/stasi/fishydata/data/landings/agf_catch.parquet")
+LN |> 
+  arrange(vid, datel) |> 
+  write_parquet("/u3/haf/stasi/fishydata/data/landings/agf_stations.parquet")
+CA |> 
+  write_parquet("/u3/haf/stasi/fishydata/data/landings/agf_catch.parquet")
+
 
 
 # LODS landings ----------------------------------------------------------------
@@ -224,57 +237,63 @@ CA2 <-
 ## Save stuff ------------------------------------------------------------------
 LN2 |> 
   arrange(vid, datel) |> 
-  write_parquet("data/landings/lods_stations.parquet")
+  write_parquet("~/stasi/fishydata/data/landings/lods_stations.parquet")
 CA2 |> 
-  write_parquet("data/landings/lods_catch.parquet")
+  write_parquet("~/stasi/fishydata/data/landings/lods_catch.parquet")
+LN2 |> 
+  arrange(vid, datel) |> 
+  write_parquet("/u3/haf/stasi/fishydata/data/landings/lods_stations.parquet")
+CA2 |> 
+  write_parquet("/u3/haf/stasi/fishydata/data/landings/lods_catch.parquet")
 
 # AGF-LODS crosschecks ---------------------------------------------------------
 # Note that the record numbers from AGF and LODS are different
-nrow(LN)
-nrow(LN2)
-check <- 
-  LN |> 
-  select(vid, datel, .lid_agf = .lid) |> 
-  full_join(LN2 |> 
-              select(vid, datel, .lid_lods = .lid)) |> 
-  mutate(what = case_when(!is.na(.lid_agf) & !is.na(.lid_lods) ~ "both",
-                          !is.na(.lid_agf) &  is.na(.lid_lods) ~ "agf",
-                          is.na(.lid_agf) & !is.na(.lid_lods) ~ "lods",
-                          .default = NA)) 
-check |> count(what)
-check |> 
-  mutate(year = year(datel)) |> 
-  count(year, what) |> 
-  spread(what, n) |> 
-  knitr::kable(caption = "Difference in vid-datel records in AGF vs LODS")
-# So mostly in 2022 where 13% of records in LODS but not in AGF, needs checking
-#  This is mostly associated with period of 2022-05-30 to 2022-06-16
-
-# Catch records are somewhat differernt:
-CA_2009_2023 <-
-  LN |> 
-  filter(year(datel) %in% 2009:2023) |> 
-  select(.lid) |> 
-  left_join(CA) |>
-  group_by(sid) |> 
-  summarise(wt_agf = sum(wt) / 1e6)
-CA2_2009_2023 <-
-  LN2 |> 
-  filter(year(datel) %in% 2009:2023) |> 
-  select(.lid) |> 
-  left_join(CA2) |>
-  group_by(sid) |> 
-  summarise(wt_lods = sum(wt) / 1e6)
-CA_2009_2023 |> 
-  full_join(CA2_2009_2023) |> 
-  mutate(diff = wt_agf - wt_lods,
-         p = round(wt_lods / wt_agf, 3),
-         wt_agf = round(wt_agf, 3),
-         wt_lods = round(wt_lods, 3),
-         diff = round(diff, 3)) |> 
-  arrange(p) |> 
-  knitr::kable(caption = "Difference in weight reported")
-
+if(TRUE) {
+  nrow(LN)
+  nrow(LN2)
+  check <- 
+    LN |> 
+    select(vid, datel, .lid_agf = .lid) |> 
+    full_join(LN2 |> 
+                select(vid, datel, .lid_lods = .lid)) |> 
+    mutate(what = case_when(!is.na(.lid_agf) & !is.na(.lid_lods) ~ "both",
+                            !is.na(.lid_agf) &  is.na(.lid_lods) ~ "agf",
+                            is.na(.lid_agf) & !is.na(.lid_lods) ~ "lods",
+                            .default = NA)) 
+  check |> count(what)
+  check |> 
+    mutate(year = year(datel)) |> 
+    count(year, what) |> 
+    spread(what, n) |> 
+    knitr::kable(caption = "Difference in vid-datel records in AGF vs LODS")
+  # So mostly in 2022 where 13% of records in LODS but not in AGF, needs checking
+  #  This is mostly associated with period of 2022-05-30 to 2022-06-16
+  
+  # Catch records are somewhat differernt:
+  CA_2009_2023 <-
+    LN |> 
+    filter(year(datel) %in% 2009:2024) |> 
+    select(.lid) |> 
+    left_join(CA) |>
+    group_by(sid) |> 
+    summarise(wt_agf = sum(wt) / 1e6)
+  CA2_2009_2023 <-
+    LN2 |> 
+    filter(year(datel) %in% 2009:2024) |> 
+    select(.lid) |> 
+    left_join(CA2) |>
+    group_by(sid) |> 
+    summarise(wt_lods = sum(wt) / 1e6)
+  CA_2009_2023 |> 
+    full_join(CA2_2009_2023) |> 
+    mutate(diff = wt_agf - wt_lods,
+           p = round(wt_lods / wt_agf, 3),
+           wt_agf = round(wt_agf, 3),
+           wt_lods = round(wt_lods, 3),
+           diff = round(diff, 3)) |> 
+    arrange(p) |> 
+    knitr::kable(caption = "Difference in weight reported")
+}
 
 # Info -------------------------------------------------------------------------
 toc()

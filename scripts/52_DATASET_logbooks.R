@@ -96,8 +96,8 @@ q_vessels_icelandic <-
   filter(!between(vid, 3700, 4999))
 
 # Read in landings data
-LODS <- open_dataset("data/landings/lods_stations.parquet") |> collect()
-AGF <-  open_dataset("data/landings/agf_stations.parquet") |> collect()
+LODS <- open_dataset("~/stasi/fishydata/data/landings/lods_stations.parquet") |> collect()
+AGF <-  open_dataset("~/stasi/fishydata/data/landings/agf_stations.parquet") |> collect()
 
 # 1 Old logbooks ---------------------------------------------------------------
 
@@ -570,8 +570,10 @@ LGS <-
 
 # 6. Save the stuff ------------------------------------------------------------
 
-LGS   |> arrow::write_parquet("data/logbooks/stations.parquet")
-CATCH |> arrow::write_parquet("data/logbooks/catch.parquet")
+LGS   |> arrow::write_parquet("~/stasi/fishydata/data/logbooks/stations.parquet")
+CATCH |> arrow::write_parquet("~/stasi/fishydata/data/logbooks/catch.parquet")
+LGS   |> arrow::write_parquet("/u3/haf//stasi/fishydata/data/logbooks/stations.parquet")
+CATCH |> arrow::write_parquet("/u3/haf//stasi/fishydata/data/logbooks/catch.parquet")
 
 # 7. Issues --------------------------------------------------------------------
 # We should cap the effort "a priori", check this:

@@ -55,12 +55,13 @@ mmsi_ISL |>
   filter(n.mmsi > 1) |>
   knitr::kable(caption = "Vessel with more than one MMSI (expect) none")
 vessel_ISL <-
-  mar::tbl_mar(con, "vessel.vessel") |>
+  mar::tbl_mar(con, "vessel.vessel_v") |> 
   dplyr::select(vid = registration_no,
                 vessel = name,
                 mclass = usage_category_no,   # mclass
                 imo = imo_no,
-                .vid = vessel_id) |>
+                .vid = vessel_id,
+                loa = max_length) |>
   dplyr::left_join(tbl_mar(con, "vessel.vessel_identification") |>
                      select(uid = region_acronym,
                             uno = region_no,
@@ -80,9 +81,11 @@ vessel_ISL <-
                 vessel,
                 flag,
                 vid,
+                loa,
                 source,
                 .id = .vid) |>
   filter(!vid %in% c(0))
+  
 # Extract the cs for foreign vessels from vessel name
 vessel_ISL <-
   vessel_ISL |>
@@ -139,12 +142,33 @@ vessel_ISL <-
 vessel_ISL <- 
   vessel_ISL |> 
   arrange(vid)
+
+# add last year vessel in Hreiðar's dataset (last time updated 2021)
+v <- 
+  readxl::read_excel("~/stasi/hreidar/data-raw/HREIDAR_Islensk_skip.xlsx") |> 
+  janitor::clean_names() |> 
+  select(vid = skskr_nr,
+         year = ar) |> 
+  filter(!is.na(vid)) |> 
+  group_by(vid) |> 
+  reframe(yh1 = min(year),        # year hreiðar first
+          yh2 = max(year)) |>     # year hreiðar last
+  mutate(vid = as.integer(vid)) |> 
+  mutate(yh1 = ifelse(yh1 == 9999, NA, yh1),
+         yh2 = ifelse(yh2 == 9999, NA, yh2))
+
+vessel_ISL <- 
+  vessel_ISL |> 
+  # Note: We will have vessels entering after 2021 which have NA year_last_hreidar
+  left_join(v) |> 
+  select(vid, yh1, yh2, everything())
+
 # Save -------------------------------------------------------------------------
 vessel_ISL |> 
   write_parquet("data/vessels/vessels_iceland.parquet")
 
 # Issues -----------------------------------------------------------------------
-## Trials at consolidating informations ----------------------------------------
+## Trials at consolidating information ----------------------------------------
 #  * Think about using hierarchical approach in "beliefs". Like trust
 #    national records over others if there is a discrepancy
 vessel_registry |>
@@ -204,7 +228,7 @@ vessel_registry |>
   knitr::kable()
 
 ## Check on consolidating ASTD with NOR ----------------------------------------
-# This will not work because the joining variabel is vessel
+# This will not work because the joining variable is vessel
 v_astd_nor <-
   vessel_ASTD |>
   filter(flag == "NOR",
