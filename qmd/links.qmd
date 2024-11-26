@@ -1,0 +1,8 @@
+---
+title: "Links"
+format: html
+---
+
+## Links
+
+* [An approach to map and quantify the fishing effort of polyvalent passive gear fishing fleets using geospatial data](https://academic.oup.com/icesjms/article/80/6/1658/7197498#supplementary-data)

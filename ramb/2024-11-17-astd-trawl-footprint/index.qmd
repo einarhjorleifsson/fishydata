@@ -1,0 +1,218 @@
+---
+title: "ASTD trawl footprint"
+description: "A simple script to grid parquet data as well as attept to identify trawl foot print based on speed alone and then on interval in the logbooks."
+date: "2024-11-17"
+categories: [code, ais, fishing]
+---
+
+## Loading the data
+
+* Two datasets:
+  * Logbooks that contain among other things start and end of fishing actions. Not a full census though, but mostly ok for trawl gear.
+  * AIS dataset from PAME ASTD - these are only vessels with transponder type A so smaller vessels are generally not availailable in this dataset.
+  
+* Some explanation of the variable names:
+  * vid: vessel id
+  * gid: gear id (general one)
+  * gid_ln_agf: gear id in the GAFL landings database
+  * mmsi: The AIS transponder number, normally unique for a vessel id
+  * t1: The start time of fishing actions
+  * t2: The end time of fishing action
+  * .sid: The fishing action id ("visir" in the old logbooks)
+  * sid: Species id
+  * .cid: Some kind of a trip identifier, positive values are outside harbours (i.e. a proper trip)
+  
+Here we just focus on the bottom fishtrawl
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(arrow)
+library(duckdb)
+
+lgs <- 
+  open_dataset("/u3/haf/stasi/fishydata/data/logbooks/stations.parquet") |> 
+  to_duckdb() |> 
+  filter(between(year(date), 2015, 2024),
+         # Note: this is gear id in the gafl landings database which is rarely
+         #  the same as in the other databases
+         gid_ln_agf == 6) |> 
+  distinct(vid, mmsi, date, t1, t2, catch_total, .keep_all = TRUE) |> 
+  select(.sid, mmsi, vid, gid, gid_ln_agf, date, t1, t2, catch_total)
+catch <- 
+  open_dataset("/u3/haf/stasi/fishydata/data/logbooks/catch.parquet") |> 
+  to_duckdb()
+ais <- 
+  open_dataset("/u3/haf/stasi/fishydata/data/ais/astd_isleez") |> 
+  to_duckdb() |> 
+  # Not in harbour
+  filter(.cid > 0) |> 
+  # Fishing occurred on date
+  filter(between(year, 2015, 2024),
+         gid_ln_agf == 6) |> 
+  select(.rid, mmsi, time, vessel, astd_cat, dmeters:lat, x, y) |> 
+  mutate(speed = ifelse(speed > 15, 15, speed)) |>  
+  # merge with the logbooks
+  left_join(lgs,
+            by = join_by(mmsi, between(time, t1, t2)))
+```
+
+## Using speed alone
+
+```{r, fig.height=4}
+dx <- 0.1
+ais |> 
+  mutate(speed = speed %/% dx * dx + dx/2) |> 
+  count(vid, speed) |> 
+  collect() ->
+  s
+s |> 
+  mutate(speed = ifelse(speed > 15, 15, speed)) |> 
+  group_by(speed) |> 
+  reframe(n = sum(n)) |>
+  ggplot(aes(speed, n)) +
+  theme_bw() +
+  geom_col() +
+  scale_x_continuous(breaks = seq(0, 20, by = 1)) +
+  labs(x = "Speed [kn]", y = "Number of pings")
+```
+
+So one could e.g try to use an arbitrary cuttoff for speed between 2.6 and 5.5 as an indicator of actual trawl fishing.
+
+```{r, fig.height=4}
+dx <- 1852 / 2
+g <- 
+  ais |> 
+  filter(between(speed, 2.625, 5.500)) |> 
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2) |> 
+  group_by(x, y) |> 
+  summarise(dd = sum(dmeters, na.rm = TRUE),
+            dt = sum(dminutes, na.rm = TRUE) / 60,
+            .groups = "drop") |> 
+  collect()
+p1 <- 
+  g |> 
+  filter(x < -2.5e6, x > -3.4e6,
+         y > 9.65e6, y < 1.03e7) |> 
+  mutate(dt = ifelse(dt > 25, 25, dt)) |> 
+  ggplot(aes(x, y, fill = dt)) +
+  theme_dark() +
+  geom_tile() +
+  scale_fill_viridis_c(direction = -1, guide = "none") +
+  coord_equal(expand = 0) +
+  scale_x_continuous(NULL, NULL) +
+  scale_y_continuous(NULL, NULL)
+p1
+```
+
+In the above we are getting quite a lot of false positives as can be observed by the implied fishing closer to the 12 miles and within the fjords.
+
+## Using logbook time interval alone
+
+Let's instead filter by tow id (.sid, same as "visir" in the old logbooks"):
+
+```{r, fig.height=4}
+g <- 
+  ais |> 
+  filter(!is.na(.sid)) |> 
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2) |> 
+  group_by(x, y) |> 
+  summarise(n = n(),
+            n.mmsi = n_distinct(mmsi),
+            dd = sum(dmeters, na.rm = TRUE),
+            dt = sum(dminutes, na.rm = TRUE) / 60,
+            .groups = "drop") |> 
+  collect()
+p2 <- 
+  g |> 
+  #filter(n.mmsi > 3 | n > 2) |> 
+  filter(x < -2.5e6, x > -3.4e6,
+         y > 9.65e6, y < 1.03e7) |> 
+  mutate(dt = ifelse(dt > 25, 25, dt)) |> 
+  ggplot(aes(x, y, fill = dt)) +
+  theme_dark() +
+  geom_tile() +
+  scale_fill_viridis_c(direction = -1, guide = "none") +
+  coord_equal(expand = 0) +
+  scale_x_continuous(NULL, NULL) +
+  scale_y_continuous(NULL, NULL)
+p1 + p2
+```
+
+So we are getting bit less of false positives close to shore as expected. But vessel captains are known to forget report at least the end of tows. So let's try a combo of both speed and time filter.
+
+## Both speed and time as filter
+
+```{r, fig.height=4}
+g <- 
+  ais |> 
+  filter(between(speed, 2.625, 5.500)) |> 
+  filter(!is.na(.sid)) |> 
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2) |> 
+  group_by(x, y) |> 
+  summarise(n = n(),
+            n.mmsi = n_distinct(mmsi),
+            dd = sum(dmeters, na.rm = TRUE),
+            dt = sum(dminutes, na.rm = TRUE) / 60,
+            .groups = "drop") |> 
+  collect()
+p3 <- 
+  g |> 
+  #filter(n.mmsi > 3 | n > 2) |> 
+  filter(x < -2.5e6, x > -3.4e6,
+         y > 9.65e6, y < 1.03e7) |> 
+  mutate(dt = ifelse(dt > 25, 25, dt)) |> 
+  ggplot(aes(x, y, fill = dt)) +
+  theme_dark() +
+  geom_tile() +
+  scale_fill_viridis_c(direction = -1, guide = "none") +
+  coord_equal(expand = 0) +
+  scale_x_continuous(NULL, NULL) +
+  scale_y_continuous(NULL, NULL)
+p1 + p2 + p3
+```
+
+Not too bad as a first go! What is though really needed is some kind of an algorithm that treats the ais data as a time series where pre- and proceeding points are taken into account if a point is considered fishing or not.
+
+## What if I wanted to map out the catch of a specific species
+
+A simple example of joining the catch data prior to processing, here plaice is taken as an example:
+
+```{r, fig.height=4}
+g <- 
+  ais |> 
+  filter(between(speed, 2.625, 5.500)) |> 
+  filter(!is.na(.sid)) |> 
+  inner_join(catch |> 
+               filter(sid == 23),
+             by = join_by(.sid)) |> 
+  group_by(.sid) |> 
+  # lets get units in tonnes
+  mutate(catch = sum(catch, na.rm = TRUE) / n() / 1000) |> 
+  ungroup() |> 
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2) |> 
+  group_by(x, y) |> 
+  summarise(catch = sum(catch),
+            .groups = "drop") |> 
+  collect()
+p4 <- 
+  g |> 
+  filter(x < -2.5e6, x > -3.4e6,
+         y > 9.65e6, y < 1.03e7) |> 
+  mutate(catch = ifelse(catch > 100, 100, catch)) |> 
+  ggplot(aes(x, y, fill = catch)) +
+  theme_dark() +
+  geom_tile() +
+  scale_fill_viridis_c(direction = -1, guide = "none") +
+  coord_equal(expand = 0) +
+  scale_x_continuous(NULL, NULL) +
+  scale_y_continuous(NULL, NULL)
+p3 + p4
+```
+
+So, plaice is not caught so much offshore!
+

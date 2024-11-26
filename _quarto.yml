@@ -1,0 +1,28 @@
+project:
+  type: website
+
+website:
+  title: "Fishydata"
+  site-url: https://heima.hafro.is/~einarhj/fishydata
+  # favicon: "image/hafro_logo.png"
+  navbar:
+    right:
+      - text: Something
+        menu:
+          - qmd/links.qmd
+      - text: Forritun
+        menu:
+          - qmd/links.qmd
+          - qmd/links.qmd
+      - ramb-list.qmd # add ramb blog to the navbar
+      - icon: github
+        href: https://github.com/einarhjorleifsson/fishvice
+
+format:
+  html:
+    theme: flatly
+    css: styles.css
+    toc: false
+    echo: false
+    message: false
+    warning: false
