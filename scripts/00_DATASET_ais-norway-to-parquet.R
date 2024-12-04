@@ -45,7 +45,7 @@ read_vms2 <- function(fil) {
            everything())
 }
 
-fil <- dir("data-raw/norway", full.names = TRUE, pattern = "*.zip")
+fil <- dir("data-raw/ais/norway", full.names = TRUE, pattern = "*.zip")
 base <- basename(fil)
 tdir <- tempdir()
 for(i in 1:length(fil)) {
@@ -55,7 +55,7 @@ files <-
   tibble(fil = dir(tdir, full.names = TRUE)) |>
   mutate(year = str_replace_all(basename(fil), "\\D", ""),
          year = as.integer(year),
-         out = paste0("data/norway")) |>
+         out = paste0("data/ais/norway")) |>
   arrange(year)
 files |> print()
 

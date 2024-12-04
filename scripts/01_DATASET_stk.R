@@ -94,15 +94,49 @@ stk_summary <-
   select(mid, loid, glid, everything())
 rm(stk_gids)
 
-## Older matches ---------------------------------------------------------------
-#  not yet used
+# Older matches ----------------------------------------------------------------
 older <- 
   tbl_mar(con, "ops$einarhj.mobile_vid") |>
   collect() |> 
-  arrange(vid)
+  select(mid:vid, no) |> 
+  # add loid and glid where missing
+  left_join(stk_summary |> select(mid, loid_tmp = loid, glid_tmp = glid, t1, t2),
+            by = join_by(mid)) |> 
+  mutate(loid = ifelse(is.na(loid), loid_tmp, loid),
+         glid = ifelse(is.na(glid), glid_tmp, glid)) |> 
+  select(-c(loid_tmp, glid_tmp)) |> 
+  arrange(mid) |> 
+  group_by(mid) |> 
+  mutate(n.mid = n()) |> 
+  ungroup()
+## Houston, we have a problem
+older |> 
+  filter(n.mid > 1) |> 
+  knitr::kable()
+# The problem:
+#  In the earlier code we hadd some manual matches and then some
+#   records that aimed at splitting mobileid on 2+ vessel if that
+#   seemed to be the case. But here we have some indication that
+#   * some "splits" did not have t1 and t2 specified
+#   * some of the records are pure duplicates
+#  What is done here is to save the data where the n.mid > 1 and
+#  then to a manual corrections in libre office. Once done, data
+#  is then read back in and merged with the data where n.mid = 1
+if(FALSE) {
+  older |> 
+  filter(n.mid > 1) |> 
+  write_csv("data-raw/stk_mobile_fix/older_duplicates.csv")
+}
+older.keep <- older |> filter(n.mid == 1)
+older.fixed <- 
+  readODS::read_ods("data-raw/stk_mobile_fix/older_duplicates.ods", na = "NA") |> 
+  filter(keep == 1) |> 
+  select(-c(keep, comments, n.mid))
+older <- 
+  bind_rows(older.keep |> select(-n.mid),
+            older.fixed)
 
-
-## Non-vessel localid or globalid ----------------------------------------------
+# Non-vessel localid or globalid ----------------------------------------------
 fixed <-
   c("Surtseyja", "Straumnes", "Steinanes", "Haganes_K", "Bakkafjar",
     "Laugardal", "BorgfjE P", "Gemlufall", "Straumduf", "Eyrarhlid",
@@ -302,7 +336,7 @@ keep <-
 ## Export ----------------------------------------------------------------------
 #match |> nanoparquet::write_parquet("data/stk-isl-vessel-match.parquet")
 
-# MATCH. Icelandic vessels only ------------------------------------------------
+# MATCH. Icelandic registered vessels only -------------------------------------
 # Only create variables vid, cs and uid if
 #   * vessel is icelandic
 #   * vessel has mmsi

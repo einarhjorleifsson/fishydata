@@ -14,7 +14,7 @@ categories: [code, ais, fishing]
 * Some explanation of the variable names:
   * vid: vessel id
   * gid: gear id (general one)
-  * gid_ln_agf: gear id in the GAFL landings database
+  * gid_ln_agf: gear id in the GAFL landings database (is different than above)
   * mmsi: The AIS transponder number, normally unique for a vessel id
   * t1: The start time of fishing actions
   * t2: The end time of fishing action
@@ -38,7 +38,7 @@ lgs <-
          #  the same as in the other databases
          gid_ln_agf == 6) |> 
   distinct(vid, mmsi, date, t1, t2, catch_total, .keep_all = TRUE) |> 
-  select(.sid, mmsi, vid, gid, gid_ln_agf, date, t1, t2, catch_total)
+  select(.sid, mmsi, vid, gid, gid_ln_agf, date, t1, t2, lb_base)
 catch <- 
   open_dataset("/u3/haf/stasi/fishydata/data/logbooks/catch.parquet") |> 
   to_duckdb()
@@ -106,13 +106,13 @@ p1 <-
 p1
 ```
 
-In the above we are getting quite a lot of false positives as can be observed by the implied fishing closer to the 12 miles and within the fjords.
+In the above we are getting quite a lot of false positives as can be observed by the implied fishing inside the 12 miles, even within the fjords.
 
 ## Using logbook time interval alone
 
 Let's instead filter by tow id (.sid, same as "visir" in the old logbooks"):
 
-```{r, fig.height=4}
+```{r, fig.height=3}
 g <- 
   ais |> 
   filter(!is.na(.sid)) |> 
@@ -141,11 +141,11 @@ p2 <-
 p1 + p2
 ```
 
-So we are getting bit less of false positives close to shore as expected. But vessel captains are known to forget report at least the end of tows. So let's try a combo of both speed and time filter.
+So we are getting bit less of false positives close to shore as expected. But captains are known to forget to report at least the end of tow time, often making a hindsight guess. So let's try a combo of both speed and time filter.
 
 ## Both speed and time as filter
 
-```{r, fig.height=4}
+```{r, fig.height=3}
 g <- 
   ais |> 
   filter(between(speed, 2.625, 5.500)) |> 
@@ -175,20 +175,20 @@ p3 <-
 p1 + p2 + p3
 ```
 
-Not too bad as a first go! What is though really needed is some kind of an algorithm that treats the ais data as a time series where pre- and proceeding points are taken into account if a point is considered fishing or not.
+Not too bad as a first go! What is though really needed is some kind of an algorithm that treats the ais data as a time series where pre- and proceeding points are taken into account when a point is considered fishing or not.
 
 ## What if I wanted to map out the catch of a specific species
 
 A simple example of joining the catch data prior to processing, here plaice is taken as an example:
 
-```{r, fig.height=4}
+```{r, fig.height=3}
 g <- 
   ais |> 
   filter(between(speed, 2.625, 5.500)) |> 
   filter(!is.na(.sid)) |> 
   inner_join(catch |> 
                filter(sid == 23),
-             by = join_by(.sid)) |> 
+             by = join_by(.sid, lb_base)) |> 
   group_by(.sid) |> 
   # lets get units in tonnes
   mutate(catch = sum(catch, na.rm = TRUE) / n() / 1000) |> 

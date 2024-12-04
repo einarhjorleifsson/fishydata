@@ -4,6 +4,18 @@
 #   * Attempt to assign MMSI to foreign vessels
 #   * Attempt to write the code flow so it can easily be updated
 #     once new data are compiled (Not there yet)
+#
+#  For the Excel keep this in mind:
+#  * Dump ordered by mobileid, because they are (mostly) created consecutively
+#    in time. This way, later updating should be easier.
+#  * At minimum classify the localid and globalid
+#  * Make an initial guess of the vid
+#  * Try to flag where mobileid belongs to two vessels (using the historcial
+#    dataset?)
+#  * Suggest first to do a trial run, see how one would work within LibreOffice
+#    or Excel
+
+
 # TODO: ------------------------------------------------------------------------
 #      ...
 # NEWS
@@ -61,40 +73,7 @@ cs.prefix <-
 vessels <-
   nanoparquet::read_parquet("data/vessels/vessels_iceland.parquet")
 
-## stk summary -----------------------------------------------------------------
-stk_gids <-
-  tbl(con, dbplyr::in_schema("STK", "MOBILE")) |>
-  select(mid = MOBILEID, loid = LOCALID, glid = GLOBALID) |>
-  collect()
-stk_summary <-
-  tbl(con, dbplyr::in_schema("STK", "TRAIL")) |>
-  mutate(YEAR = year(POSDATE)) |>
-  group_by(MOBILEID) |>
-  summarise(pings = n(),
-            n_years = n_distinct(YEAR),
-            t1 = min(POSDATE, na.rm = TRUE),
-            t2 = max(POSDATE, na.rm = TRUE),
-            .groups = "drop") |>
-  collect() |>
-  rename(mid = MOBILEID) |>
-  mutate(t1 = as_date(t1),
-         t2 = as_date(t2)) |>
-  arrange(mid) |>
-  full_join(stk_gids) |>
-  select(mid, loid, glid, everything()) |> 
-  arrange(mid)
-rm(stk_gids)
-
-## Older matches ---------------------------------------------------------------
-older <- 
-  tbl_mar(con, "ops$einarhj.mobile_vid") |>
-  collect() |> 
-  select(mid, vido = vid, t1o = t1, t2o = t2, no) |> 
-  mutate(t1o = if_else(is.na(no), NA, t1o),
-         t2o = if_else(is.na(no), NA, t2o))
-
-
-## Non-vessel localid or globalid ----------------------------------------------
+## Known (via ad hoc) non-vessel localid or globalid ---------------------------
 fixed <-
   c("Surtseyja", "Straumnes", "Steinanes", "Haganes_K", "Bakkafjar",
     "Laugardal", "BorgfjE P", "Gemlufall", "Straumduf", "Eyrarhlid",
@@ -170,11 +149,9 @@ hafro <-
     "Rannsokn_")
 net_glid <-
   c("9911378")
-
 unknown_glid <- c("5200000")
 
-
-# Classify the stk -------------------------------------------------------------
+## Vessel info for local- and globalid classification --------------------------
 CS <-
   vessels |>
   filter(!is.na(cs)) |>
@@ -194,8 +171,35 @@ VID <-
   pull(vid) |>
   as.character()
 
+## stk summary -----------------------------------------------------------------
+stk_ids <-
+  tbl(con, dbplyr::in_schema("STK", "MOBILE")) |>
+  select(mid = MOBILEID, loid = LOCALID, glid = GLOBALID) |>
+  collect()
 stk <-
-  stk_summary |>
+  tbl(con, dbplyr::in_schema("STK", "TRAIL")) |>
+  mutate(YEAR = year(POSDATE)) |>
+  group_by(MOBILEID) |>
+  summarise(pings = n(),
+            n_years = n_distinct(YEAR),
+            d1 = min(POSDATE, na.rm = TRUE),
+            d2 = max(POSDATE, na.rm = TRUE),
+            .groups = "drop") |>
+  collect() |>
+  rename(mid = MOBILEID) |>
+  mutate(d1 = as_date(d1),
+         d2 = as_date(d2)) |>
+  arrange(mid) |>
+  full_join(stk_ids,
+            by = join_by(mid)) |>
+  select(mid, loid, glid, everything()) |> 
+  arrange(mid) |> 
+  mutate(.rid = 1:n(),
+         .before = mid)
+
+# Classification ---------------------------------------------------------------
+stk2 <-
+  stk |>
   # The order matters in the case_when
   mutate(.loid =
            case_when(
@@ -208,8 +212,8 @@ stk <-
              str_sub(loid, 1, 2) %in% cs.prefix$cs_prefix &
                !numbers_only(str_trim(loid)) &
                !str_starts(loid, "MOB_")  ~ "cs2",
-             numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_child ~ "mmsi_other",
-             numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_aid ~ "mmsi_other",
+             numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_child ~ "mmsi.other",
+             numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_aid ~ "mmsi.other",
              .default = NA)) |>
   mutate(.glid =
            case_when(
@@ -226,9 +230,17 @@ stk <-
              str_sub(glid, 1, 2) %in% cs.prefix$cs_prefix &
                !numbers_only(str_trim(glid)) &
                !str_starts(glid, "MOB_")  ~ "cs2",
-             numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_child ~ "mmsi_other",
-             numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_aid ~ "mmsi_other",
-             .default = NA)) |>
+             numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_child ~ "mmsi.other",
+             numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_aid ~ "mmsi.other",
+             #numbers_only(glid) & nchar(glid) == 7 & !omar::vessel_valid_imo(glid) ~ "imo",
+             .default = NA)) |> 
+  mutate(type = paste0(replace_na(.loid, "NA"), "_", replace_na(.glid, "NA"))) |> 
+  select(-c(.loid, .glid))
+
+stk2 |> count(type) |> knitr::kable()
+
+# Orphan -----------------------------------------------------------------------
+stk2 |> 
   # temporary check what mmsi type - used in the drop below
   mutate(mmsi = case_when(.loid == "mmsi" ~ loid,
                           .glid == "mmsi" ~ glid,
@@ -237,239 +249,121 @@ stk <-
                               .default = NA),
          mmsi_cat = case_when(!is.na(mmsi_cat) & mmsi_cat == "vessel" ~ mmsi_cat,
                               !is.na(mmsi_cat) & mmsi_cat != "vessel" ~ "mmsi_other",
+                              .default = NA),
+         mmsi_mid = case_when(mmsi_cat == "vessel" ~ as.numeric(str_sub(mmsi, 1, 3)),
                               .default = NA)) |>
-  select(-mmsi) |> 
-  arrange(mid)
-rm(CS, UID, VID, fixed, hafro, kvi, net_glid, unknown_glid)
+  select(-mmsi)
 
-stk |> glimpse()
+# Older matches ----------------------------------------------------------------
+older <- 
+  tbl_mar(con, "ops$einarhj.mobile_vid") |>
+  collect() |> 
+  select(mid:vid, no) |> 
+  # add loid and glid where missing
+  left_join(stk_summary |> select(mid, loid_tmp = loid, glid_tmp = glid, d1, d2),
+            by = join_by(mid)) |> 
+  mutate(loid = ifelse(is.na(loid), loid_tmp, loid),
+         glid = ifelse(is.na(glid), glid_tmp, glid)) |> 
+  select(-c(loid_tmp, glid_tmp)) |> 
+  arrange(mid) |> 
+  group_by(mid) |> 
+  mutate(n.mid = n()) |> 
+  ungroup()
+## Houston, we have a problem
+older |> 
+  filter(n.mid > 1) |> 
+  knitr::kable()
+# The problem:
+#  In the earlier code we hadd some manual matches and then some
+#   records that aimed at splitting mobileid on 2+ vessel if that
+#   seemed to be the case. But here we have some indication that
+#   * some "splits" did not have t1 and t2 specified
+#   * some of the records are pure duplicates
+#  What is done here is to save the data where the n.mid > 1 and
+#  then to a manual corrections in libre office. Once done, data
+#  is then read back in and merged with the data where n.mid = 1
+if(FALSE) {
+  older |> 
+    filter(n.mid > 1) |> 
+    write_csv("data-raw/stk_mobile_fix/older_duplicates.csv")
+}
+older.keep <- older |> filter(n.mid == 1)
+older.fixed <- 
+  readODS::read_ods("data-raw/stk_mobile_fix/older_duplicates.ods", na = "NA") |> 
+  filter(keep == 1) |> 
+  select(-c(keep, comments, n.mid))
+older <- 
+  bind_rows(older.keep |> select(-n.mid),
+            older.fixed)
+## merge stk with older --------------------------------------------------------
+# Note, this will generate dual mobileid because of "overtake"
+stk2 <- 
+  stk2 |> 
+  left_join(older |> select(mid, vid_older = vid, no, t1, t2)) |> 
+  #janitor::get_dupes(.rid) |> 
+  mutate(d1 = case_when(!is.na(t1) & !is.na(no) ~ t1,
+                        .default = d1),
+         d2 = case_when(!is.na(t2) & !is.na(no) ~ t2,
+                        .default = d2)) |> 
+  select(-c(t1, t2))
 
+# New match --------------------------------------------------------------------
+## vid_vid match ---------------------------------------------------------------
+stk2 <- 
+  stk2 |> 
+  mutate(.vid = case_when(type == "vid_vid" & loid == glid ~ as.numeric(glid),
+                         .default = NA)) |> 
+  left_join(vessels |> select(.vid = vid),
+            by = join_by(.vid)) |> 
+  rename(vid_new = .vid)
+## vid_cs match ----------------------------------------------------------------
+stk2 <- 
+  stk2 |> 
+  mutate(.vid = case_when(type == "vid_cs" ~ as.numeric(loid),
+                          .default = -9999),
+         .cs = case_when(type == "vid_cs" ~ glid,
+                         .default = "XXXX")) |> 
+  left_join(vessels |> select(.vid = vid, .cs = cs),
+            by = join_by(.vid, .cs)) |> 
+  mutate(vid_new = case_when(!is.na(vid_new) ~ vid_new,
+                             .vid != -9999 ~ .vid,
+                             .default = vid_new)) |> 
+  select(-c(.vid, .cs)) 
+## NA_mmsi match: Icelandic vessels only ---------------------------------------
+stk2 <- 
+  stk2 |> 
+  mutate(.mmsi = case_when(type == "NA_mmsi" & str_sub(glid, 1, 3) == "251" ~ glid,
+                           .default = "XXXX")) |> 
+  left_join(vessels |> filter(!is.na(mmsi)) |> select(.vid = vid, .mmsi = mmsi),
+            by = join_by(.mmsi)) |> 
+  mutate(vid_new = case_when(!is.na(vid_new) ~ vid_new,
+                             !is.na(.vid) ~ .vid,
+                             .default = vid_new)) |> 
+  select(-c(.vid, .mmsi))
+## uid_cs match ----------------------------------------------------------------
+stk2 <- 
+  stk2 |> 
+  mutate(.uid = case_when(type == "uid_cs" ~ loid,
+                          .default = "XXXX"),
+         .cs = case_when(type == "uid_cs" ~ glid,
+                         .default = "XXXX")) |> 
+  left_join(vessels |> select(.vid = vid, .cs = cs, .uid = uid) |> drop_na(),
+            by = join_by(.cs, .uid)) |> 
+  mutate(vid_new = case_when(!is.na(vid_new) ~ vid_new,
+                             !is.na(.vid) ~ .vid,
+                             .default = vid_new)) |> 
+  select(-c(.cs, .uid, .vid))
 
-# iterative trials ids that have not yet been classified
-stk |> 
-  filter(is.na(.loid), is.na(.glid)) |> 
+# I AM HERE --------------------------------------------------------------------
+
+stk2 |> 
+  filter(is.na(vid_older) & is.na(vid_new)) |> 
+  count(type) |> 
+  knitr::kable()
+stk2 |> 
+  filter(is.na(vid_older) & is.na(vid_new)) |> 
+  filter(type == "NA_cs") |> 
   arrange(-pings) |> 
-  slice(1:30) |> 
-  knitr::kable(caption = "Unclassified IDs (first 30 by number of pings")
+  knitr::kable()
 
-# Split the data ---------------------------------------------------------------
-# The data is split up depending on if they are "stationary" and non-vessel type
-#  of signal or if they are potential canditate for a proper vessel
-stk <-
-  stk |>
-  mutate(
-    drop =
-      case_when(.loid == "fixed" & .glid == "fixed" ~ TRUE,
-                .glid %in% c("fixed", "hafro", "kvi", "net", "unknown", "mmsi_other") ~ TRUE,
-                mmsi_cat == "mmsi_other" ~ TRUE,
-                .loid == "mmsi_other" ~ TRUE,
-                .glid == "mssi_other" ~ TRUE,
-                .default = FALSE))
-
-drop <- stk |> filter(drop) |> select(-mmsi_cat)
-
-
-keep <-
-  stk |> filter(!drop) |>
-  select(-drop, -mmsi_cat) |>
-  mutate(vid =
-           case_when(
-             .glid == "vid" ~ glid,
-             .loid == "vid" ~ loid,
-             .default = NA),
-         vid = as.integer(vid),
-         mmsi =
-           case_when(
-             .glid == "mmsi" ~ glid,
-             .loid == "mmsi" ~ loid,
-             .default = NA),
-         cs =
-           case_when(
-             .glid %in% c("cs", "cs2") ~ glid,
-             .loid %in% c("cs", "cs2") ~ loid,
-             .default = NA),
-         uid =
-           case_when(
-             .glid == "uid" ~ glid,
-             .loid == "uid" ~ loid,
-             .default = NA),
-  )
-
-## Export ----------------------------------------------------------------------
-#match |> nanoparquet::write_parquet("data/stk-isl-vessel-match.parquet")
-
-# MATCH ------------------------------------------------------------------------
-# Only create variables vid, cs and uid if
-#   * vessel is icelandic
-#   * vessel has mmsi
-CS <-
-  vessels |>
-  #filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
-  filter(!is.na(cs)) |>
-  filter(nchar(cs) %in% 4:7) |>
-  pull(cs) |>
-  unique()
-UID <-
-  vessels |>
-  #filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
-  filter(!is.na(uid)) |>
-  pull(uid) |>
-  unique()
-VID <-
-  vessels |>
-  #filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
-  filter(!is.na(vid)) |>
-  pull(vid) |>
-  as.character()
-MMSI <-
-  vessels |>
-  #filter(flag == "ISL", source == "ISL", !is.na(mmsi)) |>
-  filter(!is.na(vid)) |>
-  pull(mmsi) |>
-  as.character()
-keep <-
-  stk |>
-  filter(!drop) |>
-  select(-drop, -mmsi_cat) |>
-  mutate(vid =
-           case_when(
-             .glid == "vid" & glid %in% VID ~ glid,
-             .loid == "vid" & loid %in% VID ~ loid,
-             .default = NA),
-         vid = as.integer(vid),
-         mmsi =
-           case_when(
-             .glid == "mmsi" & glid %in% MMSI ~ glid,
-             .loid == "mmsi" & loid %in% MMSI ~ loid,
-             .default = NA),
-         cs =
-           case_when(
-             .glid %in% c("cs", "cs2") & glid %in% CS ~ glid,
-             .loid %in% c("cs", "cs2") & loid %in% CS ~ loid,
-             .default = NA),
-         uid =
-           case_when(
-             .glid == "uid" & glid %in% UID ~ glid,
-             .loid == "uid" & loid %in% UID ~ loid,
-             .default = NA),
-  )
-
-vessels.is <-
-  vessels |>
-  #filter(!is.na(vid), !is.na(mmsi), source == "ISL", flag == "ISL") |>
-  select(vid, yh1, yh2, mmsi, cs, uid, imo, vessel, mmsi_t1:note_fate)
-
-keep.is <-
-  keep |>
-  filter(!is.na(vid) | !is.na(mmsi) | !is.na(cs) | !is.na(uid)) |>
-  filter(pings > 144)  # pings at minimum equivalent 1 day (assuming dt is 10 minutes)
-keep.is |> lh()
-
-## Match vid-vid ---------------------------------------------------------------
-match.vid.vid <-
-  keep.is |>
-  filter(.loid == "vid", .glid == "vid") |>
-  select(mid:.glid, vid) |>
-  inner_join(vessels.is) |>
-  mutate(match = "vid.vid", .before = mid)
-keep.is <- keep.is |> filter(!mid %in% match.vid.vid$mid)
-
-## match vid-cs ----------------------------------------------------------------
-keep.is |> lh()
-match.vid.cs <-
-  keep.is |>
-  filter(.loid == "vid", .glid == "cs") |>
-  select(mid:.glid, vid, cs) |>
-  inner_join(vessels.is |> filter(!is.na(cs))) |>
-  mutate(match = "vid.cs", .before = mid)
-keep.is <- keep.is |> filter(!mid %in% match.vid.cs$mid)
-
-## match uid-cs ----------------------------------------------------------------
-keep.is |> lh()
-match.uid.cs <-
-  keep.is |>
-  filter(.loid == "uid", .glid == "cs") |>
-  select(mid:.glid, uid, cs) |>
-  inner_join(vessels.is |> filter(!is.na(uid), !is.na(cs))) |>
-  mutate(match = "uid.cs", .before = mid)
-keep.is <- keep.is |> filter(!mid %in% match.uid.cs$mid)
-
-## match NA-mmsi ---------------------------------------------------------------
-keep.is |> lh()
-match.NA.mmsi <-
-  keep.is |>
-  filter(is.na(.loid), .glid == "mmsi") |>
-  select(mid:.glid, mmsi) |>
-  inner_join(vessels.is) |>
-  mutate(match = "NA.mmsi", .before = mid)
-keep.is <- keep.is |> filter(!mid %in% match.NA.mmsi$mid)
-
-## match NA-vid ----------------------------------------------------------------
-keep.is |> lh()
-# Things are getting more dubious
-match.NA.vid <-
-  keep.is |>
-  filter(is.na(.loid), .glid == "vid") |>
-  select(mid:.glid, vid) |>
-  inner_join(vessels.is,
-             by = join_by(vid))
-keep.is <- keep.is |> filter(!mid %in% match.NA.vid$mid)
-
-## match NA-cs -----------------------------------------------------------------
-keep.is |> lh()
-match.NA.cs <-
-  keep.is |>
-  filter(is.na(.loid), .glid == "cs") |>
-  filter(!is.na(cs)) |>
-  select(mid:.glid, cs) |>
-  inner_join(vessels.is |> filter(!is.na(cs)),
-             by = join_by(cs))
-keep.is <- keep.is |> filter(!mid %in% match.NA.cs$mid)
-
-match <-
-  bind_rows(
-    match.vid.vid |> mutate(match = "vid.vid", .before = mid),
-    match.vid.cs  |> mutate(match = "vid.cs", .before = mid),
-    match.uid.cs  |> mutate(match = "uid.cs", .before = mid),
-    match.NA.mmsi |> mutate(match = "NA.mmsi", .before = mid),
-    match.NA.vid  |> mutate(match = "NA.vid", .before = mid),
-    match.NA.cs   |> mutate(match = "NA.cs", .before = mid)
-  )
-
-keep.is.store <- keep.is
-
-
-# these are the remainders of glid-cs, loid can be different cats
-#  Note here we first exclude vid already matched
-match.XX.cs <-
-  keep.is |>
-  filter(.glid == "cs") |>
-  filter(!is.na(cs)) |>
-  select(mid:.glid, cs) |>
-  inner_join(vessels.is |> filter(!is.na(cs)) |> filter(!vid %in% match$vid),
-             by = join_by(cs))
-keep.is <- keep.is |> filter(!mid %in% match.XX.cs$mid)
-
-match <-
-  bind_rows(
-    match,
-    match.XX.cs   |> mutate(match = "XX.cs", .before = mid)
-  )
-
-
-# The remainder ----------------------------------------------------------------
-keep.is |> lh()
-## Try manual approach
-keep.is |> arrange(t2) |> knitr::kable()
-keep.is |>
-  pull(mid) ->
-  MID
-trail <-
-  stk_trail(con) |>
-  filter(mid %in% MID) |>
-  collect()
-trail |>
-  mutate(speed = ifelse(speed > 15, 15, speed)) |>
-  ggplot(aes(time, speed)) +
-  geom_point(size = 0.2, alpha = 0.1) +
-  facet_wrap(~ mid)
+ 

@@ -119,7 +119,7 @@ vessel_EU <-
          mmsi = as.character(mmsi))
 ## ASTD ------------------------------------------------------------------------
 vessel_ASTD <-
-  open_dataset("data/astd") |>
+  open_dataset("data/ais/astd") |>
   select(mmsi, imo = imonumber, vessel, flag, time) |>
   group_by(mmsi, imo, vessel, flag) |>
   summarise(time = max(time),

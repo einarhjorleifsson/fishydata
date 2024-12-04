@@ -163,6 +163,13 @@ vessel_ISL <-
   left_join(v) |> 
   select(vid, yh1, yh2, everything())
 
+# get rid of spaces in CS
+vessel_ISL <- 
+  vessel_ISL |> 
+  mutate(cs = str_trim(cs),
+         cs = str_remove(cs, " "))
+
+
 # Save -------------------------------------------------------------------------
 vessel_ISL |> 
   write_parquet("data/vessels/vessels_iceland.parquet")
@@ -171,7 +178,7 @@ vessel_ISL |>
 ## Trials at consolidating information ----------------------------------------
 #  * Think about using hierarchical approach in "beliefs". Like trust
 #    national records over others if there is a discrepancy
-vessel_registry |>
+vessel_ISL |>
   arrange(mmsi, desc(source)) |>
   filter(flag == "ISL",
          !is.na(mmsi)) |>
@@ -193,20 +200,20 @@ missing <-
           251513101, NA, NA,
           251068418, NA, NA)
 
-vessel_registry |> filter(mmsi %in% as.character(missing$mmsi))
+vessel_ISL |> filter(mmsi %in% as.character(missing$mmsi))
 
 ### ISL vessel - in landings?
 # check if vessels that have landed have mmsi
 vid_landings <-
   omar::ln_agf(con) |>
   mutate(year = year(date)) |>
-  filter(between(year, 2008, 2024)) |>
+  filter(between(year, 2007, 2024)) |>
   group_by(vid) |>
   summarise(n.landings = n_distinct(.id),
             last.landing = max(date),
             .groups = "drop") |>
   collect()
-vessel_registry |>
+vessel_ISL |>
   filter(source == "ISL") |>
   filter(!vid %in% 3700:4999) |>
   left_join(vid_landings) |>
