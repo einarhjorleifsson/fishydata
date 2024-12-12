@@ -7,6 +7,8 @@
 #  best have that in a separate script that starts by reading the output
 #  generated here.
 #
+# 2024-12-12
+# * More additions of mmsi
 # 2024-10-30:
 # * Add likely missing vessels
 # * Did corrections on existing mmsi
@@ -23,7 +25,7 @@
 #     mother mmsi over time
 #
 # OUTPUT -----------------------------------------------------------------------
-# /u3/haf/fishydata/ais/vessels/data/mmsi_ISL.parquet
+# /u3/haf/fishydata/ais/vessels/data/XXXXX
 
 library(tidyverse)
 library(arrow)
@@ -71,14 +73,30 @@ current <-
          cs = kallm,
          everything()) |>
   rename(note = athugasemdir)
-
+# even newer file
+tmpfile2 <- "data-raw/vessels/ISL/Númer - Skip - MMSI númeraröð_07112024.xlsx"
+current2 <-
+  readxl::read_excel(tmpfile2) |>
+  janitor::clean_names() |>
+  select(mmsi = mmsi_nr,
+         sknr,
+         cs = kallm,
+         everything()) |>
+  rename(note = athugasemdir)
+# combine the two
+current <- 
+  bind_rows(current2, current) |> 
+  # because order above, below means we retain the newest
+  distinct(mmsi, .keep_all = TRUE)
 current <-
   current |>
   # assume this is a typo:
   mutate(mmsi = ifelse(mmsi == "261860840", "251860840", mmsi)) |>
   # keyboarding gone amok
   mutate(skip = case_when(mmsi == "251860940" ~ str_sub(skip, 1, 11),
-                          .default = skip))
+                          .default = skip)) |> 
+  # belti og axlabönd
+  distinct(mmsi, .keep_all = TRUE)
 # TEST - is mmsi unique?
 current |>
   group_by(mmsi) |>
@@ -164,8 +182,6 @@ history |>
 d <-
   bind_rows(current |> mutate(source = 5, .after = nafn),
             history)
-
-
 d_rest <-
   d |>
   filter(!str_starts(mmsi, "251")) |>
@@ -187,17 +203,14 @@ d <-
 ## Additions -------------------------------------------------------------------
 # should possibly be done more upstream
 add <-
-  tribble(~mmsi, ~vid, ~cs, ~nafn, ~note,
-          "251066110", 84,   "TFQZ", "Kristbjörg", "manual add - marine traffic",
-          "251434110", 2855, "TFQG", "Hugur", "manual add - marine traffic",
-          #"251700001", 2905,     NA, "Eskey", "manual add - marine traffic - could be vid = 2905, but that also found under mmsi = 251849340",
-          "251857270", 3002, "TFGT", "Sif", "manual add - marine traffic")
+  tribble(~mmsi, ~sknr, ~cs, ~nafn, ~note,
+          "251066110", "84",   "TFQZ", "Kristbjörg", "manual add - marine traffic",
+          "251434110", "2855", "TFQG", "Hugur", "manual add - marine traffic",
+          #"251700001", "2905",     NA, "Eskey", "manual add - marine traffic - could be vid = 2905, but that also found under mmsi = 251849340",
+          "251857270", "3002", "TFGT", "Sif", "manual add - marine traffic")
 d <-
   bind_rows(d,
             add)
-
-
-
 d |>
   select(mmsi, sknr, cs, nafn, note, source) |>
   distinct(mmsi, sknr, .keep_all = TRUE) |>
@@ -447,7 +460,7 @@ data <-
 if(FALSE) {
   tmp_vid <- mmsi_takeovers$sknr |> as.integer()
   ais <-
-    open_dataset("/home/haf/einarhj/stasi/fishydata/data/ais_2024-05-27") |>
+    open_dataset("/home/haf/einarhj/stasi/fishydata_2024-11-09/data/ais_2024-05-27") |>
     filter(vid %in% tmp_vid,
            vms == "yes",
            ref == "lhg") |>
@@ -480,7 +493,7 @@ fs <-
   readxl::read_excel("data-raw/vessels/ISL/mmsi-iceland_fjarskiptastofa_2024-08-21.xlsx") |>
   janitor::clean_names()
 astd <-
-  open_dataset("data/astd") |>
+  open_dataset("data/ais/astd") |>
   filter(flag == "ISL") |>
   group_by(mmsi, vessel) |>
   summarise(pings = n(),
@@ -533,4 +546,15 @@ mt
 astd_missing |>
   left_join(mt)
 
+data |> 
+  filter(mmsi == "251857270")
+data |> 
+  filter(is.na(sknr)) |> 
+  filter(mmsi_cat == "vessel") |> 
+  knitr::kable()
+mt |> 
+  filter(!mmsi %in% data$mmsi) |> 
+  filter(flag == "Iceland")
+mt |> 
+  filter(str_starts(name, "S"))
 
