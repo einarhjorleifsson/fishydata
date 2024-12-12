@@ -47,7 +47,7 @@ mmsi_ISL |>
   ungroup() |>
   filter(n.vid > 1) |>
   arrange(mmsi, mmsi_t2) |>
-  knitr::kable(caption = "Same MMSI on more than one vessel. Created in: 00_DATASET_mmsi_ISL.R")
+  knitr::kable(caption = "Same MMSI on more than one vessel. Created in: 00_DATASET_vessels_iceland-mmsi.R")
 mmsi_ISL |>
   group_by(vid) |>
   mutate(n.mmsi = n_distinct(mmsi)) |>
@@ -174,6 +174,9 @@ vessel_ISL <-
 vessel_ISL |> 
   write_parquet("data/vessels/vessels_iceland.parquet")
 
+
+
+
 # Issues -----------------------------------------------------------------------
 ## Trials at consolidating information ----------------------------------------
 #  * Think about using hierarchical approach in "beliefs". Like trust
@@ -226,13 +229,15 @@ vessel_ISL |>
 ## Same MMSI, different IMO ----------------------------------------------------
 # This is surprisingly rare
 #  could try to run imo_check
-vessel_registry |>
+if(FALSE) {
+  vessel_registry |>
   filter(!is.na(mmsi)) |>
   arrange(flag, mmsi) |>
   group_by(mmsi) |>
   mutate(n.imo = n_distinct(imo, na.rm = TRUE)) |>
   filter(n.imo > 1) |>
   knitr::kable()
+}
 
 ## Check on consolidating ASTD with NOR ----------------------------------------
 # This will not work because the joining variable is vessel

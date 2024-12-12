@@ -219,7 +219,7 @@ d |>
   ungroup() |>
   filter(n > 1) |>
   arrange(mmsi, sknr) |>
-  knitr::kable(caption = "Duplicate MMSI - expect zero")
+  knitr::kable(caption = "Duplicate MMSI - expect zero (but are not)")
 
 ### Vessel with more than one MMSI ---------------------------------------------
 d |>
