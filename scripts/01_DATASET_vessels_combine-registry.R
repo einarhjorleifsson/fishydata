@@ -40,7 +40,25 @@ con <- connect_mar()
 vessel_ISL <- 
   nanoparquet::read_parquet("data/vessels/vessels_iceland.parquet")
 
-## FRO ------------------------------------------------------------------------
+## FRO -------------------------------------------------------------------------
+lh_remove_first_period <- function(x) {
+  x |> 
+    str_locate_all("\\.") |>  
+    map(as_tibble) |> 
+    bind_rows(.id = ".id") |> 
+    mutate(.id = as.numeric(.id)) |> 
+    group_by(.id) |> 
+    summarise(n = n(),
+              first = min(start)) |> 
+    mutate(x = x) |> 
+    mutate(x = case_when(n == 2 ~ paste0(str_sub(x, 1, first - 1),
+                                         str_sub(x, first + 1)),
+                         .default = x)) |> 
+    mutate(x = str_squish(x),
+           x = as.numeric(x)) |> 
+    arrange(.id) |> 
+    pull(x)
+}
 fil <- dir("data-raw/vessels/FRO", full.names = TRUE)
 vessel_FRO <-
   map_df(fil, read_csv, show_col_types = FALSE) |>
@@ -52,16 +70,32 @@ vessel_FRO <-
          source = "FRO")
 vessel_FRO <-
   vessel_FRO |>
-  select(mmsi,
+  select(.vid = skrasetingarnr,
+         mmsi,
          cs = kallimerki,
          imo = imo_nummar,
+         loa = longd_yviralt_loa,
+         gt = bruttotons,
+         kw = motororka,
+         #kw2,
          uid = havnakenningarnr,
          vessel = skipanavn,
          flag,
-         source,
-         .id = skrasetingarnr) |>
-  mutate(imo = as.integer(imo))
-## NOR ------------------------------------------------------------------------
+         source) |>
+  mutate(imo = as.integer(imo),
+         loa = str_remove(loa, "metrar"),
+         loa = str_trim(loa),
+         loa = lh_remove_first_period(loa),
+         loa = as.numeric(loa),
+         gt = str_trim(gt),
+         gt = lh_remove_first_period(gt),
+         gt = as.numeric(gt),
+         kw = str_remove(kw, "KW"),
+         kw = str_trim(kw),
+         kw = lh_remove_first_period(kw),
+         kw = as.numeric(kw))
+## NOR -------------------------------------------------------------------------
+# Biggest problem here is that there is no mmsi-data
 fil <- "data-raw/vessels/NOR/norway_vessel-registry.xlsx"
 sheet <- excel_sheets(fil)
 sheet <- sheet[-c(1:2)]
@@ -78,21 +112,25 @@ vessel_NOR <-
   mutate(year = as.integer(year),
          mmsi = NA_character_,
          imo = NA_integer_,
+         gt = NA_real_,
          flag = "NOR",
          source = "NOR")
 vessel_NOR <-
   vessel_NOR |>
-  select(mmsi,
+  select(.vid = fartoy_id,
+         mmsi,
          cs = radiokallesignal,
          imo,
+         loa = storste_lengde,
+         gt,
+         kw = motorkraft,
          uid = registreringsmerke,   # this is guesswork
          vessel = fartoynavn,
          flag,
          source,
-         .id = fartoy_id,
          year) |>
   arrange(-year) |>
-  distinct(.id, .keep_all = TRUE) |>
+  distinct(.vid, .keep_all = TRUE) |>
   select(-year)
 ## EU -------------------------------------------------------------------------
 vessel_EU <-
@@ -105,41 +143,56 @@ vessel_EU <-
   # last record?
   arrange(cfr, desc(event_end_date)) |>
   distinct(cfr, .keep_all = TRUE) |>
-  select(mmsi,
+  select(.vid = cfr,
+         mmsi,
          cs = ircs,
          imo = uvi,      # universal vessel identifier
+         loa,
+         gt = tonnage_gt,
+         kw = power_of_main_engine,
+         kw2 = power_of_auxiliary_engine, # Is this not in the Faero registry
          uid = external_marking,
          vessel = name_of_vessel,
          flag = country_of_registration,
-         source,
-         .id = cfr) |>
+         source) |>
   mutate(cs = str_trim(cs),
          uid = str_trim(uid),
          mmsi = str_trim(mmsi),
-         mmsi = as.character(mmsi))
+         mmsi = as.character(mmsi)) |> 
+  distinct(.vid, mmsi, .keep_all = TRUE) # Not many dual mmsi vessels
 ## ASTD ------------------------------------------------------------------------
 vessel_ASTD <-
   open_dataset("data/ais/astd") |>
   select(mmsi, imo = imonumber, vessel, flag, time) |>
   group_by(mmsi, imo, vessel, flag) |>
-  summarise(time = max(time),
+  summarise(pings = n(),
+            mmsi_t1 = min(time),
+            mmsi_t2 = max(time),
             .groups = "drop") |>
   collect()
+
 vessel_ASTD <-
   vessel_ASTD |>
   filter(!is.na(flag),
+         pings >= 100,
          nchar(mmsi) == 9) |>
+  arrange(mmsi, mmsi_t2) |> 
   group_by(mmsi) |>
   fill(imo, vessel, .direction = "downup") |>
   ungroup() |>
+  group_by(mmsi, imo, vessel, flag) |> 
+  summarise(pings = sum(pings),
+            mmsi_t1 = min(mmsi_t1),
+            mmsi_t2 = max(mmsi_t2)) |> 
+  ungroup() |> 
   # keep the last information
-  arrange(mmsi, desc(time)) |>
+  arrange(mmsi, desc(mmsi_t2)) |>
   distinct(mmsi, .keep_all = TRUE) |>
   mutate(mmsi = as.character(mmsi),
          cs = NA_character_,
          uid = NA_character_,
          source = "ASTD") |>
-  select(mmsi, imo, cs, uid, vessel, flag, source)
+  select(mmsi, imo, cs, uid, vessel, mmsi_t1, mmsi_t2, flag, source, pings)
 ## GFW -------------------------------------------------------------------------
 # This does not add much to the consolidation. Suggest not to include it
 #  except possibly as a flag for .gfw_class as a variable in the compiled
@@ -152,6 +205,9 @@ vessel_GFW <-
          source,
          .gfw_class = vessel_class_gfw) |>
   mutate(mmsi = as.character(mmsi))
+
+
+
 
 ## Export ---------------------------------------------------------------------
 vessel_registry <-

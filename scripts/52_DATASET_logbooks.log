@@ -1,4 +1,4 @@
-[1] "2024-12-04 07:00:01 GMT"
+[1] "2024-12-12 07:00:01 GMT"
 Some features are not enabled in this build of Arrow. Run `arrow_info()` for more information.
 
 Attaching package: ‘arrow’
@@ -18,7 +18,7 @@ The following object is masked from ‘package:tictoc’:
 ✔ dplyr     1.1.4     ✔ readr     2.1.5
 ✔ forcats   1.0.0     ✔ stringr   1.5.1
 ✔ ggplot2   3.5.1     ✔ tibble    3.2.1
-✔ lubridate 1.9.3     ✔ tidyr     1.3.1
+✔ lubridate 1.9.4     ✔ tidyr     1.3.1
 ✔ purrr     1.0.2     
 ── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
 ✖ dplyr::between()      masks data.table::between()
@@ -69,9 +69,9 @@ Table: Number of records in new database that are also in the old database.
 |source                                        |     no|   yes|
 |:---------------------------------------------|------:|-----:|
 |APP TÖFLUR                                    |     19|    NA|
-|Fishtech raun                                 |    388|    NA|
+|Fishtech raun                                 |    391|    NA|
 |Fishtech raun - GAFL AUTO                     |     14|    NA|
-|Fontos raun                                   |   3387|    NA|
+|Fontos raun                                   |   3391|    NA|
 |Fontos raun - GAFL AUTO                       |    192|    NA|
 |FRA GAFLI - AUTO                              |     12|    NA|
 |FRA GAFLI - AUTO - Skrifstofa VES             |      7|    NA|
@@ -80,7 +80,7 @@ Table: Number of records in new database that are also in the old database.
 |GAFL BÓK UPPFÆRÐ FRÁ TAKTIKAL                 |      2|    NA|
 |Jóhann Gíslason raun                          |   2389|     7|
 |Jóhann Gíslason raun - GAFL AUTO              |      5|    NA|
-|Marína raun                                   |   9228|    NA|
+|Marína raun                                   |   9229|    NA|
 |Marína raun - GAFL AUTO                       |    241|    NA|
 |Marína raun - Skrifstofa VES                  |      4|    NA|
 |PAPPÍR                                        |    224|  2787|
@@ -90,17 +90,17 @@ Table: Number of records in new database that are also in the old database.
 |TRACKWELL                                     |   1856| 93661|
 |TRACKWELL - GAFL AUTO                         |     NA|   113|
 |TRACKWELL BAEKUR                              |     27| 28810|
-|Trackwell raun                                | 223871|   377|
-|Trackwell raun - GAFL AUTO                    |   3592|    NA|
+|Trackwell raun                                | 225551|   377|
+|Trackwell raun - GAFL AUTO                    |   3599|    NA|
 |Trackwell raun - Skrifstofa VES               |    128|    NA|
 |Trackwell raun - Skrifstofa VES - GAFL AUTO   |     77|    NA|
 # A tibble: 25 × 4
    source                            ghost mirror    ok
    <chr>                             <int>  <int> <int>
  1 APP TÖFLUR                           NA     19    NA
- 2 Fishtech raun                        NA    388    NA
+ 2 Fishtech raun                        NA    391    NA
  3 Fishtech raun - GAFL AUTO            NA     14    NA
- 4 Fontos raun                           1   3279   107
+ 4 Fontos raun                           1   3283   107
  5 Fontos raun - GAFL AUTO              NA    192    NA
  6 FRA GAFLI - AUTO                     NA     NA    12
  7 FRA GAFLI - AUTO - Skrifstofa VES    NA     NA     7
@@ -109,7 +109,7 @@ Table: Number of records in new database that are also in the old database.
 10 GAFL BÓK UPPFÆRÐ FRÁ TAKTIKAL        NA     NA     2
 # ℹ 15 more rows
 Joining with `by = join_by(gid)`
-[1] "Records in base: 275425 Records in auxillary: 250791"
+[1] "Records in base: 277120 Records in auxillary: 252486"
 
 
 Table: Source of effort orphan files
@@ -117,9 +117,9 @@ Table: Source of effort orphan files
 |source                                        |     no|   yes|
 |:---------------------------------------------|------:|-----:|
 |APP TÖFLUR                                    |     19|    NA|
-|Fishtech raun                                 |    388|    NA|
+|Fishtech raun                                 |    391|    NA|
 |Fishtech raun - GAFL AUTO                     |     14|    NA|
-|Fontos raun                                   |   3387|    NA|
+|Fontos raun                                   |   3391|    NA|
 |Fontos raun - GAFL AUTO                       |    192|    NA|
 |FRA GAFLI - AUTO                              |     NA|    12|
 |FRA GAFLI - AUTO - Skrifstofa VES             |     NA|     7|
@@ -128,7 +128,7 @@ Table: Source of effort orphan files
 |GAFL BÓK UPPFÆRÐ FRÁ TAKTIKAL                 |      2|    NA|
 |Jóhann Gíslason raun                          |   2389|    NA|
 |Jóhann Gíslason raun - GAFL AUTO              |      5|    NA|
-|Marína raun                                   |   9228|    NA|
+|Marína raun                                   |   9229|    NA|
 |Marína raun - GAFL AUTO                       |    241|    NA|
 |Marína raun - Skrifstofa VES                  |      4|    NA|
 |PAPPÍR                                        |    224|    NA|
@@ -137,8 +137,8 @@ Table: Source of effort orphan files
 |STOKKUR                                       |     NA| 22759|
 |TRACKWELL                                     |     NA|  1856|
 |TRACKWELL BAEKUR                              |     27|    NA|
-|Trackwell raun                                | 223871|    NA|
-|Trackwell raun - GAFL AUTO                    |   3592|    NA|
+|Trackwell raun                                | 225551|    NA|
+|Trackwell raun - GAFL AUTO                    |   3599|    NA|
 |Trackwell raun - Skrifstofa VES               |    128|    NA|
 |Trackwell raun - Skrifstofa VES - GAFL AUTO   |     77|    NA|
 
@@ -159,7 +159,7 @@ Table: Gear list of effort orphan files
 # A tibble: 2 × 2
   .sid.in.old      n
   <chr>        <int>
-1 ok          275037
+1 ok          276732
 2 screeeeeeam    388
 # A tibble: 388 × 3
     .sid base  .sid.in.new
@@ -175,16 +175,16 @@ Table: Gear list of effort orphan files
  9  8288 old   screeeeeeam
 10  8289 old   screeeeeeam
 # ℹ 378 more rows
-[1] "Number of logbook records with no catch: 13696 (0.4%)"
-[1] 3327549 3327498
+[1] "Number of logbook records with no catch: 13714 (0.4%)"
+[1] 3329244 3329193
 
 
 Table: Missing AGF landings id
 
 |has.lid |       n|         p|
 |:-------|-------:|---------:|
-|FALSE   | 1222605| 0.3674247|
-|TRUE    | 2104893| 0.6325753|
+|FALSE   | 1222605| 0.3672376|
+|TRUE    | 2106588| 0.6327624|
 
 
 Table: Missing AGF landings id by year (high numbers prior to 2008 expected)
@@ -220,19 +220,19 @@ Table: Difference in matched logbook and landings dates
 
 | dt|       n|     p|     pc|
 |--:|-------:|-----:|------:|
-| -5|    9528|  0.46|   0.46|
-| -4|    1297|  0.06|   0.53|
-| -3|    3052|  0.15|   0.67|
-| -2|    9023|  0.44|   1.11|
-| -1|   50103|  2.43|   3.54|
-|  0| 1933405| 93.81|  97.35|
-|  1|   33151|  1.61|  98.96|
-|  2|    6156|  0.30|  99.26|
-|  3|    3098|  0.15|  99.41|
-|  4|    1687|  0.08|  99.49|
-|  5|   10059|  0.49|  99.98|
+| -5|    9516|  0.46|   0.46|
+| -4|    1297|  0.06|   0.52|
+| -3|    3057|  0.15|   0.67|
+| -2|    9038|  0.44|   1.11|
+| -1|   50166|  2.43|   3.54|
+|  0| 1935184| 93.82|  97.36|
+|  1|   33123|  1.61|  98.97|
+|  2|    6173|  0.30|  99.27|
+|  3|    3103|  0.15|  99.42|
+|  4|    1634|  0.08|  99.50|
+|  5|    9963|  0.48|  99.98|
 | NA|     376|  0.02| 100.00|
-[1] 3327498 3327498
+[1] 3329193 3329193
 
 
 Table: Missing landings id
@@ -240,27 +240,27 @@ Table: Missing landings id
 |has.lid |       n|         p|
 |:-------|-------:|---------:|
 |FALSE   |     475| 0.0001427|
-|TRUE    | 3327023| 0.9998573|
+|TRUE    | 3328718| 0.9998573|
 
 
 Table: Difference in matched logbook and landings dates
 
 | dt|       n|     p|     pc|
 |--:|-------:|-----:|------:|
-| -5|    9676|  0.29|   0.29|
+| -5|    9664|  0.29|   0.29|
 | -4|    2952|  0.09|   0.38|
-| -3|    6358|  0.19|   0.57|
-| -2|   18086|  0.54|   1.11|
-| -1|   94060|  2.83|   3.94|
-|  0| 3057698| 91.89|  95.83|
-|  1|   95695|  2.88|  98.71|
-|  2|   17698|  0.53|  99.24|
-|  3|    7423|  0.22|  99.46|
-|  4|    5837|  0.18|  99.64|
-|  5|   11540|  0.35|  99.99|
+| -3|    6362|  0.19|   0.57|
+| -2|   18101|  0.54|   1.11|
+| -1|   94122|  2.83|   3.94|
+|  0| 3059431| 91.90|  95.84|
+|  1|   95667|  2.87|  98.71|
+|  2|   17744|  0.53|  99.24|
+|  3|    7428|  0.22|  99.47|
+|  4|    5783|  0.17|  99.64|
+|  5|   11464|  0.34|  99.99|
 | NA|     475|  0.01| 100.00|
 `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
-522.673 sec elapsed
+541.553 sec elapsed
 ─ Session info ───────────────────────────────────────────────────────────────
  setting  value
  version  R version 4.4.1 (2024-06-14)
@@ -271,20 +271,20 @@ Table: Difference in matched logbook and landings dates
  collate  is_IS.UTF-8
  ctype    is_IS.UTF-8
  tz       Atlantic/Reykjavik
- date     2024-12-04
+ date     2024-12-12
  pandoc   2.9.2.1 @ /usr/bin/pandoc
 
 ─ Packages ───────────────────────────────────────────────────────────────────
  package     * version    date (UTC) lib source
- arrow       * 17.0.0.1   2024-08-21 [1] CRAN (R 4.4.1)
+ arrow       * 18.1.0     2024-12-05 [1] CRAN (R 4.4.1)
  assertthat    0.2.1      2019-03-21 [1] CRAN (R 4.4.1)
- bit           4.5.0      2024-09-20 [1] CRAN (R 4.4.1)
+ bit           4.5.0.1    2024-12-03 [1] CRAN (R 4.4.1)
  bit64         4.5.2      2024-09-22 [1] CRAN (R 4.4.1)
  blob          1.2.4      2023-03-17 [1] CRAN (R 4.4.1)
  cachem        1.1.0      2024-05-16 [1] CRAN (R 4.4.1)
  cli           3.6.3      2024-06-21 [1] CRAN (R 4.4.1)
  colorspace    2.1-1      2024-07-26 [1] CRAN (R 4.4.1)
- data.table  * 1.16.2     2024-10-10 [1] CRAN (R 4.4.1)
+ data.table  * 1.16.4     2024-12-06 [1] CRAN (R 4.4.1)
  DBI           1.2.3      2024-06-02 [1] CRAN (R 4.4.1)
  dbplyr        2.5.0      2024-03-19 [1] CRAN (R 4.4.1)
  devtools      2.4.5      2022-10-11 [1] CRAN (R 4.4.1)
@@ -309,7 +309,7 @@ Table: Difference in matched logbook and landings dates
  labeling      0.4.3      2023-08-29 [1] CRAN (R 4.4.1)
  later         1.4.1      2024-11-27 [1] CRAN (R 4.4.1)
  lifecycle     1.0.4      2023-11-07 [1] CRAN (R 4.4.1)
- lubridate   * 1.9.3      2023-09-27 [1] CRAN (R 4.4.1)
+ lubridate   * 1.9.4      2024-12-08 [1] CRAN (R 4.4.1)
  magrittr      2.0.3      2022-03-30 [1] CRAN (R 4.4.1)
  mar           2024-01-23 2024-10-31 [1] xgit (https://gitlab.hafogvatn.is/dev/mar.git@b8c1d3d)
  memoise       2.0.1      2021-11-26 [1] CRAN (R 4.4.1)
@@ -356,4 +356,4 @@ Table: Difference in matched logbook and landings dates
 ──────────────────────────────────────────────────────────────────────────────
 > proc.time()
    user  system elapsed 
-342.461   9.392 523.515 
+366.566  10.090 542.528 

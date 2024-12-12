@@ -5,6 +5,8 @@
 # run this as:
 #  nohup R < scripts/52_DATASET_logbooks.R --vanilla > scripts/log/52_DATASET_logbooks_2024-11-22.log &
 
+## 2024-12-05
+# * add grasleppa
 ## 2024-05-30
 # * incorporated 02-2_logbooks-landings-coupling.R into this script
 ## 2024-05-29

@@ -70,8 +70,12 @@ cs.prefix <-
   # critical, lot of mess with TF in stk localid and globalid
   filter(cs_prefix != "TF")
 ## vessel registry
+#  should really add skemmtibatar
 vessels <-
-  nanoparquet::read_parquet("data/vessels/vessels_iceland.parquet")
+  nanoparquet::read_parquet("data/vessels/vessels_iceland.parquet") |> 
+  # Only vessels that have mmsi
+  filter(!is.na(mmsi)) |> 
+  mutate(vidc = as.character(vid))
 
 ## Known (via ad hoc) non-vessel localid or globalid ---------------------------
 fixed <-
@@ -165,8 +169,6 @@ UID <-
   unique()
 VID <-
   vessels |>
-  # NOTE: only vid's that have mmsi
-  #filter(!is.na(mmsi)) |> 
   filter(source == "ISL", !is.na(vid)) |>
   pull(vid) |>
   as.character()
@@ -240,19 +242,21 @@ stk2 <-
 stk2 |> count(type) |> knitr::kable()
 
 # Orphan -----------------------------------------------------------------------
-stk2 |> 
-  # temporary check what mmsi type - used in the drop below
-  mutate(mmsi = case_when(.loid == "mmsi" ~ loid,
-                          .glid == "mmsi" ~ glid,
-                          .default = NA),
-         mmsi_cat = case_when(!is.na(mmsi) ~ rb_mmsi_category(mmsi),
-                              .default = NA),
-         mmsi_cat = case_when(!is.na(mmsi_cat) & mmsi_cat == "vessel" ~ mmsi_cat,
-                              !is.na(mmsi_cat) & mmsi_cat != "vessel" ~ "mmsi_other",
-                              .default = NA),
-         mmsi_mid = case_when(mmsi_cat == "vessel" ~ as.numeric(str_sub(mmsi, 1, 3)),
-                              .default = NA)) |>
-  select(-mmsi)
+if(FALSE) {
+  stk2 |> 
+    # temporary check what mmsi type - used in the drop below
+    mutate(mmsi = case_when(.loid == "mmsi" ~ loid,
+                            .glid == "mmsi" ~ glid,
+                            .default = NA),
+           mmsi_cat = case_when(!is.na(mmsi) ~ rb_mmsi_category(mmsi),
+                                .default = NA),
+           mmsi_cat = case_when(!is.na(mmsi_cat) & mmsi_cat == "vessel" ~ mmsi_cat,
+                                !is.na(mmsi_cat) & mmsi_cat != "vessel" ~ "mmsi_other",
+                                .default = NA),
+           mmsi_mid = case_when(mmsi_cat == "vessel" ~ as.numeric(str_sub(mmsi, 1, 3)),
+                                .default = NA)) |>
+    select(-mmsi)
+}
 
 # Older matches ----------------------------------------------------------------
 older <- 
@@ -260,7 +264,7 @@ older <-
   collect() |> 
   select(mid:vid, no) |> 
   # add loid and glid where missing
-  left_join(stk_summary |> select(mid, loid_tmp = loid, glid_tmp = glid, d1, d2),
+  left_join(stk |> select(mid, loid_tmp = loid, glid_tmp = glid, d1, d2),
             by = join_by(mid)) |> 
   mutate(loid = ifelse(is.na(loid), loid_tmp, loid),
          glid = ifelse(is.na(glid), glid_tmp, glid)) |> 
@@ -312,11 +316,12 @@ stk2 <-
 stk2 <- 
   stk2 |> 
   mutate(.vid = case_when(type == "vid_vid" & loid == glid ~ as.numeric(glid),
-                         .default = NA)) |> 
+                          .default = NA)) |> 
   left_join(vessels |> select(.vid = vid),
             by = join_by(.vid)) |> 
   rename(vid_new = .vid)
 ## vid_cs match ----------------------------------------------------------------
+# NOTE: ONLY USE vessels where mmsi is defined
 stk2 <- 
   stk2 |> 
   mutate(.vid = case_when(type == "vid_cs" ~ as.numeric(loid),
@@ -328,7 +333,8 @@ stk2 <-
   mutate(vid_new = case_when(!is.na(vid_new) ~ vid_new,
                              .vid != -9999 ~ .vid,
                              .default = vid_new)) |> 
-  select(-c(.vid, .cs)) 
+  select(-c(.vid, .cs))
+
 ## NA_mmsi match: Icelandic vessels only ---------------------------------------
 stk2 <- 
   stk2 |> 
@@ -353,17 +359,183 @@ stk2 <-
                              !is.na(.vid) ~ .vid,
                              .default = vid_new)) |> 
   select(-c(.cs, .uid, .vid))
+## NA_vid match ----------------------------------------------------------------
+stk2 <-
+  stk2 |> 
+  mutate(.vid = case_when(type == "NA_vid" ~ glid,
+                          .default = NA)) |> 
+  left_join(vessels |> select(.vid = vidc),
+            by = join_by(.vid)) |> 
+  mutate(vid_new = case_when(!is.na(vid_new) ~ vid_new,
+                             !is.na(.vid) ~ as.numeric(.vid),
+                             .default = vid_new)) |> 
+  select(-c(.vid))
+
 
 # I AM HERE --------------------------------------------------------------------
+stk3 <- 
+  stk2 |> 
+  mutate(vid = case_when(!is.na(vid_older) & !is.na(vid_new) & vid_older == vid_new ~ vid_older,
+                         vid_older != vid_new & !is.na(no) ~ vid_older,
+                         # vid_new superseeds vid_older
+                         !is.na(vid_new) ~ vid_new,
+                         !is.na(vid_older) ~ vid_older,
+                         .default = NA))
 
-stk2 |> 
-  filter(is.na(vid_older) & is.na(vid_new)) |> 
-  count(type) |> 
-  knitr::kable()
-stk2 |> 
-  filter(is.na(vid_older) & is.na(vid_new)) |> 
-  filter(type == "NA_cs") |> 
+
+
+stk4 <- 
+  stk3 |>
+  mutate(
+    vid = 
+      case_when(is.na(vid) & type == "NA_vid" & glid %in%  vessels$vidc ~ as.numeric(glid),
+                .default = vid))
+
+# Do later
+stk4 <- 
+  stk4 |> 
+  left_join(vessels |> 
+              select(vid, mmsi, mmsi_t1, mmsi_t2),
+            by = join_by(vid))
+stk4 |> 
+  write_parquet("data/vessels/stk_vessel_match.parquet")
+
+# TROUBLES ---------------------------------------------------------------------
+v <- read_parquet("data/vessels/vessels_iceland.parquet")
+
+# troubles, vid with no mmsi
+stk4 |> 
+  filter(!is.na(vid)) |> 
+  filter(is.na(mmsi)) |> 
+  filter(!is.na(pings)) |> 
   arrange(-pings) |> 
-  knitr::kable()
+  filter(!vid %in% 3700:4999) -> 
+  tmp
+tmp |> 
+  filter(pings > 10) |> 
+  arrange(d2) |> 
+  knitr::kable(caption = "Vessels with no MMSI")
+lnd <- 
+  read_parquet("data/landings/lods_stations.parquet") |> 
+  filter(between(datel, ymd("2007-06-01"), ymd("2024-12-31"))) |> 
+  group_by(vid) |> 
+  reframe(n = n(),
+          d1 = min(datel),
+          d2 = max(datel))
+lnd |> 
+  left_join(stk3 |> select(mid, vid)) |> 
+  mutate(has.mid = !is.na(mid)) |> 
+  filter(!has.mid) |> 
+  arrange(-n) |> 
+  # Note: Only join if vid in registry
+  inner_join(vessels |> select(vid:vessel)) |>  
+  arrange(vid) |> 
+  knitr::kable(caption = "Landings vessels with no stk: to hunt down")
 
- 
+# Table: Landings vessels with no stk: to hunt down
+#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
+#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
+#   | 1599| 165|2010-03-16 |2015-08-06 |    |FALSE   | 1982| 2020|251292840 |     |        |BA021 |ÖNGULL             |
+#   | 2730| 345|2007-06-01 |2024-12-02 |    |FALSE   | 2006| 2013|251536000 |TFQF |9167928 |VE292 |GULLBERG           |
+#   | 2917|  88|2017-06-16 |2024-11-19 |    |FALSE   | 2017| 2021|251718000 |TFYY |9774642 |ÓF001 |SÓLBERG            |
+#   | 3018|  14|2024-08-20 |2024-12-06 |    |FALSE   |     |     |251534000 |TFBY |9951628 |ÁR067 |SIGURBJÖRG         |
+#   | 3027|   2|2024-11-26 |2024-12-04 |    |FALSE   |     |     |251212000 |TFAU |9967732 |GK011 |HULDA BJÖRNSDÓTTIR |
+
+
+# HUNTDOWN ---------------------------------------------------------------------
+lh_speed <- function(MID) {
+  stk_trail(con) |> 
+    filter(mid == MID) |> 
+    select(time, speed) |> 
+    collect() |> 
+    mutate(speed = ifelse(speed > 15, 15, speed)) |> 
+    ggplot(aes(time, speed)) + geom_point(size = 0.1)
+}
+# Get all vessels, not filtered by availability of mmsi
+v <- read_parquet("data/vessels/vessels_iceland.parquet")
+
+## 1599 ------------------------------------------------------------------------
+#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
+#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
+#   | 1599| 165|2010-03-16 |2015-08-06 |    |FALSE   | 1982| 2020|251292840 |     |        |BA021 |ÖNGULL             |
+v |> filter(vid == 1599)
+v |> filter(mmsi == 251292840)
+v |> filter(uid == "BA021")
+stk4 |> filter(vid %in% c(2658, 6462))
+lh_speed(101719)
+lh_speed(103022)
+stk4 |> filter(loid %in% c("BA21", "BA021") | loid %in% c("BA21", "BA021"))
+
+## 2730 ------------------------------------------------------------------------
+#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
+#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
+#   | 2730| 345|2007-06-01 |2024-12-02 |    |FALSE   | 2006| 2013|251536000 |TFQF |9167928 |VE292 |GULLBERG           |
+v |> filter(cs == "TFQF")
+stk4 |> filter(vid == 1401)
+lh_speed(101119)   # A dual vessel??
+stk_trail(con) |> 
+  mutate(year = year(time)) |> 
+  filter(mid == 101119, year %in% c(2020, 2024)) |> 
+  collect() |> 
+  arrange(-speed) |> 
+  ggplot() + geom_point(aes(lon, lat, colour = speed), size = 0.1) + facet_wrap(~ year) +
+  scale_colour_viridis_c()
+stk_trail(con) |> 
+  mutate(year = year(time)) |> 
+  filter(mid == 101119, year %in% c(2020)) |> 
+  collect() |> 
+  arrange(-speed) |>
+  filter(between(lat, 66, 68)) |> 
+  ggplot() + geom_point(aes(lon, lat, colour = speed), size = 0.1) + facet_wrap(~ year) +
+  scale_colour_viridis_c()
+# so switch from a longliner to a pelagic vessel
+stk_trail(con) |> 
+  filter(mid == 101119, year(time) == 2022) |> 
+  ggplot(aes(time, speed)) + geom_point(size = 0.01)
+# the switch occurs 2022-03-31
+
+
+
+## 2917 ------------------------------------------------------------------------
+#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
+#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
+#   | 2917|  88|2017-06-16 |2024-11-19 |    |FALSE   | 2017| 2021|251718000 |TFYY |9774642 |ÓF001 |SÓLBERG            |
+v |> filter(cs == "TFYY")
+stk4 |> filter(vid == 2061)
+lh_speed(102284)
+stk4 |> filter(mid == 102284)  # The newer vessel is missing
+stk4 <- 
+  stk4 |> 
+  add_row(stk4 |> filter(mid == 102284) |> 
+            mutate(vid = 2917,
+                   d1 = ymd("2015-01-01"),
+                   # Check what to do here
+                   d2 = ymd("2024-12-31")))
+
+## 3018 ------------------------------------------------------------------------
+#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
+#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
+#   | 3018|  14|2024-08-20 |2024-12-06 |    |FALSE   |     |     |251534000 |TFBY |9951628 |ÁR067 |SIGURBJÖRG         |
+v |> filter(cs == "TFBY")
+stk4 |> filter(vid == 1351)
+lh_speed(101196)
+#stk4 |> 
+#  add_row(stk4 |> filter(mid == 101196) |> 
+#            mutate(vid == 3018,
+
+## 3027 ------------------------------------------------------------------------
+#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
+#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
+#   | 3027|   2|2024-11-26 |2024-12-04 |    |FALSE   |     |     |251212000 |TFAU |9967732 |GK011 |HULDA BJÖRNSDÓTTIR |
+v |> filter(cs == "TFAU") |> select(vid:uid)
+stk4 |> filter(vid == 1115)
+lh_speed(103600)
+
+# Here wrong vessel is matched
+stk4 |> 
+  mutate(vid = case_when(mid == 103600 ~ 1115,
+                         .default = vid))
+#  but then what about 1115
+stk4 |> filter(glid == "RE245")
+lnd |> filter(vid == 1115)   # so not in landings
+
