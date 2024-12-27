@@ -5,8 +5,8 @@
 # run this as:
 #  nohup R < scripts/52_DATASET_logbooks.R --vanilla > scripts/log/52_DATASET_logbooks_2024-11-22.log &
 
-## 2024-12-05
-# * add grasleppa
+## 2024-12-16
+# * attempt to add grasleppa
 ## 2024-05-30
 # * incorporated 02-2_logbooks-landings-coupling.R into this script
 ## 2024-05-29
@@ -162,6 +162,58 @@ SEINE_old <-
   mutate(table = "seine",
          date = as_date(date),
          datel = as_date(datel))
+
+## Lumpfish --------------------------------------------------------------------
+# 1980 -> 2016
+# JK: "from 2013-2016 coverage was low with logbooks available for, in some years, less than half the fleet."
+GRASL <-
+  tbl_mar(con,'afli.grasl_sokn') |> 
+  dplyr::left_join(tbl_mar(con,'afli.grasl_stofn'),
+                   by = c("skipnr", "vear"))  |> 
+  dplyr::mutate(sr = round(reitur / 10, 0),
+                uppruni_grasl = 'grasl_sokn') |> 
+  dplyr::select(-vear) |> 
+  collect (n = Inf) |> 
+  mutate(vedags = as_date(vedags),
+         roe = case_when(teg_verkunar == "1" ~ kg_hrogn,
+                         teg_verkunar == "2" ~ kg_hrogn/0.936,
+                         teg_verkunar == "3" ~ kg_hrogn/0.772,
+                         teg_verkunar == "4" ~ kg_hrogn/0.813,
+                         TRUE ~ NA)) %>% 
+  #calculate whole fish weight from roe, if roe weight is missing, whole fish from number caught
+  mutate(bio = case_when(!is.na(roe) ~ roe * 3.28,
+                         TRUE ~ fj_grasl * 3.02)) |> 
+  filter(year(vedags) >= 2001) |> 
+  mutate(lon = geo::sr2d(sr)$lon,
+         lat = geo::sr2d(sr)$lat) |> 
+  arrange(vedags)
+GRASL <- 
+  GRASL |> 
+  mutate(dregin = ifelse(is.na(dregin), median(dregin, na.rm = TRUE), dregin),
+         naetur = ifelse(is.na(naetur), median(naetur, na.rm = TRUE), naetur)) |> 
+  mutate(visir = 1:n(),  # check
+         gid = 25,
+         effort = dregin * naetur,
+         effort_unit = "netnights",
+         table = "grasl",
+         datel = vedags) |>    # check
+  select(visir,
+         vid = skipnr,
+         gid,
+         date = vedags,
+         lon,
+         lat,
+         z1 = dypi, # in fathoms?
+         datel,  # really need this
+         effort,
+         effort_unit,
+         table,
+         catch = bio)
+GRASL     
+# I AM HERE --------------------------------------------------------------------
+# Need to split grasleppa into stofn and catch - issue is that visir is not
+#  a true thing, may create problems downstream
+
 
 ## Combine the logbooks --------------------------------------------------------
 LGS_old <-

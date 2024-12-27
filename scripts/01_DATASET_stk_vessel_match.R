@@ -1,28 +1,22 @@
 # Classify the mobileid-localid-globalid in the stk-data
 #  Focus on vessel data
-#   * Assign MMSI to all Icelandic vessels
+#   * Assign MMSI, if possible to all Icelandic vessels
 #   * Attempt to assign MMSI to foreign vessels
 #   * Attempt to write the code flow so it can easily be updated
 #     once new data are compiled (Not there yet)
 #
-#  For the Excel keep this in mind:
-#  * Dump ordered by mobileid, because they are (mostly) created consecutively
-#    in time. This way, later updating should be easier.
-#  * At minimum classify the localid and globalid
-#  * Make an initial guess of the vid
-#  * Try to flag where mobileid belongs to two vessels (using the historcial
-#    dataset?)
-#  * Suggest first to do a trial run, see how one would work within LibreOffice
-#    or Excel
-
+#  The code includes many "tests", indended to capture possible match issues
+#   as upstream as possible. The code is a result of iterative procedure where
+#   overlaps (same mobileid on 2-3 vessels) are reported in the dual spreadsheet,
+#   then whole process run a again, checking again for issues at each step.
 
 # TODO: ------------------------------------------------------------------------
-#      ...
+#   MOVE ALL MANUAL MATCHING TO THE DUAL DOCUMENT - done
 # NEWS
-# 202X-MM-DD
+# 202X-12-31
 #
 # 2024-10-24
-#  * consolidation, review and addition of older code
+#  * consolidation, review and addition of older matches
 # INPUT
 #    oracle stk.trail
 #    oracle stk.mobile
@@ -38,6 +32,7 @@
 
 library(tidyverse)
 library(nanoparquet)
+library(arrow)
 options(knitr.kable.NA = '')
 library(mar)
 source("R/ramb_functions.R")
@@ -53,6 +48,68 @@ lh <- function(d) {
            .after = n) |>
     mutate(pp = round(pings / sum(pings) * 100, 2)) |>
     knitr::kable()
+}
+lh_speed <- function(MID, trim = TRUE) {
+  d <- 
+    STK |> 
+    filter(mid %in% MID) |> 
+    select(mid, time, speed) |> 
+    collect() |> 
+    mutate(speed = ifelse(speed > 15, 15, speed))
+  if(trim) {
+    d <- d |> filter(time >= ymd_hms("2007-06-01 00:00:00"))
+  }
+  d |> 
+    ggplot(aes(time, speed)) + geom_point(size = 0.1) +
+    facet_wrap(~ mid, ncol = 1) + 
+    scale_x_datetime(date_breaks = "2 year", date_labels = "%Y")
+}
+lh_overlaps <- function(d) {
+  d |> 
+    group_by(vid) |> 
+    mutate(n = n()) |> 
+    ungroup() |> 
+    filter(n > 1, !is.na(vid)) |> 
+    arrange(vid, d2) |> 
+    group_by(vid) |> 
+    mutate(dt = difftime(lead(d1), d2, units = "day"),
+           dt = as.numeric(dt)) |> 
+    mutate(overlap = case_when(dt < -1 ~ "yes",
+                               .default = "no")) |> 
+    filter(overlap == "yes") |> 
+    pull(vid) |> 
+    unique() ->
+    vid_overlap
+  d |> 
+    filter(vid %in% vid_overlap) |> 
+    arrange(vid, d2) |> 
+    group_by(vid) |> 
+    mutate(overlap = case_when(d2 > lead(d1) ~ "yes",
+                               .default = "no"))
+}
+lh_overlaps_plot <- function(MID, stkX) {
+  STK |> 
+    filter(mid %in% MID) |>  # Need to check this
+    select(mid, loid, glid, time, speed) |>
+    mutate(speed = ifelse(speed > 15, 15, speed)) |> 
+    collect() |> 
+    left_join(stkX,
+              by = join_by(mid == mid, loid == loid, glid == glid,
+                           between(time, d1, d2))) |> 
+    ggplot(aes(time, speed, colour = factor(mid))) +
+    geom_point(size = 0.01) +
+    facet_wrap(~ vid, ncol = 1) +
+    scale_x_datetime(date_breaks = "2 year", date_labels = "%Y")
+}
+
+lh_mmsi_expectations <- function(d) {
+  d |>
+    filter(vid > 0) |>
+    #filter(step != "duals") |>
+    left_join(v_all |> select(vid, mmsi, yh1, yh2)) |>
+    filter(is.na(mmsi)) |>
+    arrange(desc(d2)) |>
+    knitr::kable(caption = "Don't expect missing mmsi for 'recent' d2")
 }
 
 # Data -------------------------------------------------------------------------
@@ -71,11 +128,12 @@ cs.prefix <-
   filter(cs_prefix != "TF")
 ## vessel registry
 #  should really add skemmtibatar
-vessels <-
+v_all <- 
   nanoparquet::read_parquet("data/vessels/vessels_iceland.parquet") |> 
-  # Only vessels that have mmsi
-  filter(!is.na(mmsi)) |> 
   mutate(vidc = as.character(vid))
+v_mmsi <-
+  v_all |> 
+  filter(!is.na(mmsi))
 
 ## Known (via ad hoc) non-vessel localid or globalid ---------------------------
 fixed <-
@@ -156,64 +214,189 @@ net_glid <-
 unknown_glid <- c("5200000")
 
 ## Vessel info for local- and globalid classification --------------------------
+# suffix 2 is when mmsi not available
 CS <-
-  vessels |>
+  v_mmsi |>
+  filter(!is.na(cs)) |>
+  filter(nchar(cs) %in% 4:7) |>
+  pull(cs) |>
+  unique()
+CS2 <-
+  v_all |>
+  filter(!vid %in% 3700:4999) |> 
+  filter(!is.na(cs)) |>
+  filter(nchar(cs) %in% 4:7) |>
+  pull(cs) |>
+  unique()
+CS3 <- 
+  v_all |>
+  filter(vid %in% 3700:4999) |> 
   filter(!is.na(cs)) |>
   filter(nchar(cs) %in% 4:7) |>
   pull(cs) |>
   unique()
 UID <-
-  vessels |>
+  v_mmsi |>
+  filter(!is.na(uid)) |>
+  pull(uid) |>
+  unique()
+UID2 <-
+  v_all |>
   filter(!is.na(uid)) |>
   pull(uid) |>
   unique()
 VID <-
-  vessels |>
+  v_mmsi |>
+  filter(source == "ISL", !is.na(vid)) |>
+  pull(vid) |>
+  as.character()
+VID2 <-
+  v_all |>
   filter(source == "ISL", !is.na(vid)) |>
   pull(vid) |>
   as.character()
 
+lnd <- 
+  read_parquet("data/landings/agf_stations.parquet") |> 
+  group_by(vid) |> 
+  reframe(n = n(),
+          min = min(datel),
+          max = max(datel))
+
 ## stk summary -----------------------------------------------------------------
-stk_ids <-
-  tbl(con, dbplyr::in_schema("STK", "MOBILE")) |>
-  select(mid = MOBILEID, loid = LOCALID, glid = GLOBALID) |>
-  collect()
-stk <-
-  tbl(con, dbplyr::in_schema("STK", "TRAIL")) |>
-  mutate(YEAR = year(POSDATE)) |>
-  group_by(MOBILEID) |>
+STK <- 
+  open_dataset("data/ais/stk-raw") |> 
+  to_duckdb()
+stk <- 
+  STK |> 
+  group_by(mid, year) |> 
+  mutate(n = n()) |> 
+  ungroup() |> 
+  mutate(n = n()) |> 
+  filter(n >= 10) |> 
+  group_by(mid, loid, glid) |> 
   summarise(pings = n(),
-            n_years = n_distinct(YEAR),
-            d1 = min(POSDATE, na.rm = TRUE),
-            d2 = max(POSDATE, na.rm = TRUE),
-            .groups = "drop") |>
+            n_years = n_distinct(year),
+            d1 = min(time, na.rm = TRUE),
+            d2 = max(time, na.rm = TRUE),
+            .groups = "drop") |> 
   collect() |>
-  rename(mid = MOBILEID) |>
+  # these used when using join with between
   mutate(d1 = as_date(d1),
-         d2 = as_date(d2)) |>
-  arrange(mid) |>
-  full_join(stk_ids,
-            by = join_by(mid)) |>
-  select(mid, loid, glid, everything()) |> 
-  arrange(mid) |> 
+         d2 = as_date(d2) + ddays(1)) |>  # rather than 23:59:59 if time was used
+  # this however includes the first second of next day
+  arrange(mid, d1, d2) |> 
   mutate(.rid = 1:n(),
          .before = mid)
 
+# Older matches ----------------------------------------------------------------
+older <- 
+  tbl_mar(con, "ops$einarhj.mobile_vid") |>
+  collect() |> 
+  select(mid:vid, no, t1, t2) |> 
+  # add loid and glid where missing
+  left_join(stk |> select(mid, loid_tmp = loid, glid_tmp = glid, d1, d2),
+            by = join_by(mid)) |> 
+  mutate(loid = ifelse(is.na(loid), loid_tmp, loid),
+         glid = ifelse(is.na(glid), glid_tmp, glid)) |> 
+  select(-c(loid_tmp, glid_tmp)) |> 
+  arrange(mid) |> 
+  group_by(mid) |> 
+  mutate(n.mid = n()) |> 
+  ungroup()
+# DUALS ------------------------------------------------------------------------
+# Here we rely on some older work in addition to new work
+#  This should NOT BE RUN AGAIN
+#  Any future changes have to be done manually in:
+#   data-raw/stk_mobile_fix/dual_mobileid.ods
+if(FALSE) {
+  duals_older <- 
+    older |> 
+    filter(!is.na(no)) |> 
+    filter(n.mid > 1) |> 
+    select(mid, loid, glid, vid, no, d1 = t1, d2 = t2)
+  duals_new <- 
+    tribble(~mid, ~loid, ~glid, ~d1, ~d2, ~vid, ~no,
+            101092, "975",   "TFGT", "2007-06-04", "2019-12-31", 975, 1,
+            101092, "975",   "TFGT", "2020-01-01", "2029-12-31", 3002, 2,
+            101119, "1401",  "TFQF", "1999-11-24", "2022-03-31", 1401, 1,
+            101119, "1401",  "TFQF", "2022-03-31", "2029-12-31", 2730, 2,
+            108982, "2835",  "TFFL", "2012-09-07", "2018-12-24", 1173, 1,    # dubious, no MMSI
+            108982, "2835",  "TFFL", "2020-01-01", "2029-12-31", 7830, 2,
+            101015, "1052",  "TFRN", "1970-01-01", "2010-12-31", 1052, 1,
+            101015, "1052",  "TFRN", "2020-01-01", "2029-12-31", 3021, 2,
+            100135, "1838",  "TFJP", "2007-06-01", "2009-12-31", 2299, 1,  # this is a dummy
+            100135, "1838",  "TFJP", "2019-01-01", "2029-12-31", 2988, 2,
+            100603, "483",   "TFEG", "2008-06-26", "2014-12-31", 2722, 1,
+            100603, "483",   "TFEG", "2015-01-01", "2029-12-31", 2910, 2,
+            103251, "4322",  "TFDP", "2012-01-26", "2014-12-31", 1441, 1,
+            103251, "4322",  "TFDP", "2015-01-01", "2029-12-31", 2948, 2
+    ) #|> 
+  #mutate(d1 = ymd(d1),
+  #       d2 = ymd(d2))
+  bind_rows(duals_older, duals_new) |> 
+    arrange(mid) |> 
+    left_join(v_mmsi |> select(vid, yh1, yh2)) |> 
+    write_csv("data-raw/stk_mobile_fix/dual_mobileid.csv")
+}
+
+# test duals
+if(FALSE) {
+  duals <- 
+    readODS::read_ods("data-raw/stk_mobile_fix/dual_mobileid.ods")
+  STK |> 
+    filter(mid %in% c(108982)) |>
+    select(mid, loid, glid, time, speed) |>
+    mutate(speed = ifelse(speed > 15, 15, speed)) |> 
+    collect() |> 
+    left_join(duals,
+              by = join_by(mid == mid, loid == loid, glid == glid,
+                           between(time, d1, d2))) |> 
+    ggplot(aes(time, speed, colour = factor(vid))) +
+    geom_point(size = 0.01) +
+    facet_wrap(~ mid, ncol = 1) +
+    scale_x_datetime(date_breaks = "2 year", date_labels = "%Y")
+  v_mmsi |> filter(cs == "TFIS")
+  stk2 |> filter(vid_older == 2870)
+}
+
+# Join duals -------------------------------------------------------------------
+duals <- 
+  readODS::read_ods("data-raw/stk_mobile_fix/dual_mobileid.ods") |> 
+  select(mid:d2)
+
+stk1 <-
+  stk |> 
+  left_join(duals |> 
+              select(mid, vid, no, .d1 = d1, .d2 = d2)) |> 
+  mutate(d1 = case_when(!is.na(.d1) ~ .d1,
+                        .default = d1),
+         d2 = case_when(!is.na(.d2) ~ .d2,
+                        .default = d2)) |> 
+  select(-c(.d1, .d2)) |> 
+  mutate(step = case_when(!is.na(vid) ~ "duals",
+                          .default = NA))
+
+
 # Classification ---------------------------------------------------------------
 stk2 <-
-  stk |>
+  stk1 |>
   # The order matters in the case_when
   mutate(.loid =
            case_when(
              loid %in% fixed ~ "fixed",
              loid %in% kvi ~ "kvi",
              loid %in% VID ~ "vid",
+             loid %in% VID2 ~ "vid2",
              numbers_only(loid) & nchar(loid) == 9  ~ "mmsi",
              loid %in% CS ~ "cs",
+             loid %in% CS2 ~ "cs2",
+             loid %in% CS3 ~ "cs3",
              loid %in% UID ~ "uid",
+             loid %in% UID2 ~ "uid2",
              str_sub(loid, 1, 2) %in% cs.prefix$cs_prefix &
                !numbers_only(str_trim(loid)) &
-               !str_starts(loid, "MOB_")  ~ "cs2",
+               !str_starts(loid, "MOB_")  ~ "cs4",
              numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_child ~ "mmsi.other",
              numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_aid ~ "mmsi.other",
              .default = NA)) |>
@@ -226,12 +409,16 @@ stk2 <-
              str_detect(tolower(glid), "_net") ~ "net",
              glid %in% net_glid ~ "net",
              glid %in% VID ~ "vid",
+             glid %in% VID2 ~ "vid2",
              numbers_only(glid) & nchar(glid) == 9 ~ "mmsi",
              glid %in% CS ~ "cs",
+             glid %in% CS2 ~ "cs2",
+             glid %in% CS3 ~ "cs3",
              glid %in% UID ~ "uid",
+             glid %in% UID2 ~ "uid2",
              str_sub(glid, 1, 2) %in% cs.prefix$cs_prefix &
                !numbers_only(str_trim(glid)) &
-               !str_starts(glid, "MOB_")  ~ "cs2",
+               !str_starts(glid, "MOB_")  ~ "cs4",
              numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_child ~ "mmsi.other",
              numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_aid ~ "mmsi.other",
              #numbers_only(glid) & nchar(glid) == 7 & !omar::vessel_valid_imo(glid) ~ "imo",
@@ -239,303 +426,316 @@ stk2 <-
   mutate(type = paste0(replace_na(.loid, "NA"), "_", replace_na(.glid, "NA"))) |> 
   select(-c(.loid, .glid))
 
-stk2 |> count(type) |> knitr::kable()
+stk2 |> lh_overlaps() |> filter(vid > 0) |>  knitr::kable(caption = "Expect none")
 
-# Orphan -----------------------------------------------------------------------
-if(FALSE) {
+# Join older -------------------------------------------------------------------
+stk3 <- 
   stk2 |> 
-    # temporary check what mmsi type - used in the drop below
-    mutate(mmsi = case_when(.loid == "mmsi" ~ loid,
-                            .glid == "mmsi" ~ glid,
-                            .default = NA),
-           mmsi_cat = case_when(!is.na(mmsi) ~ rb_mmsi_category(mmsi),
-                                .default = NA),
-           mmsi_cat = case_when(!is.na(mmsi_cat) & mmsi_cat == "vessel" ~ mmsi_cat,
-                                !is.na(mmsi_cat) & mmsi_cat != "vessel" ~ "mmsi_other",
-                                .default = NA),
-           mmsi_mid = case_when(mmsi_cat == "vessel" ~ as.numeric(str_sub(mmsi, 1, 3)),
-                                .default = NA)) |>
-    select(-mmsi)
-}
+  left_join(older |> filter(n.mid == 1) |> select(mid, vid_older = vid))
+stk3 |> lh_overlaps() |> filter(vid > 0) |> knitr::kable(caption = "Expect none")
+stk3 |> lh_mmsi_expectations()
 
-# Older matches ----------------------------------------------------------------
-older <- 
-  tbl_mar(con, "ops$einarhj.mobile_vid") |>
-  collect() |> 
-  select(mid:vid, no) |> 
-  # add loid and glid where missing
-  left_join(stk |> select(mid, loid_tmp = loid, glid_tmp = glid, d1, d2),
-            by = join_by(mid)) |> 
-  mutate(loid = ifelse(is.na(loid), loid_tmp, loid),
-         glid = ifelse(is.na(glid), glid_tmp, glid)) |> 
-  select(-c(loid_tmp, glid_tmp)) |> 
-  arrange(mid) |> 
-  group_by(mid) |> 
-  mutate(n.mid = n()) |> 
-  ungroup()
-## Houston, we have a problem
-older |> 
-  filter(n.mid > 1) |> 
-  knitr::kable()
-# The problem:
-#  In the earlier code we hadd some manual matches and then some
-#   records that aimed at splitting mobileid on 2+ vessel if that
-#   seemed to be the case. But here we have some indication that
-#   * some "splits" did not have t1 and t2 specified
-#   * some of the records are pure duplicates
-#  What is done here is to save the data where the n.mid > 1 and
-#  then to a manual corrections in libre office. Once done, data
-#  is then read back in and merged with the data where n.mid = 1
-if(FALSE) {
-  older |> 
-    filter(n.mid > 1) |> 
-    write_csv("data-raw/stk_mobile_fix/older_duplicates.csv")
-}
-older.keep <- older |> filter(n.mid == 1)
-older.fixed <- 
-  readODS::read_ods("data-raw/stk_mobile_fix/older_duplicates.ods", na = "NA") |> 
-  filter(keep == 1) |> 
-  select(-c(keep, comments, n.mid))
-older <- 
-  bind_rows(older.keep |> select(-n.mid),
-            older.fixed)
-## merge stk with older --------------------------------------------------------
-# Note, this will generate dual mobileid because of "overtake"
-stk2 <- 
-  stk2 |> 
-  left_join(older |> select(mid, vid_older = vid, no, t1, t2)) |> 
-  #janitor::get_dupes(.rid) |> 
-  mutate(d1 = case_when(!is.na(t1) & !is.na(no) ~ t1,
-                        .default = d1),
-         d2 = case_when(!is.na(t2) & !is.na(no) ~ t2,
-                        .default = d2)) |> 
-  select(-c(t1, t2))
+## vid_vid ---------------------------------------------------------------------
+stk4 <- 
+  stk3 |> 
+  mutate(vid = case_when(!is.na(vid) ~ vid,
+                         type == "vid_vid" & loid == glid ~ as.numeric(glid),
+                         .default = vid)) |> 
+  mutate(step = case_when(!is.na(vid) & is.na(step) ~ "vid_vid",
+                          .default = step))
+stk4 |> 
+  filter(type == "vid_vid") |> 
+  filter(is.na(vid)) |> 
+  knitr::kable(caption = "Missing vid for type vid_vid (expect none)")
 
-# New match --------------------------------------------------------------------
-## vid_vid match ---------------------------------------------------------------
-stk2 <- 
-  stk2 |> 
-  mutate(.vid = case_when(type == "vid_vid" & loid == glid ~ as.numeric(glid),
-                          .default = NA)) |> 
-  left_join(vessels |> select(.vid = vid),
-            by = join_by(.vid)) |> 
-  rename(vid_new = .vid)
+# duals with overlaps
+stk4 |> lh_overlaps() |> filter(vid > 0) |> knitr::kable(caption = "Expect vid 1511, 7807")
+stk4 |> lh_mmsi_expectations()
+
 ## vid_cs match ----------------------------------------------------------------
-# NOTE: ONLY USE vessels where mmsi is defined
-stk2 <- 
-  stk2 |> 
+stk5 <- 
+  stk4 |> 
   mutate(.vid = case_when(type == "vid_cs" ~ as.numeric(loid),
                           .default = -9999),
          .cs = case_when(type == "vid_cs" ~ glid,
                          .default = "XXXX")) |> 
-  left_join(vessels |> select(.vid = vid, .cs = cs),
-            by = join_by(.vid, .cs)) |> 
-  mutate(vid_new = case_when(!is.na(vid_new) ~ vid_new,
-                             .vid != -9999 ~ .vid,
-                             .default = vid_new)) |> 
-  select(-c(.vid, .cs))
+  left_join(v_mmsi |> select(.vid = vid, .cs = cs) |> mutate(type = "vid_cs"),
+            by = join_by(.vid, .cs, type)) |> 
+  mutate(vid = case_when(!is.na(vid) ~ vid,
+                         type == "vid_cs" & vid_older == .vid & glid == .cs ~ vid_older,
+                         type == "vid_cs" & is.na(vid_older) ~ .vid,
+                         type == "vid_cs" & vid_older == 6643 ~ vid_older,  # single case
+                         .default = vid)) |> 
+  select(-c(.vid, .cs)) |> 
+  mutate(step = case_when(!is.na(vid) & is.na(step) ~ "vid_cs",
+                          .default = step))
+stk5 |> 
+  filter(type == "vid_cs") |> 
+  filter(is.na(vid)) |> 
+  knitr::kable(caption = "Missing vid for type vid_cs (expect none)")
 
-## NA_mmsi match: Icelandic vessels only ---------------------------------------
-stk2 <- 
-  stk2 |> 
-  mutate(.mmsi = case_when(type == "NA_mmsi" & str_sub(glid, 1, 3) == "251" ~ glid,
-                           .default = "XXXX")) |> 
-  left_join(vessels |> filter(!is.na(mmsi)) |> select(.vid = vid, .mmsi = mmsi),
-            by = join_by(.mmsi)) |> 
-  mutate(vid_new = case_when(!is.na(vid_new) ~ vid_new,
-                             !is.na(.vid) ~ .vid,
-                             .default = vid_new)) |> 
-  select(-c(.vid, .mmsi))
+stk5 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1511, 2718, 7807")
+if(FALSE) {
+  lh_overlaps_plot(c(103851, 101223), stk5) # expected, vid 2718 has one mid inbetween another mid
+}
+stk5 |> lh_mmsi_expectations()
 ## uid_cs match ----------------------------------------------------------------
-stk2 <- 
-  stk2 |> 
+stk6 <- 
+  stk5 |> 
   mutate(.uid = case_when(type == "uid_cs" ~ loid,
                           .default = "XXXX"),
          .cs = case_when(type == "uid_cs" ~ glid,
                          .default = "XXXX")) |> 
-  left_join(vessels |> select(.vid = vid, .cs = cs, .uid = uid) |> drop_na(),
-            by = join_by(.cs, .uid)) |> 
-  mutate(vid_new = case_when(!is.na(vid_new) ~ vid_new,
-                             !is.na(.vid) ~ .vid,
-                             .default = vid_new)) |> 
-  select(-c(.cs, .uid, .vid))
+  left_join(v_mmsi |> select(.vid = vid, .cs = cs, .uid = uid) |> mutate(type = "uid_cs"),
+            by = join_by(.cs, .uid, type)) |> 
+  mutate(vid = case_when(!is.na(vid) ~ vid,
+                         type == "uid_cs" & vid_older == .vid ~ vid_older,
+                         type == "uid_cs" & !is.na(vid_older) ~ vid_older,
+                         .default = vid)) |> 
+  select(-c(.cs, .uid, .vid)) |> 
+  mutate(step = case_when(!is.na(vid) & is.na(step) ~ "uid_cs",
+                          .default = step))
+stk6 |> 
+  filter(type == "uid_cs") |> 
+  filter(is.na(vid)) |> 
+  knitr::kable(caption = "Missing vid for type uid_cs (expect none)")
+stk6 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1511, 2718, 7807")
+stk6 |> lh_mmsi_expectations()
+
 ## NA_vid match ----------------------------------------------------------------
-stk2 <-
-  stk2 |> 
+stk7 <-
+  stk6 |> 
   mutate(.vid = case_when(type == "NA_vid" ~ glid,
                           .default = NA)) |> 
-  left_join(vessels |> select(.vid = vidc),
-            by = join_by(.vid)) |> 
-  mutate(vid_new = case_when(!is.na(vid_new) ~ vid_new,
-                             !is.na(.vid) ~ as.numeric(.vid),
-                             .default = vid_new)) |> 
-  select(-c(.vid))
+  left_join(v_mmsi |> select(.vid = vidc, mmsi) |> mutate(type = "NA_vid"),
+            by = join_by(.vid, type)) |> 
+  mutate(vid = case_when(!is.na(vid) ~ vid,
+                         type == "NA_vid" & !is.na(mmsi) ~ as.integer(.vid),
+                         .default = vid)) |> 
+  select(-c(.vid, mmsi)) |> 
+  mutate(step = case_when(!is.na(vid) & is.na(step) ~ "NA_vid",
+                          .default = step))
+stk7 |> 
+  filter(type == "NA_vid") |> 
+  filter(is.na(vid)) |> 
+  knitr::kable(caption = "Missing vid for type NA_vid (expect none)")
 
+stk7 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1511, 2718, 7807")
+if(FALSE) {
+  lh_overlaps_plot(c(101081), stk7) # Still dubious, second period for 2067 may be a wrong allocation
+}
+stk7 |> lh_mmsi_expectations()
+
+## NA_cs ------------------------------------------------------------------------
+stk8 <- 
+  stk7 |> 
+  mutate(.cs = glid) |> 
+  left_join(v_mmsi |> select(.cs = cs, .vid = vid, .uid = uid, yh1, yh2) |> mutate(type = "NA_cs")) |> 
+  mutate(vid = case_when(!is.na(vid) ~ vid,
+                         type == "NA_cs" & vid_older == .vid  ~ vid_older,
+                         type == "NA_cs" & !is.na(.vid) ~ .vid,
+                         .default = vid)) |> 
+  select(-c(.cs, .vid, .uid, yh1, yh2)) |> 
+  mutate(step = case_when(!is.na(vid) & is.na(step) ~ "NA_csts",
+                          .default = step))
+stk8 |> 
+  filter(type == "NA_cs") |> 
+  filter(is.na(vid)) |> 
+  knitr::kable(caption = "Missing vid for type NA_cs (expect none)")
+stk8 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1511, 2718, 7807")
+stk8 |> lh_mmsi_expectations()
+
+## vid2_cs ---------------------------------------------------------------------
+# Question if this should come next
+stk9 <- 
+  stk8 |> 
+  mutate(.cs = glid) |> 
+  left_join(v_mmsi |> 
+              select(.cs = cs, .vid = vidc, .uid = uid, yh1, yh2) |> mutate(type = "vid2_cs") |> 
+              # did this to not get many-to-many
+              filter(yh2 > 2013)) |> 
+  mutate(vid = case_when(!is.na(vid) ~ vid,
+                         type == "vid2_cs" ~ as.numeric(.vid),
+                         .default = vid)) |> 
+  select(-c(.cs, .vid, .uid, yh1, yh2)) |> 
+  mutate(step = case_when(!is.na(vid) & is.na(step) ~ "vid2_cs",
+                          .default = step))
+stk9 |> 
+  filter(type == "vid2_cs") |> 
+  filter(is.na(vid)) |> 
+  knitr::kable()
+stk9 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1511, 2718, 7807")
+stk9 |> lh_mmsi_expectations()
+
+
+if(FALSE) {
+  lnd |> 
+    filter(!vid %in% c(stk9 |> select(vid) |> drop_na() |> pull(vid))) |> 
+    arrange(desc(max)) |> 
+    left_join(v_all) |> 
+    knitr::kable(caption = "List of vessels in landings not in stk")
+    
+    # CHECK THIS
+    v_all |> filter(vid == 3027)
+    stk9 |> filter(vid == 1115)
+    v_all |> filter(cs == "TFAU")
+    v_all |> filter(uid == "RE245")
+    v_all |> filter(uid == "GK011")
+}
+
+## VID_OLDER -------------------------------------------------------------------
+# hail mary, step may be premature
+stk10 <- 
+  stk9 |> 
+  mutate(vid = case_when(!is.na(vid) ~ vid,
+                         is.na(vid) & !is.na(vid_older) & pings > 100 ~ vid_older,
+                         .default = vid)) |> 
+  mutate(step = case_when(!is.na(vid) & is.na(step) & pings > 100 ~ "older",
+                          .default = step))
+
+stk10 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 396, 950, 1511, 2718, 7807")
+if(FALSE) {
+  lh_overlaps_plot(c(113343, 107082), stk10) # 396
+  lh_overlaps_plot(c(107945, 100430), stk10) # 950
+}
+stk10 |> lh_mmsi_expectations()
+
+## NA_mmsi ---------------------------------------------------------------------
+v_mmsi_no_dupes <- 
+  v_mmsi |> 
+  arrange(mmsi, desc(mmsi_t2), desc(vid)) |> 
+  group_by(mmsi) |> 
+  slice(1) |> 
+  ungroup()
+stk11 <- 
+  stk10 |> 
+  mutate(.mmsi = glid) |> 
+  left_join(v_mmsi_no_dupes |> select(.vid = vidc, .mmsi = mmsi, yh1, yh2) |> mutate(type = "NA_mmsi")) |> 
+  mutate(vid = case_when(!is.na(vid) ~ vid,
+                         type == "NA_mmsi" & pings >= 30 ~ as.numeric(.vid),
+                         .default = vid)) |> 
+  select(-c(.vid, .mmsi, yh1, yh2)) |> 
+  mutate(step = case_when(!is.na(vid) & is.na(step) ~ "NA_mmsi",
+                          .default = step))
+stk11 |> 
+  filter(type == "NA_mmsi") |> 
+  filter(!is.na(vid)) |> 
+  pull(vid) ->
+  vids
+stk11 |> 
+  filter(vid %in% vids) |> 
+  group_by(vid) |> 
+  mutate(n = n()) |> 
+  ungroup() |> 
+  filter(n > 1) |> 
+  arrange(vid, d2)
+if(FALSE) {
+  lh_overlaps_plot(c(120568, 100873), stk11)
+  lh_overlaps_plot(c(143787, 102969), stk11)
+}
 
 # I AM HERE --------------------------------------------------------------------
-stk3 <- 
-  stk2 |> 
-  mutate(vid = case_when(!is.na(vid_older) & !is.na(vid_new) & vid_older == vid_new ~ vid_older,
-                         vid_older != vid_new & !is.na(no) ~ vid_older,
-                         # vid_new superseeds vid_older
-                         !is.na(vid_new) ~ vid_new,
-                         !is.na(vid_older) ~ vid_older,
-                         .default = NA))
+
+## manual ----------------------------------------------------------------------
+# Do this in the Libre Office Spreadsheet
 
 
-
-stk4 <- 
-  stk3 |>
-  mutate(
-    vid = 
-      case_when(is.na(vid) & type == "NA_vid" & glid %in%  vessels$vidc ~ as.numeric(glid),
-                .default = vid))
-
-# Do later
-stk4 <- 
-  stk4 |> 
-  left_join(vessels |> 
-              select(vid, mmsi, mmsi_t1, mmsi_t2),
-            by = join_by(vid))
-stk4 |> 
-  write_parquet("data/vessels/stk_vessel_match.parquet")
-
-# TROUBLES ---------------------------------------------------------------------
-v <- read_parquet("data/vessels/vessels_iceland.parquet")
-
-# troubles, vid with no mmsi
-stk4 |> 
-  filter(!is.na(vid)) |> 
-  filter(is.na(mmsi)) |> 
-  filter(!is.na(pings)) |> 
-  arrange(-pings) |> 
-  filter(!vid %in% 3700:4999) -> 
-  tmp
-tmp |> 
-  filter(pings > 10) |> 
-  arrange(d2) |> 
-  knitr::kable(caption = "Vessels with no MMSI")
-lnd <- 
-  read_parquet("data/landings/lods_stations.parquet") |> 
-  filter(between(datel, ymd("2007-06-01"), ymd("2024-12-31"))) |> 
-  group_by(vid) |> 
-  reframe(n = n(),
-          d1 = min(datel),
-          d2 = max(datel))
 lnd |> 
-  left_join(stk3 |> select(mid, vid)) |> 
-  mutate(has.mid = !is.na(mid)) |> 
-  filter(!has.mid) |> 
+  filter(vid < 9900) |> 
+  filter(!vid %in% c(stk11 |> select(vid) |> drop_na() |> pull(vid))) |> 
+  arrange(desc(max)) |> 
+  left_join(v_all) |> 
+  knitr::kable(caption = "List of vessels in landings not in stk")
+
+stk11 |> 
+  filter(is.na(vid)) |> 
+  count(type) |> 
   arrange(-n) |> 
-  # Note: Only join if vid in registry
-  inner_join(vessels |> select(vid:vessel)) |>  
-  arrange(vid) |> 
-  knitr::kable(caption = "Landings vessels with no stk: to hunt down")
-
-# Table: Landings vessels with no stk: to hunt down
-#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
-#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
-#   | 1599| 165|2010-03-16 |2015-08-06 |    |FALSE   | 1982| 2020|251292840 |     |        |BA021 |ÖNGULL             |
-#   | 2730| 345|2007-06-01 |2024-12-02 |    |FALSE   | 2006| 2013|251536000 |TFQF |9167928 |VE292 |GULLBERG           |
-#   | 2917|  88|2017-06-16 |2024-11-19 |    |FALSE   | 2017| 2021|251718000 |TFYY |9774642 |ÓF001 |SÓLBERG            |
-#   | 3018|  14|2024-08-20 |2024-12-06 |    |FALSE   |     |     |251534000 |TFBY |9951628 |ÁR067 |SIGURBJÖRG         |
-#   | 3027|   2|2024-11-26 |2024-12-04 |    |FALSE   |     |     |251212000 |TFAU |9967732 |GK011 |HULDA BJÖRNSDÓTTIR |
-
-
-# HUNTDOWN ---------------------------------------------------------------------
-lh_speed <- function(MID) {
-  stk_trail(con) |> 
-    filter(mid == MID) |> 
-    select(time, speed) |> 
-    collect() |> 
-    mutate(speed = ifelse(speed > 15, 15, speed)) |> 
-    ggplot(aes(time, speed)) + geom_point(size = 0.1)
-}
-# Get all vessels, not filtered by availability of mmsi
-v <- read_parquet("data/vessels/vessels_iceland.parquet")
-
-## 1599 ------------------------------------------------------------------------
-#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
-#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
-#   | 1599| 165|2010-03-16 |2015-08-06 |    |FALSE   | 1982| 2020|251292840 |     |        |BA021 |ÖNGULL             |
-v |> filter(vid == 1599)
-v |> filter(mmsi == 251292840)
-v |> filter(uid == "BA021")
-stk4 |> filter(vid %in% c(2658, 6462))
-lh_speed(101719)
-lh_speed(103022)
-stk4 |> filter(loid %in% c("BA21", "BA021") | loid %in% c("BA21", "BA021"))
-
-## 2730 ------------------------------------------------------------------------
-#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
-#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
-#   | 2730| 345|2007-06-01 |2024-12-02 |    |FALSE   | 2006| 2013|251536000 |TFQF |9167928 |VE292 |GULLBERG           |
-v |> filter(cs == "TFQF")
-stk4 |> filter(vid == 1401)
-lh_speed(101119)   # A dual vessel??
-stk_trail(con) |> 
-  mutate(year = year(time)) |> 
-  filter(mid == 101119, year %in% c(2020, 2024)) |> 
-  collect() |> 
-  arrange(-speed) |> 
-  ggplot() + geom_point(aes(lon, lat, colour = speed), size = 0.1) + facet_wrap(~ year) +
-  scale_colour_viridis_c()
-stk_trail(con) |> 
-  mutate(year = year(time)) |> 
-  filter(mid == 101119, year %in% c(2020)) |> 
-  collect() |> 
-  arrange(-speed) |>
-  filter(between(lat, 66, 68)) |> 
-  ggplot() + geom_point(aes(lon, lat, colour = speed), size = 0.1) + facet_wrap(~ year) +
-  scale_colour_viridis_c()
-# so switch from a longliner to a pelagic vessel
-stk_trail(con) |> 
-  filter(mid == 101119, year(time) == 2022) |> 
-  ggplot(aes(time, speed)) + geom_point(size = 0.01)
-# the switch occurs 2022-03-31
+  knitr::kable()
+stk11 |> 
+  filter(is.na(vid)) |> 
+  filter(type == "vid2_vid2") |> 
+  arrange(-pings)
 
 
 
-## 2917 ------------------------------------------------------------------------
-#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
-#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
-#   | 2917|  88|2017-06-16 |2024-11-19 |    |FALSE   | 2017| 2021|251718000 |TFYY |9774642 |ÓF001 |SÓLBERG            |
-v |> filter(cs == "TFYY")
-stk4 |> filter(vid == 2061)
-lh_speed(102284)
-stk4 |> filter(mid == 102284)  # The newer vessel is missing
-stk4 <- 
-  stk4 |> 
-  add_row(stk4 |> filter(mid == 102284) |> 
-            mutate(vid = 2917,
-                   d1 = ymd("2015-01-01"),
-                   # Check what to do here
-                   d2 = ymd("2024-12-31")))
 
-## 3018 ------------------------------------------------------------------------
-#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
-#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
-#   | 3018|  14|2024-08-20 |2024-12-06 |    |FALSE   |     |     |251534000 |TFBY |9951628 |ÁR067 |SIGURBJÖRG         |
-v |> filter(cs == "TFBY")
-stk4 |> filter(vid == 1351)
-lh_speed(101196)
-#stk4 |> 
-#  add_row(stk4 |> filter(mid == 101196) |> 
-#            mutate(vid == 3018,
 
-## 3027 ------------------------------------------------------------------------
-#   |  vid|   n|d1         |d2         | mid|has.mid |  yh1|  yh2|mmsi      |cs   |imo     |uid   |vessel             |
-#   |----:|---:|:----------|:----------|---:|:-------|----:|----:|:---------|:----|:-------|:-----|:------------------|
-#   | 3027|   2|2024-11-26 |2024-12-04 |    |FALSE   |     |     |251212000 |TFAU |9967732 |GK011 |HULDA BJÖRNSDÓTTIR |
-v |> filter(cs == "TFAU") |> select(vid:uid)
-stk4 |> filter(vid == 1115)
-lh_speed(103600)
 
-# Here wrong vessel is matched
-stk4 |> 
-  mutate(vid = case_when(mid == 103600 ~ 1115,
+
+stk10 |> 
+  filter(vid > 0) |> 
+  filter(pings > 10) |> 
+  lh_overlaps() |> 
+  knitr::kable(caption = "Expect vid 1511, 2718, 7807, 7830")
+lh_overlaps_plot(c(120568, 100873), stk10)
+lh_overlaps_plot(c(143787, 102969), stk10)
+lh_overlaps_plot(c(106218, 100871), stk10)
+lh_overlaps_plot(c(146481, 100643), stk10)
+lh_overlaps_plot(c(140711, 101122), stk10)
+lh_overlaps_plot(c(105694, 105294), stk10)
+# seems like this merger is OK, but not fully tested
+
+# any mmsi-vid match solely based on mmsi
+stk10 |> 
+  filter(step == "NA_mmsi") |> 
+  arrange(-pings)
+# ad hoc tests
+stk10 |> filter(vid == 3003)
+lh_overlaps_plot(c(101014, 140480, 141794), stk10)
+
+
+# STATUS SO FAR ----------------------------------------------------------------
+lnd |> 
+  filter(!vid %in% c(stk10 |> select(vid) |> drop_na() |> pull(vid))) |> 
+  arrange(desc(max)) |> 
+  left_join(v_all) |> 
+  knitr::kable(caption = "List of vessels in landings not in stk")
+stk10 |> 
+  mutate(has.vid = case_when(!is.na(vid) ~ "yes",
+                             .default = "no")) |> 
+  left_join(v_mmsi |> select(vid, mmsi) |> mutate(has.vid = "yes")) |> 
+  filter(has.vid == "yes") |> 
+  filter(is.na(mmsi)) |> 
+  arrange(desc(d2)) |> 
+  #filter(year(d2) >= 2021) |> 
+  filter(vid > 0) |> 
+  left_join(v_all |> select(vid, .cs = cs, .imo = imo, yh1, yh2)) |> 
+  knitr::kable(capiton = "List of stk that have vid but no mmsi")
+
+lh_speed(c(108963, 108963))
+v_all |> filter(cs == "TFBZ")
+
+
+# manual
+stk12 <- 
+  stk11 |> 
+  mutate(vid = case_when(mid == 101499 ~ 2216,
+                         mid == 101878 ~ 1578,
+                         mid == 103600 ~ 3077,
                          .default = vid))
-#  but then what about 1115
-stk4 |> filter(glid == "RE245")
-lnd |> filter(vid == 1115)   # so not in landings
+stk12 |> 
+  filter(type != "NA_mmsi") |> 
+  lh_overlaps() |> 
+  knitr::kable(caption = "Expect vid 1511 and 2718, 7830 is dubious")
 
+## vessels still with missing mmsi, but recent d2
+stk12 |> 
+  mutate(has.vid = case_when(!is.na(vid) ~ "yes",
+                             .default = "no")) |> 
+  left_join(v_mmsi |> select(vid, mmsi) |> mutate(has.vid = "yes")) |> 
+  filter(has.vid == "yes") |> 
+  filter(is.na(mmsi)) |> 
+  arrange(desc(d2)) |> 
+  filter(year(d2) >= 2021) |> 
+  filter(vid > 0) |> 
+  left_join(v_all |> select(vid, .cs = cs, .imo = imo, yh1, yh2)) |> 
+  knitr::kable()
+
+# the 3700:4999 vessels
+lh_speed(c(102971))
+v_all |> filter(cs %in% c("TFMG"))
+
+
+
+stk11 |> filter(glid == "TFBC")
