@@ -1,4 +1,6 @@
 # TODO:
+#  * include astd data via mmsi match
+#    * question what to do with speed (and heading)
 #  * test for whacky points - this could be done per mobileid
 #  * standardize/correct harbour code
 #  * points in
@@ -12,24 +14,19 @@
 #  ...
 library(arrow)
 library(tidyverse)
-v <- open_dataset("data/vessels/vessels_iceland.parquet") |> 
-  to_duckdb() |> 
-  select(vid, mmsi) |> 
-  filter(!is.na(mmsi))
 stk <- 
-  open_dataset("data/ais/stk_raw") |> 
+  open_dataset("data/ais/stk-raw") |> 
   to_duckdb() |> 
   select(mid:io, year, month)
 stk_vid <- 
   open_dataset("data/vessels/stk_vessel_match.parquet") |> to_duckdb() |> 
-  select(mid:glid, type, d1, d2, no, vid) |> 
+  select(mid, type, d1, d2, no, vid, mmsi) |> 
   filter(!is.na(vid))
 q <- 
   stk |> 
   inner_join(stk_vid,
              by = join_by(mid, between(time, d1, d2))) |> 
   select(vid, everything()) |> 
-  left_join(v) |> 
   arrange(vid, time)
 for(y in 2007:2024) {
     YEAR <- y
@@ -37,6 +34,9 @@ for(y in 2007:2024) {
     q |> 
       filter(year == YEAR) |> 
       collect() |> 
-      arrow::write_dataset("data/ais/stk_vid", format = "parquet",
+      # order maters here when using distinct below
+      arrange(vid, time, hid, io) |> 
+      distinct(vid, time, .keep_all = TRUE) |> 
+      arrow::write_dataset("data/ais/stk-vid", format = "parquet",
                            partitioning = c("year"))
 }
