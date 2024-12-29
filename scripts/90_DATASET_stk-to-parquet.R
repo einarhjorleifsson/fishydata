@@ -16,6 +16,7 @@ for(y in 2007:2024) {
     filter(year == YEAR) |> 
     collect() |> 
     select(mid, loid, glid, everything()) |> 
+    mutate(month = as.integer(month)) |> 
     arrange(mid, time) |> 
     arrow::write_dataset("data/ais/stk-raw", format = "parquet",
                        partitioning = c("year"))

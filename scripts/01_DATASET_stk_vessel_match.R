@@ -388,7 +388,7 @@ stk2 <-
              loid %in% kvi ~ "kvi",
              loid %in% VID ~ "vid",
              loid %in% VID2 ~ "vid2",
-             numbers_only(loid) & nchar(loid) == 9  ~ "mmsi",
+             # 
              loid %in% CS ~ "cs",
              loid %in% CS2 ~ "cs2",
              loid %in% CS3 ~ "cs3",
@@ -399,6 +399,7 @@ stk2 <-
                !str_starts(loid, "MOB_")  ~ "cs4",
              numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_child ~ "mmsi.other",
              numbers_only(loid) & str_sub(loid, 1, 5) %in% MID$MID_aid ~ "mmsi.other",
+             numbers_only(loid) & nchar(loid) == 9  ~ "mmsi",
              .default = NA)) |>
   mutate(.glid =
            case_when(
@@ -410,7 +411,7 @@ stk2 <-
              glid %in% net_glid ~ "net",
              glid %in% VID ~ "vid",
              glid %in% VID2 ~ "vid2",
-             numbers_only(glid) & nchar(glid) == 9 ~ "mmsi",
+             # numbers_only(glid) & nchar(glid) == 9 ~ "mmsi",
              glid %in% CS ~ "cs",
              glid %in% CS2 ~ "cs2",
              glid %in% CS3 ~ "cs3",
@@ -421,6 +422,7 @@ stk2 <-
                !str_starts(glid, "MOB_")  ~ "cs4",
              numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_child ~ "mmsi.other",
              numbers_only(glid) & str_sub(glid, 1, 5) %in% MID$MID_aid ~ "mmsi.other",
+             numbers_only(glid) & nchar(glid) == 9 ~ "mmsi",
              #numbers_only(glid) & nchar(glid) == 7 & !omar::vessel_valid_imo(glid) ~ "imo",
              .default = NA)) |> 
   mutate(type = paste0(replace_na(.loid, "NA"), "_", replace_na(.glid, "NA"))) |> 
@@ -636,10 +638,6 @@ if(FALSE) {
 
 # I AM HERE --------------------------------------------------------------------
 
-## manual ----------------------------------------------------------------------
-# Do this in the Libre Office Spreadsheet
-
-
 lnd |> 
   filter(vid < 9900) |> 
   filter(!vid %in% c(stk11 |> select(vid) |> drop_na() |> pull(vid))) |> 
@@ -647,95 +645,26 @@ lnd |>
   left_join(v_all) |> 
   knitr::kable(caption = "List of vessels in landings not in stk")
 
-stk11 |> 
-  filter(is.na(vid)) |> 
-  count(type) |> 
-  arrange(-n) |> 
-  knitr::kable()
-stk11 |> 
-  filter(is.na(vid)) |> 
-  filter(type == "vid2_vid2") |> 
-  arrange(-pings)
-
-
-
-
-
-
-
-stk10 |> 
-  filter(vid > 0) |> 
-  filter(pings > 10) |> 
-  lh_overlaps() |> 
-  knitr::kable(caption = "Expect vid 1511, 2718, 7807, 7830")
-lh_overlaps_plot(c(120568, 100873), stk10)
-lh_overlaps_plot(c(143787, 102969), stk10)
-lh_overlaps_plot(c(106218, 100871), stk10)
-lh_overlaps_plot(c(146481, 100643), stk10)
-lh_overlaps_plot(c(140711, 101122), stk10)
-lh_overlaps_plot(c(105694, 105294), stk10)
-# seems like this merger is OK, but not fully tested
-
-# any mmsi-vid match solely based on mmsi
-stk10 |> 
-  filter(step == "NA_mmsi") |> 
-  arrange(-pings)
-# ad hoc tests
-stk10 |> filter(vid == 3003)
-lh_overlaps_plot(c(101014, 140480, 141794), stk10)
-
-
-# STATUS SO FAR ----------------------------------------------------------------
-lnd |> 
-  filter(!vid %in% c(stk10 |> select(vid) |> drop_na() |> pull(vid))) |> 
-  arrange(desc(max)) |> 
-  left_join(v_all) |> 
-  knitr::kable(caption = "List of vessels in landings not in stk")
-stk10 |> 
-  mutate(has.vid = case_when(!is.na(vid) ~ "yes",
-                             .default = "no")) |> 
-  left_join(v_mmsi |> select(vid, mmsi) |> mutate(has.vid = "yes")) |> 
-  filter(has.vid == "yes") |> 
-  filter(is.na(mmsi)) |> 
-  arrange(desc(d2)) |> 
-  #filter(year(d2) >= 2021) |> 
-  filter(vid > 0) |> 
-  left_join(v_all |> select(vid, .cs = cs, .imo = imo, yh1, yh2)) |> 
-  knitr::kable(capiton = "List of stk that have vid but no mmsi")
-
-lh_speed(c(108963, 108963))
-v_all |> filter(cs == "TFBZ")
-
-
-# manual
+# Add MMSI to Icelandic vessels ------------------------------------------------
 stk12 <- 
   stk11 |> 
-  mutate(vid = case_when(mid == 101499 ~ 2216,
-                         mid == 101878 ~ 1578,
-                         mid == 103600 ~ 3077,
-                         .default = vid))
-stk12 |> 
-  filter(type != "NA_mmsi") |> 
-  lh_overlaps() |> 
-  knitr::kable(caption = "Expect vid 1511 and 2718, 7830 is dubious")
+  left_join(v_mmsi_no_dupes |> select(vid, mmsi))
 
-## vessels still with missing mmsi, but recent d2
-stk12 |> 
-  mutate(has.vid = case_when(!is.na(vid) ~ "yes",
-                             .default = "no")) |> 
-  left_join(v_mmsi |> select(vid, mmsi) |> mutate(has.vid = "yes")) |> 
-  filter(has.vid == "yes") |> 
-  filter(is.na(mmsi)) |> 
-  arrange(desc(d2)) |> 
-  filter(year(d2) >= 2021) |> 
-  filter(vid > 0) |> 
-  left_join(v_all |> select(vid, .cs = cs, .imo = imo, yh1, yh2)) |> 
-  knitr::kable()
-
-# the 3700:4999 vessels
-lh_speed(c(102971))
-v_all |> filter(cs %in% c("TFMG"))
-
-
-
-stk11 |> filter(glid == "TFBC")
+# Extend the last date ---------------------------------------------------------
+# Need to extend the 'last' "d2" within any mobileid to something like 2028-12-24
+#  This is so that 'later' stk dumps get included in the between join downstream
+stk13 <- 
+  stk12 |> 
+  mutate(no = replace_na(no, 1)) |> 
+  group_by(mid) |> 
+  mutate(d2 = case_when(no == max(no) ~ ymd("2028-12-24"),
+                        .default = d2)) |> 
+  ungroup()
+# SAVE THE STUFF ---------------------------------------------------------------
+stk13 |> 
+  mutate(pings = as.integer(pings),
+         n_years = as.integer(n_years),
+         vid = as.integer(vid),
+         no = as.integer(no),
+         vid_older = as.integer(vid_older)) |> 
+  write_parquet("data/vessels/stk_vessel_match.parquet")
