@@ -7,4 +7,4 @@ export R_LIBS_USER
 
 . /usr/local/etc/oracle/sjor.sh
 
-exec R CMD BATCH --vanilla --slave /home/haf/einarhj/stasi/fishydata/scripts/52_DATASET_logbooks.R /home/haf/einarhj/stasi/fishydata/scripts/52_DATASET_logbooks.log
+exec R CMD BATCH --vanilla --slave /home/haf/einarhj/stasi/fishydata/scripts/52_DATASET_logbooks.R /home/haf/einarhj/stasi/fishydata/scripts/log/52_DATASET_logbooks.log
