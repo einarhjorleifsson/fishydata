@@ -1,11 +1,14 @@
 # Converting astd csv files to parquet
-
+# 
+# INPUT:  /u3/geo/pame/ASTD_area_level1_YYYYMM.csv
+# OUTPUT: /home/haf/einarhj/stasi/fishydata/data/ais/astd/*.parquet
+#
 # ISSUES -----------------------------------------------------------------------
 # Match of vessel id 2654 suspect
 
 # nohup run --------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < scripts/90_DATASET_astd-to-parquet.R --vanilla > scripts/log//90_DATASET_astd-to-parquet_2024-11-15.log &
+#  nohup R < scripts/05_DATASET_ais_astd-to-parquet.R --vanilla > scripts/log/05_DATASET_ais_astd-to-parquet_2025-01-12.log &
 #
 # Wish list
 #  NOTE: variables that were added later not appearing when open_dataset
@@ -15,76 +18,29 @@
 #  Think about using some polar coordinates
 #  Think about uber H3
 #
-# 2024-10-21
-#  Export data to /u3/haf/fishydata/ais/data/astd
-# 2024-10-07
-#  Moved astd stuff out of stasi/fishydata to stasi/astd
-#  Got the 202408 and 202409 files
-# 2024-06-27
-#  Got a new version of the 202309
-#   convert from csv to parquet "manually", i.e. did not rerun the whole lot
-# 2024-06-15
-#  make caff and pca boolean to make arrow query faster
-#  use standard terminology: time, vessel, lon, lat
-#  DO NOT DROP DISTINCT TIME PER MMSI - to that downstream
-#   but instead add a variable: mmsi_time_distinct
 #
-# 2024-06-10
-#  Corrupt 202304 is now fixed
-#  Added 202404 and 202405 to the csv
-# 2024-05-20
-#  Move distinct to upmost part of code
-#  Add spatial variables:
-#   eez
-#     issue: joint disputed Canada/Alaska missing
-#   fao fishing areas
-#   caff
-#   polar code area
-#
-# 2024-05-19
-#  Partitioning by year and month
-#  Remove time duplicates for same mmsi
-#  Add x and y based on crs = 3857
-#
-# 2024-05-17
-# unziped and moved recently downloaded zip files to /u3/geo/pame
-#  ASTD_area_level1_202108.zip to ASTD_area_level1_202403.zip
-#  changed then the script below accordingly
-#
-# 2024-05-16
-#  csv files in "ASTD_area_level1_202304.zip", "ASTD_area_level1_202308.zip",
-#   "ASTD_area_level1_202309.zip" and "ASTD_area_level1_202309.zip" are skipped
-#   because of problems
-#
-# 2024-05-15 seeding
-#  convert csv files to parquet
-#   partitioning: by year and flag state
-#  flag state is here determined by the first three digits in the mmsi
-#  additional derived variables are:
-#   speed in knots, derived from adjacent position and time
-#    note if vessel leaves area and then comes in at another point and time
-#    the speed measure will be wrong
-#   imo, same as imonumber if passes validity check
-#   vid: for icelandic vessels, unique vessel identifier
-
-# Shapes
+# Shapes source
 #  CAFF: https://geoportal.arctic-sdi.org
 #  https://map.arcticportal.org/cesium-dev/
-
 
 library(arrow)
 library(tidyverse)
 library(sf)
-
 library(tictoc)
 
-fil <- "~/stasi/gis/gisland_data/gisland/external/CAFF_Boundary_4326.zip"
+# Spatial files ----------------------------------------------------------------
+# These data will be used to classify the location of each point
+#  Ideally these shapes should be put on the hafro geoserver
+
+## CAFF area -------------------------------------------------------------------
+fil <- "~/stasi/gis/gisland_data/data-raw/misc/CAFF_Boundary_4326.zip"
 files <- unzip(fil, list = TRUE)
 unzip(zipfile = fil, exdir = tempdir())
 caff <-
   read_sf(paste0(tempdir(), "/", "CAFF_Boundary_Polygon_4326.shp")) |>
   mutate(caff = TRUE) |>
   select(caff)
+## Highs seas and EEZ ----------------------------------------------------------
 hs <-
   read_sf("~/stasi/gis/eez/World_High_Seas_v1_20200826_gpkg/High_Seas_v1.gpkg") |>
   st_cast("POLYGON") |>
@@ -109,9 +65,12 @@ eez <-
                            iso_ter1)) |>
   select(eez = iso_ter1) |>
   bind_rows(hs)
+rm(hs)
+## FAO areas -------------------------------------------------------------------
 fao <-
   read_sf("~/stasi/gis/fao/fao.gpkg") |>
   rename(fao = name)
+## Polar regions ---------------------------------------------------------------
 pr <-
   tribble(~lat, ~lon,
           900000, -1800000,
@@ -139,32 +98,31 @@ pr <-
 # # http://basemap.arctic-sdi.org/mapcache/wmts/?request=GetCapabilities&service=wmts
 # # https://geoportal.arctic-sdi.org/
 
-
+# Auxillary data ---------------------------------------------------------------
 print(lubridate::now())
 
 con <- omar::connect_mar()
 mid_flag <-
-  omar::mmsi_mid(con) |>
-  collect() |>
-  mutate(mid = as.integer(mid)) |>
-  distinct() |>
-  filter(!(mid == 306 & flag == "NLD"))
+  read_parquet("data/auxillary/maritime_identification_digits.parquet") |> 
+  select(mid = MID, flag) |> 
+  filter(!(mid == 306 & flag == "NLD")) |> 
+  mutate(mid = as.integer(mid))
 # for icelandic vessel get the unique vessel registry id (skipaskrarnumer)
-mmsi_isl <-
-  bind_rows(omar::mmsi_icelandic_registry(con) |> collect(),
-            omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20220405") |> collect(),
-            omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20201215") |> collect(),
-            omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20190627") |> collect()) |>
-  select(mmsi, vid) |>
-  distinct() |>
-  mutate(mmsi = as.integer(mmsi))
-# Houston, we have a problem
-mmsi_isl |>
-  group_by(mmsi) |>
-  mutate(n = n()) |>
-  ungroup() |>
-  filter(n > 1) |>
-  arrange(mmsi)
+# mmsi_isl <-
+#   bind_rows(omar::mmsi_icelandic_registry(con) |> collect(),
+#             omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20220405") |> collect(),
+#             omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20201215") |> collect(),
+#             omar::tbl_mar(con, "ops$einarhj.vessel_mmsi_20190627") |> collect()) |>
+#   select(mmsi, vid) |>
+#   distinct() |>
+#   mutate(mmsi = as.integer(mmsi))
+# # Houston, we have a problem
+# mmsi_isl |>
+#   group_by(mmsi) |>
+#   mutate(n = n()) |>
+#   ungroup() |>
+#   filter(n > 1) |>
+#   arrange(mmsi)
 
 
 dir <-
@@ -184,8 +142,8 @@ base_date <- c("202311",
                "202403",
                "202404")
 
-fil <- fil[142:length(fil)]
-base <- base[142:length(base)]
+#fil <- fil[143:length(fil)]
+#base <- base[143:length(base)]
 
 for(i in 1:length(fil)) {
   tic()
@@ -222,6 +180,7 @@ for(i in 1:length(fil)) {
   nrow1 <- nrow(d)
   d <-
     d |>
+    # is there a more efficient way to do this
     st_join(caff) |>
     st_join(eez) |>
     st_join(fao) |>
@@ -236,12 +195,11 @@ for(i in 1:length(fil)) {
     st_coordinates(d) |>
     as_tibble() |>
     janitor::clean_names()
-  d$x <- xy$x
-  d$y <- xy$y
+  d$x3857 <- xy$x
+  d$y3857 <- xy$y
   d <-
     d |>
     st_drop_geometry()
-
 
   d <-
     d |>
@@ -254,11 +212,9 @@ for(i in 1:length(fil)) {
                            .default = 0L)) |>
     left_join(mid_flag,
               by = join_by(mid)) |>
-    #left_join(mmsi_isl,
-    #          by = join_by(mmsi)) |>
+    arrange(mmsi, date_time_utc) |> 
     group_by(mmsi) |>
     mutate(speed = ramb::rb_speed(longitude, latitude, date_time_utc)) |>
-    # vid = replace_na(vid, -9)) |>
     ungroup()
   print(paste0(fil[i], " rows: ", nrow(d), " columns: ", ncol(d)))
   d |>
@@ -272,7 +228,8 @@ for(i in 1:length(fil)) {
            datem = ymd(paste0(year, "-", month, "-01"), tz = "UTC"),
            caff = replace_na(caff, FALSE),
            pca = replace_na(pca, FALSE)) |>
-    arrow::write_dataset("/u3/haf/data/astd", format = "parquet",
+    arrange(mmsi, time) |> 
+    arrow::write_dataset("data/ais/astd", format = "parquet",
                          partitioning = c("year", "month"))
   toc()
 }

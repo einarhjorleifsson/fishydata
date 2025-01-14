@@ -37,6 +37,7 @@ for(y in 2007:2024) {
       # order maters here when using distinct below
       arrange(vid, time, hid, io) |> 
       distinct(vid, time, .keep_all = TRUE) |> 
+      mutate(date = as_date(time)) |> 
       arrow::write_dataset("data/ais/stk-vid", format = "parquet",
                            partitioning = c("year"))
 }

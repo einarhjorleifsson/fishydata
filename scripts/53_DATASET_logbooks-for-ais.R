@@ -1,5 +1,5 @@
 # Objective --------------------------------------------------------------------
-# Correct and "standardize" logbook records
+# Should really cap effort upstream
 #
 # Approach:
 #
@@ -24,13 +24,14 @@ library(tidyverse)
 lb <- arrow::read_parquet("data/logbooks/stations.parquet")
 ca <- arrow::read_parquet("data/logbooks/catch.parquet")
 
-gears <- read_rds("data-aux/gear_codes.rds")
+# gears <- read_rds("data-aux/gear_codes.rds")
 
 # effort units of corrected gears ----------------------------------------------
 # pending, but not critical .....
 
 # Effort units -----------------------------------------------------------------
 lb |> 
+  filter(date >= ymd("2008-01-01")) |> 
   mutate(effort_unit = ifelse(!is.na(effort_unit), effort_unit, "z_missing")) |> 
   #filter(!is.na(effort_unit)) |> 
   count(gid, effort_unit) |> 
@@ -130,7 +131,7 @@ paste("Number of records:", nrow(lb))
 # Determine what records to filter downstream ----------------------------------
 
 # Save -------------------------------------------------------------------------
-lb |> write_rds("data/logbooks/station-processing.rds")
+# lb |> write_rds("data/logbooks/station-processing.rds")
 
 # X. Info ----------------------------------------------------------------------
 
@@ -167,9 +168,9 @@ tic()
 library(arrow)
 library(tidyverse)
 lb <- 
-  read_rds("data/logbooks/station-processing.rds") |> 
+  lb |> 
   filter(between(year(date), 2009, 2023))
-ca <- open_dataset("data/logbooks/catch") |> collect()
+ca <- read_parquet("data/logbooks/catch.parquet")
 
 # Filter out records -----------------------------------------------------------
 
