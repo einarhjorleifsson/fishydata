@@ -12,9 +12,11 @@
 
 # TODO: ------------------------------------------------------------------------
 #   MOVE ALL MANUAL MATCHING TO THE DUAL DOCUMENT - done
+#   ADD VID 3700-4999 MOBILE MATCH TO THE DUAL DOCUEMT
+#    * Use the match in older as a starter
 # NEWS
 # 202X-12-31
-#
+#   
 # 2024-10-24
 #  * consolidation, review and addition of older matches
 # INPUT
@@ -431,6 +433,7 @@ stk2 <-
 stk2 |> lh_overlaps() |> filter(vid > 0) |>  knitr::kable(caption = "Expect none")
 
 # Join older -------------------------------------------------------------------
+#  Note: the filter(n.mid == 1) filters out all but one of the older vid 3700 to 4999
 stk3 <- 
   stk2 |> 
   left_join(older |> filter(n.mid == 1) |> select(mid, vid_older = vid))
