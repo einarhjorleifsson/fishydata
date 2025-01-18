@@ -21,7 +21,7 @@
 #  * consolidation, review and addition of older code
 # OUTPUT -----------------------------------------------------------------------
 # data-raw/vessels/vessel-registry.parquet
-
+SAVE <- FALSE
 library(nanoparquet)
 library(arrow)
 library(tidyverse)
@@ -37,26 +37,26 @@ con <- connect_mar()
 # Import vessel registries -----------------------------------------------------
 ## ISL -------------------------------------------------------------------------
 
-vessel_ISL <- 
+vessel_ISL <-
   nanoparquet::read_parquet("data/vessels/vessels_iceland.parquet")
 
 ## FRO -------------------------------------------------------------------------
 lh_remove_first_period <- function(x) {
-  x |> 
-    str_locate_all("\\.") |>  
-    map(as_tibble) |> 
-    bind_rows(.id = ".id") |> 
-    mutate(.id = as.numeric(.id)) |> 
-    group_by(.id) |> 
+  x |>
+    str_locate_all("\\.") |>
+    map(as_tibble) |>
+    bind_rows(.id = ".id") |>
+    mutate(.id = as.numeric(.id)) |>
+    group_by(.id) |>
     summarise(n = n(),
-              first = min(start)) |> 
-    mutate(x = x) |> 
+              first = min(start)) |>
+    mutate(x = x) |>
     mutate(x = case_when(n == 2 ~ paste0(str_sub(x, 1, first - 1),
                                          str_sub(x, first + 1)),
-                         .default = x)) |> 
+                         .default = x)) |>
     mutate(x = str_squish(x),
-           x = as.numeric(x)) |> 
-    arrange(.id) |> 
+           x = as.numeric(x)) |>
+    arrange(.id) |>
     pull(x)
 }
 fil <- dir("data-raw/vessels/FRO", full.names = TRUE)
@@ -158,7 +158,7 @@ vessel_EU <-
   mutate(cs = str_trim(cs),
          uid = str_trim(uid),
          mmsi = str_trim(mmsi),
-         mmsi = as.character(mmsi)) |> 
+         mmsi = as.character(mmsi)) |>
   distinct(.vid, mmsi, .keep_all = TRUE) # Not many dual mmsi vessels
 ## ASTD ------------------------------------------------------------------------
 vessel_ASTD <-
@@ -176,15 +176,15 @@ vessel_ASTD <-
   filter(!is.na(flag),
          pings >= 100,
          nchar(mmsi) == 9) |>
-  arrange(mmsi, mmsi_t2) |> 
+  arrange(mmsi, mmsi_t2) |>
   group_by(mmsi) |>
   fill(imo, vessel, .direction = "downup") |>
   ungroup() |>
-  group_by(mmsi, imo, vessel, flag) |> 
+  group_by(mmsi, imo, vessel, flag) |>
   summarise(pings = sum(pings),
             mmsi_t1 = min(mmsi_t1),
-            mmsi_t2 = max(mmsi_t2)) |> 
-  ungroup() |> 
+            mmsi_t2 = max(mmsi_t2)) |>
+  ungroup() |>
   # keep the last information
   arrange(mmsi, desc(mmsi_t2)) |>
   distinct(mmsi, .keep_all = TRUE) |>
@@ -220,9 +220,9 @@ vessel_registry <-
             vessel_ASTD) |>
   left_join(vessel_GFW |> select(mmsi, gfw_class = .gfw_class),
             by = join_by(mmsi))
-vessel_registry |>
-  nanoparquet::write_parquet("data/vessels/vessel-registry.parquet")
-
+if(SAVE) {
+vessel_registry |> nanoparquet::write_parquet("data/vessels/vessel-registry.parquet")
+}
 # Usage example ---------------------------------------------------------------
 vessel_ASTD |>
   select(mmsi, vessel2 = vessel, flag2 = flag) |>
