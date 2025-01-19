@@ -59,7 +59,9 @@ ais <-
 
 ## Using speed alone
 
-```{r, fig.height=4}
+```{r}
+#| fig-height: 2.5
+
 dx <- 0.1
 ais |> 
   mutate(speed = speed %/% dx * dx + dx/2) |> 
@@ -102,7 +104,9 @@ p1 <-
   scale_fill_viridis_c(direction = -1, guide = "none") +
   coord_equal(expand = 0) +
   scale_x_continuous(NULL, NULL) +
-  scale_y_continuous(NULL, NULL)
+  scale_y_continuous(NULL, NULL) +
+  labs(subtitle = "Speed alone",
+       caption = "Speed cutoff: 2.625-5.500")
 p1
 ```
 
@@ -137,7 +141,8 @@ p2 <-
   scale_fill_viridis_c(direction = -1, guide = "none") +
   coord_equal(expand = 0) +
   scale_x_continuous(NULL, NULL) +
-  scale_y_continuous(NULL, NULL)
+  scale_y_continuous(NULL, NULL) +
+  labs(subtitle = "Logbooks alone")
 p1 + p2
 ```
 
@@ -145,7 +150,7 @@ So we are getting bit less of false positives close to shore as expected. But ca
 
 ## Both speed and time as filter
 
-```{r, fig.height=3}
+```{r, fig.height=2.5}
 g <- 
   ais |> 
   filter(between(speed, 2.625, 5.500)) |> 
@@ -171,7 +176,9 @@ p3 <-
   scale_fill_viridis_c(direction = -1, guide = "none") +
   coord_equal(expand = 0) +
   scale_x_continuous(NULL, NULL) +
-  scale_y_continuous(NULL, NULL)
+  scale_y_continuous(NULL, NULL) +
+  labs(subtitle = "Speed and logbooks",
+       caption = "Speed cutoff: 2.625-5.500")
 p1 + p2 + p3
 ```
 
@@ -210,8 +217,9 @@ p4 <-
   scale_fill_viridis_c(direction = -1, guide = "none") +
   coord_equal(expand = 0) +
   scale_x_continuous(NULL, NULL) +
-  scale_y_continuous(NULL, NULL)
-p3 + p4
+  scale_y_continuous(NULL, NULL) +
+  labs(subtitle = "Plaice catch")
+p3 + labs(subtitle = "Total effort", caption = NULL) + p4
 ```
 
 So, plaice is not caught so much offshore!
