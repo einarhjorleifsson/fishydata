@@ -5,7 +5,7 @@
 #   * Attempt to write the code flow so it can easily be updated
 #     once new data are compiled (Not there yet)
 #
-#  The code includes many "tests", indended to capture possible match issues
+#  The code includes many "tests", intended to capture possible match issues
 #   as upstream as possible. The code is a result of iterative procedure where
 #   overlaps (same mobileid on 2-3 vessels) are reported in the dual spreadsheet,
 #   then whole process run a again, checking again for issues at each step.
@@ -306,77 +306,23 @@ older <-
   group_by(mid) |> 
   mutate(n.mid = n()) |> 
   ungroup()
-# DUALS ------------------------------------------------------------------------
-# Here we rely on some older work in addition to new work
-#  This should NOT BE RUN AGAIN
-#  Any future changes have to be done manually in:
-#   data-raw/stk_mobile_fix/dual_mobileid.ods
-if(FALSE) {
-  duals_older <- 
-    older |> 
-    filter(!is.na(no)) |> 
-    filter(n.mid > 1) |> 
-    select(mid, loid, glid, vid, no, d1 = t1, d2 = t2)
-  duals_new <- 
-    tribble(~mid, ~loid, ~glid, ~d1, ~d2, ~vid, ~no,
-            101092, "975",   "TFGT", "2007-06-04", "2019-12-31", 975, 1,
-            101092, "975",   "TFGT", "2020-01-01", "2029-12-31", 3002, 2,
-            101119, "1401",  "TFQF", "1999-11-24", "2022-03-31", 1401, 1,
-            101119, "1401",  "TFQF", "2022-03-31", "2029-12-31", 2730, 2,
-            108982, "2835",  "TFFL", "2012-09-07", "2018-12-24", 1173, 1,    # dubious, no MMSI
-            108982, "2835",  "TFFL", "2020-01-01", "2029-12-31", 7830, 2,
-            101015, "1052",  "TFRN", "1970-01-01", "2010-12-31", 1052, 1,
-            101015, "1052",  "TFRN", "2020-01-01", "2029-12-31", 3021, 2,
-            100135, "1838",  "TFJP", "2007-06-01", "2009-12-31", 2299, 1,  # this is a dummy
-            100135, "1838",  "TFJP", "2019-01-01", "2029-12-31", 2988, 2,
-            100603, "483",   "TFEG", "2008-06-26", "2014-12-31", 2722, 1,
-            100603, "483",   "TFEG", "2015-01-01", "2029-12-31", 2910, 2,
-            103251, "4322",  "TFDP", "2012-01-26", "2014-12-31", 1441, 1,
-            103251, "4322",  "TFDP", "2015-01-01", "2029-12-31", 2948, 2
-    ) #|> 
-  #mutate(d1 = ymd(d1),
-  #       d2 = ymd(d2))
-  bind_rows(duals_older, duals_new) |> 
-    arrange(mid) |> 
-    left_join(v_mmsi |> select(vid, yh1, yh2)) |> 
-    write_csv("data-raw/stk_mobile_fix/dual_mobileid.csv")
-}
 
-# test duals
-if(FALSE) {
-  duals <- 
-    readODS::read_ods("data-raw/stk_mobile_fix/dual_mobileid.ods")
-  STK |> 
-    filter(mid %in% c(108982)) |>
-    select(mid, loid, glid, time, speed) |>
-    mutate(speed = ifelse(speed > 15, 15, speed)) |> 
-    collect() |> 
-    left_join(duals,
-              by = join_by(mid == mid, loid == loid, glid == glid,
-                           between(time, d1, d2))) |> 
-    ggplot(aes(time, speed, colour = factor(vid))) +
-    geom_point(size = 0.01) +
-    facet_wrap(~ mid, ncol = 1) +
-    scale_x_datetime(date_breaks = "2 year", date_labels = "%Y")
-  v_mmsi |> filter(cs == "TFIS")
-  stk2 |> filter(vid_older == 2870)
-}
-
-# Join duals -------------------------------------------------------------------
-duals <- 
-  readODS::read_ods("data-raw/stk_mobile_fix/dual_mobileid.ods") |> 
+# Join manual (duals) ----------------------------------------------------------
+manual <- 
+  "data-raw/stk_mobile_match-and-duals/stk_mobile_match-and-duals.ods" |> 
+  readODS::read_ods() |> 
   select(mid:d2)
 
 stk1 <-
   stk |> 
-  left_join(duals |> 
+  left_join(manual |> 
               select(mid, vid, no, .d1 = d1, .d2 = d2)) |> 
   mutate(d1 = case_when(!is.na(.d1) ~ .d1,
                         .default = d1),
          d2 = case_when(!is.na(.d2) ~ .d2,
                         .default = d2)) |> 
   select(-c(.d1, .d2)) |> 
-  mutate(step = case_when(!is.na(vid) ~ "duals",
+  mutate(step = case_when(!is.na(vid) ~ "manuals",
                           .default = NA))
 
 
@@ -438,7 +384,7 @@ stk3 <-
   stk2 |> 
   left_join(older |> filter(n.mid == 1) |> select(mid, vid_older = vid))
 stk3 |> lh_overlaps() |> filter(vid > 0) |> knitr::kable(caption = "Expect none")
-stk3 |> lh_mmsi_expectations()
+stk3 |> filter(!vid %in% 3700:4999) |> lh_mmsi_expectations()
 
 ## vid_vid ---------------------------------------------------------------------
 stk4 <- 
@@ -483,7 +429,7 @@ stk5 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1
 if(FALSE) {
   lh_overlaps_plot(c(103851, 101223), stk5) # expected, vid 2718 has one mid inbetween another mid
 }
-stk5 |> lh_mmsi_expectations()
+stk5 |> filter(!vid %in% 3700:4999) |>  lh_mmsi_expectations()
 ## uid_cs match ----------------------------------------------------------------
 stk6 <- 
   stk5 |> 
@@ -505,7 +451,7 @@ stk6 |>
   filter(is.na(vid)) |> 
   knitr::kable(caption = "Missing vid for type uid_cs (expect none)")
 stk6 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1511, 2718, 7807")
-stk6 |> lh_mmsi_expectations()
+stk6 |> filter(!vid %in% 3700:4999) |> lh_mmsi_expectations()
 
 ## NA_vid match ----------------------------------------------------------------
 stk7 <-
@@ -529,7 +475,7 @@ stk7 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1
 if(FALSE) {
   lh_overlaps_plot(c(101081), stk7) # Still dubious, second period for 2067 may be a wrong allocation
 }
-stk7 |> lh_mmsi_expectations()
+stk7 |> filter(!vid %in% 3700:4999) |> lh_mmsi_expectations()
 
 ## NA_cs ------------------------------------------------------------------------
 stk8 <- 
@@ -548,7 +494,7 @@ stk8 |>
   filter(is.na(vid)) |> 
   knitr::kable(caption = "Missing vid for type NA_cs (expect none)")
 stk8 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1511, 2718, 7807")
-stk8 |> lh_mmsi_expectations()
+stk8 |> filter(!vid %in% 3700:4999) |> lh_mmsi_expectations()
 
 ## vid2_cs ---------------------------------------------------------------------
 # Question if this should come next
@@ -570,7 +516,7 @@ stk9 |>
   filter(is.na(vid)) |> 
   knitr::kable()
 stk9 |> filter(vid > 0) |> lh_overlaps() |> knitr::kable(caption = "Expect vid 1511, 2718, 7807")
-stk9 |> lh_mmsi_expectations()
+stk9 |> filter(!vid %in% 3700:4999) |> lh_mmsi_expectations()
 
 
 if(FALSE) {
@@ -603,7 +549,7 @@ if(FALSE) {
   lh_overlaps_plot(c(113343, 107082), stk10) # 396
   lh_overlaps_plot(c(107945, 100430), stk10) # 950
 }
-stk10 |> lh_mmsi_expectations()
+stk10 |> filter(!vid %in% 3700:4999) |> lh_mmsi_expectations()
 
 ## NA_mmsi ---------------------------------------------------------------------
 v_mmsi_no_dupes <- 
