@@ -159,7 +159,8 @@ vessel_EU <-
          uid = str_trim(uid),
          mmsi = str_trim(mmsi),
          mmsi = as.character(mmsi)) |>
-  distinct(.vid, mmsi, .keep_all = TRUE) # Not many dual mmsi vessels
+  distinct(.vid, mmsi, .keep_all = TRUE) |> # Still some dual mmsi
+  distinct(mmsi, .keep_all = TRUE)
 ## ASTD ------------------------------------------------------------------------
 vessel_ASTD <-
   open_dataset("data/ais/astd") |>
@@ -220,8 +221,9 @@ vessel_registry <-
             vessel_ASTD) |>
   left_join(vessel_GFW |> select(mmsi, gfw_class = .gfw_class),
             by = join_by(mmsi))
+
 if(SAVE) {
-vessel_registry |> nanoparquet::write_parquet("data/vessels/vessel-registry.parquet")
+  vessel_registry |> nanoparquet::write_parquet("data/vessels/vessel-registry.parquet")
 }
 # Usage example ---------------------------------------------------------------
 vessel_ASTD |>

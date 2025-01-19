@@ -8,6 +8,9 @@ data-raw/harbours
 data-raw/older
 data-raw/vessels
 data-raw/stk_mobile_match-and-duals/older
+*.log
+_freeze
+_site
 
 *.html
 
