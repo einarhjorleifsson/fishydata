@@ -1,0 +1,171 @@
+---
+title: "datacall"
+---
+
+* try to separate out mutation process and filter/qc process. i.e. don't do both at the same time
+
+## Preamble
+
+This document is trying to emulate the process behind the (2024) datacall. Some deviations in the code flow, in particular if less terse approach can easily be implemented.
+
+## libraries
+
+```{r}
+library(vmstools)
+library(sf)
+library(tidyverse)
+#library(tidylog)
+library(conflicted)
+conflicts_prefer(dplyr::filter, dplyr::lag)
+```
+
+## Globals
+
+```{r}
+# Setting thresholds
+spThres       <- 20   # Maximum speed threshold in analyses in nm
+intThres      <- 5    # Minimum difference in time interval in minutes to prevent pseudo duplicates
+intvThres     <- 240  # Maximum difference in time interval in minutes to prevent unrealistic intervals
+lanThres      <- 1.5  # Maximum difference in log10-transformed sorted weights
+
+# Set the years to submit
+yearsToSubmit <- c(1803:1804)
+
+# Set the gear names for which automatic fishing activity is wanted
+autoDetectionGears <- c("TBB","OTB","OTT", "OTM","SSC","SDN","DRB","PTB","HMD", "MIS")
+
+# Decide if you want to visually analyze speed-histograms to identify fishing activity peaks
+visualInspection <- FALSE
+
+# Specify how landings should be distributed over the VMS pings
+linkEflaloTacsat <- c("trip")
+
+# Extract valid level 6 metiers 
+valid_metiers <- data.table::fread("https://raw.githubusercontent.com/ices-eg/RCGs/master/Metiers/Reference_lists/RDB_ISSG_Metier_list.csv")$Metier_level6
+
+ices_geartype        <-  icesVocab::getCodeList("GearType")
+ices_fishingactivity <-  icesVocab::getCodeList("Metier6_FishingActivity")
+
+# speed allocation
+speed <-
+  tribble(~met, ~s1, ~s2)
+```
+
+
+## Auxillary data
+
+```{r}
+data(harbours)
+data(ICESareas)
+
+ices <- 
+  ICESareas |> 
+  select(area = Area_27)
+sf_use_s2(TRUE)
+harbours <- 
+  harbours |> 
+  dplyr::mutate(harbour = iconv(harbour, from = "latin1", to = "UTF-8")) |> 
+  tibble::as_tibble() |> 
+  sf::st_as_sf(coords = c("lon", "lat"),
+               crs = 4326) |> 
+  sf::st_buffer(dist = 3000) |>  # radius
+  dplyr::select(harbour)
+# may use
+dictionary <- 
+  tribble(~iso, ~vt,
+          "dttm", "SI_DATIM",
+          "date", "SI_DATE",
+          "time", "SI_TIME",
+          "vid", "VE_REF",
+          "D1", "FT_DDAT",
+          "D2", "FT_LDAT")
+```
+
+## Data prepre-processing
+
+Have leap year issues in the vmstools inbuilt dataset, hence:
+
+```{r}
+data(tacsat)
+tacsat <- 
+  tacsat |> 
+  dplyr::mutate(SI_DATE = stringr::str_replace(SI_DATE, "1800", "1803"),
+                SI_DATE = stringr::str_replace(SI_DATE, "1801", "1804")) |> 
+  # do things upfront rather than downstream
+  mutate(SI_DATIM = dmy_hms(paste(SI_DATE, SI_TIME))) |>
+  st_as_sf(coords = c("SI_LONG", "SI_LATI"),
+           crs = 4326,
+           remove = FALSE) |> 
+  # no need for this
+  select(-c(SI_DATE, SI_TIME)) |> 
+  arrange(VE_COU, VE_REF, SI_DATIM) |> 
+  mutate(.rid = 1:n(),
+         .before = VE_COU)
+
+
+data(eflalo)
+eflalo <- 
+  eflalo |> 
+  dplyr::mutate(FT_DDAT = stringr::str_replace(FT_DDAT, "1800", "1803"),
+                FT_DDAT = stringr::str_replace(FT_DDAT, "1801", "1804"),
+                FT_LDAT = stringr::str_replace(FT_LDAT, "1800", "1803"),
+                FT_LDAT = stringr::str_replace(FT_LDAT, "1801", "1804"),
+                LE_CDAT = stringr::str_replace(LE_CDAT, "1800", "1803"),
+                LE_CDAT = stringr::str_replace(LE_CDAT, "1801", "1804")) |> 
+  dplyr::rename(LE_MET = LE_MET_level6) |> 
+  # do things upfront rather than downstream
+  mutate(FT_DDATIM = dmy_hms(paste(FT_DDAT, FT_DTIME)),
+         FT_LDATIM = dmy_hms(paste(FT_LDAT, FT_LTIME)),
+         LE_TRIP = paste0(LE_ID, "-", LE_CDAT)) |> 
+  select(-c(FT_DDAT, FT_DTIME, FT_LDAT, FT_LTIME)) |> 
+  arrange(VE_REF, FT_DDATIM) |> 
+  mutate(.rid = 1:n(),
+         .before = VE_COU)
+```
+
+## Preprocessing
+
+```{r}
+tacsat <- 
+  tacsat |> 
+  # 1.2.1 Remove VMS pings outside the ICES areas
+  st_join(ices) |> 
+  filter(!is.na(area)) |> 
+  # 1.2.2 Remove duplicate records
+  distinct(VE_REF, SI_DATIM, SI_LATI, SI_LONG, .keep_all = TRUE) |> 
+  # 1.2.3 Remove points that have impossible coordinates
+  #       Redundant given above
+  # 1.2.4 Remove points which are pseudo duplicates as they have an interval rate < x minutes
+  group_by(VE_COU, VE_REF) |> 
+  # by convention
+  mutate(INTV = difftime(lead(SI_DATIM), SI_DATIM, units = "mins"),
+         # should possibly retain unit
+         INTV = as.numeric(INTV)) |> 
+  fill(INTV, .direction = "down") |> 
+  ungroup() |> 
+  filter(INTV >= intThres) |> 
+  # 1.2.5 Remove points in harbour
+  #       must be a nicer way
+  #       check for record expansion
+  filter(length(st_intersects(geometry, harbours$geometry)) > 0)
+
+eflalo <- 
+  eflalo |> 
+  # 1.3.3 Remove non-unique trip numbers
+  distinct(LE_TRIP, .keep_all = TRUE) |> 
+  # 1.3.4 Remove impossible time stamp records
+  drop_na(FT_DDATIM, FT_LDATIM) |> 
+  # 1.3.5 Remove trip starting before 1st Jan
+  #       Interpreted as trips that go over the new year
+  filter(year(FT_DDATIM) == year(FT_LDATIM)) |> 
+  # 1.3.6 Remove records with arrival date before departure date
+  filter(FT_LDATIM >= FT_DDATIM) |> 
+  # 1.3.7 Remove trip with overlap with another trip
+  #  ... find better code
+  # 1.4.1 Check Metier L4 (Gear) categories are accepted
+  filter(LE_GEAR %in% ices_geartype$Key) |> 
+  # 1,4,2 Check Metier L6 (Fishing Activity) categories are accepted
+  filter(LE_MET %in% ices_fishingactivity$Key)
+
+```
+
