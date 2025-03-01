@@ -1,0 +1,67 @@
+---
+title: "Vocabularies"
+author: Einar Hjörleifsson
+description: ""
+date: "2025-03-01"
+categories: [code, rtip]
+echo: true
+draft: true
+---
+
+```{r}
+library(tidyverse)
+dictionary <- 
+  tribble(~std, ~datacall,
+          "vid",        "VE_REF",
+          #NA,           "VE_FLT",
+          #NA,           "VE_COU",
+          "loa",        "VE_LEN",
+          "kw",         "VE_KW",
+          "gt",         "VE_TON",
+          ".tid",       "FT_REF",
+          #NA,           "FT_DCOU",
+          "h1",         "FT_DHAR",
+          "D1",         "FT_DDAT",
+          #NA,           "FT_DTIME",
+          "T1",         "FT_DDATIM",
+          #NA,           "FT_LCOU",
+          "h2",         "FT_LHAR",
+          "D2",         "FT_LDAT",
+          #NA,           "FT_LTIME",
+          "T1",         "FT_LDATIM",
+          ".sid",       "LE_ID",
+          "d1",         "LE_CDAT",
+          #NA,           "LE_STIME",
+          #"t1",         NA,
+          #NA,           "LE_ETIME",
+          "lon1",       "LE_SLON",
+          "lat1",       "LE_SLAT",
+          "lon2",       "LE_ELON",
+          "lat2",       "LE_ELAT",
+          "gid",        "LE_GEAR",
+          "mesh",       "LE_MSZ",
+          "ir",         "LE_RECT" #
+          #NA,           "LE_DIV",
+          #NA,           "LE_MET_level6",
+          #NA,           "LE_UNIT",
+          #NA,           "LE_EFF",
+          #NA,           "LE_EFF_VMS"
+          )
+dictionary |> 
+  knitr::kable()
+
+
+vocabulary <- dictionary$datacall
+names(vocabulary) <- dictionary$std
+```
+
+
+```{r}
+library(vmstools)
+data("eflalo")
+eflalo |> 
+  select(VE_REF:LE_EFF_VMS) |> 
+  rename(any_of(vocabulary)) |> 
+  glimpse()
+```
+

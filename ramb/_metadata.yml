@@ -27,3 +27,13 @@ author:
 
 # Default fields for citation
 citation: false
+
+format:
+  html:
+    theme: flatly
+    css: styles.css
+    toc: false
+    message: false
+    warning: false
+    echo: true
+    code-fold: false

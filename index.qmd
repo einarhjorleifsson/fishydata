@@ -2,7 +2,7 @@
 title: ""
 ---
 
-```{r}
+```{r, echo = FALSE}
 #| column: screen
 #| out-width: 100%
 #| fig-height: 9

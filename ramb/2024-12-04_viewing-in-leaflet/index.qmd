@@ -1,0 +1,147 @@
+---
+title: "Viewing in leaflet"
+author: "Einar Hjörleifsson"
+description: "Fisheries footprint are often difficult to view in static plots like ggplot2. Leaflet offers some remedy and here is a demonstration of how data already processed as poor-man's grid for plotting in ggplot can be converted to rasters that then can be plotted via leaflet."
+date: "2024-12-04"
+categories: [code, ais, fisheries]
+---
+
+## The data
+
+```{r}
+library(raster)   # the old faithful, used to generate raster for leaflet
+library(viridis)  # for generating colour palettes for leaflet
+library(sf)
+library(leaflet)
+library(tidyverse)
+library(arrow)
+library(duckdb)
+
+lgs <- 
+  open_dataset("/u3/haf/stasi/fishydata/data/logbooks/stations.parquet") |> 
+  to_duckdb() |> 
+  filter(between(year(date), 2015, 2024),
+         # Note: this is gear id in the gafl landings database which is rarely
+         #  the same as in the other databases
+         gid == 9) |> 
+  distinct(vid, mmsi, date, t1, t2, catch_total, .keep_all = TRUE) |> 
+  select(.sid, mmsi, vid, gid, gid_ln_agf, date, t1, t2, lb_base)
+ais <- 
+  open_dataset("/u3/haf/stasi/fishydata/data/ais/astd_isleez") |> 
+  to_duckdb() |> 
+  # Not in harbour
+  filter(.cid > 0) |> 
+  # Fishing occurred on date
+  filter(between(year, 2015, 2024),
+         gid == 9) |> 
+  left_join(lgs,
+            by = join_by(mmsi, between(time, t1, t2))) |> 
+  filter(between(speed, 2, 4)) |>  
+  filter(!is.na(.sid))
+```
+
+## The static way
+
+Been through this in earlier post
+
+```{r}
+dx <- 1852 / 2 # grid in meters - here half a nautical mile
+g <- 
+  ais |> 
+  filter(between(lon, -30, -10),
+         between(lat, 63, 65)) |> 
+  mutate(x = x %/% dx * dx + dx/2,
+         y = y %/% dx * dx + dx/2) |>
+  group_by(x, y) |> 
+  summarise(effort = sum(dminutes, na.rm = TRUE) / 60,
+            .groups = "drop") |> 
+  collect()
+```
+
+```{r}
+cap_value <- function(x, q = 0.975) {
+  Q <- quantile(x, q)
+  ifelse(x > Q, Q, x)
+}
+g |> 
+  mutate(effort = cap_value(effort)) |> 
+  ggplot() +
+  theme_void() +
+  geom_tile(aes(x, y, fill = effort)) +
+  scale_fill_viridis_c() +
+  coord_equal()
+```
+
+## Leaflet
+
+Here we do the following:
+
+* Convert the poor-mans gridded data to a proper raster
+* Create a palette mapping datavalues to colour (done a little different than in gggplot)
+* Generate the leaflet
+
+```{r}
+r <- 
+  g |> 
+  select(x, y, effort) |> 
+  mutate(effort = cap_value(effort)) |> 
+  raster::rasterFromXYZ()
+raster::crs(r) <- "epsg:3857"
+inf <- inferno(12, alpha = 1, begin = 0, end = 1, direction = -1)
+pal <- colorNumeric(inf, raster::values(r), na.color = "transparent")
+
+l <-
+  leaflet(options = leafletOptions(minZoom = 4, maxZoom = 11)) %>%
+  addTiles(urlTemplate = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+           group = "Image",
+           attribution = 'Data source: <a href="https://www.hafogvatn.is">Marine Rearch Institute</a>') %>%
+  setView(-18, 65.2, zoom = 6) %>%
+  addRasterImage(r, colors = pal, opacity = 1, group = "Humarvarpa",
+                 maxBytes = Inf,
+                 project = FALSE) 
+l
+```
+
+We may want to add some topography and depth contours.
+
+```{r}
+# get the depth contours
+read_sf_ftp <- function (name, url = "ftp://ftp.hafro.is/pub/data/shapes") {
+    sf::read_sf(paste0(url, "/", name, ".gpkg"))
+}
+z <- 
+  read_sf_ftp("depth_polygons") |> 
+  st_cast("MULTILINESTRING")
+```
+
+
+```{r}
+# should not have to start from scratch, but ...
+leaflet(options = leafletOptions(minZoom = 4, maxZoom = 11)) %>%
+  addTiles(urlTemplate = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+           group = "Image",
+           attribution = 'Data source: <a href="https://www.hafogvatn.is">Marine Rearch Institute</a>') %>%
+  setView(-18, 65.2, zoom = 6) |> 
+  addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/haf/050m/{z}/{x}/{-y}.png",
+             group = "Botnlag",
+             options = tileOptions(minZoom = 5, maxZoom = 16)) |>
+    addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/haf/020m/{z}/{x}/{-y}.png",
+             group = "Botnlag",
+             options = tileOptions(minZoom = 5, maxZoom = 16)) |>
+    addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/lhg/{z}/{x}/{-y}.png",
+             group = "Botnlag",
+             options = tileOptions(minZoom = 0, maxZoom = 16)) |>
+    addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/vestfirdir_dpi/{z}/{x}/{-y}.png",
+             group = "Botnlag",
+             options = tileOptions(minZoom = 0, maxZoom = 16)) |> 
+  addRasterImage(r, colors = pal, opacity = 1, group = "Humarvarpa",
+                 maxBytes = Inf,
+                 project = FALSE) |> 
+  addPolylines(data = z,opacity = 1, color = "white", weight = 1, group = "z") |> 
+  addLayersControl(
+    baseGroups = c("Image", "Botnlag"),
+      overlayGroups = c("Humarvarpa", "z"),
+      options = layersControlOptions(collapsed = FALSE))
+```
+
+More on the basics of leaflet [here](https://rstudio.github.io/leaflet)

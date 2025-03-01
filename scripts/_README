@@ -1,0 +1,17 @@
+## 00_DATASET_aux_***,R
+
+* Auxillary datasets, sets likely not needed to be updated frequently
+
+## 01_DATASET_aux_***.R
+
+* Auxillary dataset that need periodical updating - like new vessels, new mmsi, ...
+
+## 02_DATASET_cronjobs-***.R
+
+* landings and logbooks are run daily
+* stk should be run every 10 minutes - need to put this in place
+
+## 05_DATASET_ais_***.R
+
+* Convertion of various ais dataset to parquet format with little or no additional coding
+* Additional / recent data need to be periodically updated - should possibly be setup as chronjobs

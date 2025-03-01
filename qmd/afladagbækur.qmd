@@ -1,0 +1,31 @@
+---
+title: "Logbooks"
+---
+
+
+## Lágmarksbreytur
+
+Fyrir hverja veiðaðgerð:
+
+* Dagsetning og tími
+* Staðsetning (lon og lat)
+* Sókn:
+  * Dregin veiðarfæri: togtími
+  * Lína og handfæri: fjöldi króka
+  * Net: fjöldi neta
+  * Gildrur: fjöldi gildra
+* Afli eftir tegundum
+
+
+
+## Preamble
+
+When considering longline fishing operations one can think of 4 different units:
+
+1. Lögn hefst (t1)
+2. Lögn lýkur (t2)
+3. Dráttur hefst (t3)
+4. Drætti lýkur (t4)
+
+Venjulega er stutt á milli þess að lögn hefst og lögn lýkur en lengra á milli upphaf og lok dráttar. 
+Í gamla afladagbókarkerfinu var hægt að skrá breyturnar t1, t3, og t4.

@@ -44,7 +44,8 @@ tic()
 
 lubridate::now()
 
-YEARS <- 2024:2001
+# 1991 generates an error
+YEARS <- c(2025:1992, 1990:1985)
 
 library(arrow)
 library(data.table)
@@ -105,7 +106,7 @@ AGF <-  open_dataset("~/stasi/fishydata/data/landings/agf_stations.parquet") |> 
 
 ## Mobile gear ----------------------------------------------------------------
 MOBILE_old <-
-  omar::lb_mobile(con, correct_gear = FALSE, trim = TRUE) |> 
+  omar::lb_mobile(con, correct_gear = FALSE, trim = FALSE) |>
   filter(year %in% YEARS,
          # only towing gear
          gid %in% c(5, 6, 7, 8, 9, 10, 12, 14, 15, 38, 40)) |> 
@@ -210,7 +211,7 @@ GRASL <-
          table,
          catch = bio)
 GRASL     
-# I AM HERE --------------------------------------------------------------------
+
 # Need to split grasleppa into stofn and catch - issue is that visir is not
 #  a true thing, may create problems downstream
 

@@ -35,7 +35,7 @@ lubridate::now()
 
 # NOTE: If using years further back: need to double check that visir and station_id
 #       are not the same.
-YEARS <- 2024:2001
+YEARS <- 2025:2001
 
 library(tidyverse)
 library(arrow)
@@ -54,7 +54,8 @@ LN_raw <-
     gid_ln = gid,
     datel = date) |> 
   collect(n = Inf) |> 
-  filter(vid %in% c(2, 5:3699, 5000:9998)) |> 
+  filter(vid >= 5) |> 
+  #filter(vid %in% c(2, 5:3699, 5000:9998)) |> 
   mutate(datel = as_date(datel),
          vid = as.integer(vid),
          gid_ln = as.integer(gid_ln),
@@ -159,7 +160,8 @@ LN_raw2 <-
          gid_ln = gid,
          datel = date) |> 
   collect(n = Inf) |> 
-  filter(vid %in% c(2, 5:3699, 5000:9998)) |> 
+  filter(vid >= 5) |> 
+  #filter(vid %in% c(2, 5:3699, 5000:9998)) |> 
   mutate(datel = as_date(datel),
          vid = as.integer(vid),
          gid_ln = as.integer(gid_ln),

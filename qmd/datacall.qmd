@@ -90,19 +90,7 @@ data(tacsat)
 tacsat <- 
   tacsat |> 
   dplyr::mutate(SI_DATE = stringr::str_replace(SI_DATE, "1800", "1803"),
-                SI_DATE = stringr::str_replace(SI_DATE, "1801", "1804")) |> 
-  # do things upfront rather than downstream
-  mutate(SI_DATIM = dmy_hms(paste(SI_DATE, SI_TIME))) |>
-  st_as_sf(coords = c("SI_LONG", "SI_LATI"),
-           crs = 4326,
-           remove = FALSE) |> 
-  # no need for this
-  select(-c(SI_DATE, SI_TIME)) |> 
-  arrange(VE_COU, VE_REF, SI_DATIM) |> 
-  mutate(.rid = 1:n(),
-         .before = VE_COU)
-
-
+                SI_DATE = stringr::str_replace(SI_DATE, "1801", "1804"))
 data(eflalo)
 eflalo <- 
   eflalo |> 
@@ -112,22 +100,24 @@ eflalo <-
                 FT_LDAT = stringr::str_replace(FT_LDAT, "1801", "1804"),
                 LE_CDAT = stringr::str_replace(LE_CDAT, "1800", "1803"),
                 LE_CDAT = stringr::str_replace(LE_CDAT, "1801", "1804")) |> 
-  dplyr::rename(LE_MET = LE_MET_level6) |> 
-  # do things upfront rather than downstream
-  mutate(FT_DDATIM = dmy_hms(paste(FT_DDAT, FT_DTIME)),
-         FT_LDATIM = dmy_hms(paste(FT_LDAT, FT_LTIME)),
-         LE_TRIP = paste0(LE_ID, "-", LE_CDAT)) |> 
-  select(-c(FT_DDAT, FT_DTIME, FT_LDAT, FT_LTIME)) |> 
-  arrange(VE_REF, FT_DDATIM) |> 
-  mutate(.rid = 1:n(),
-         .before = VE_COU)
+  dplyr::rename(LE_MET = LE_MET_level6)
 ```
 
 ## Preprocessing
 
-```{r}
+```{r, eval = FALSE}
 tacsat <- 
   tacsat |> 
+  # do things upfront rather than downstream
+  mutate(SI_DATIM = dmy_hms(paste(SI_DATE, SI_TIME))) |>
+  st_as_sf(coords = c("SI_LONG", "SI_LATI"),
+           crs = 4326,
+           remove = FALSE) |> 
+  # no need for this
+  select(-c(SI_DATE, SI_TIME)) |> 
+  arrange(VE_COU, VE_REF, SI_DATIM) |> 
+  mutate(.rid = 1:n(),
+         .before = VE_COU) |> 
   # 1.2.1 Remove VMS pings outside the ICES areas
   st_join(ices) |> 
   filter(!is.na(area)) |> 
@@ -149,9 +139,20 @@ tacsat <-
   #       check for record expansion
   filter(length(st_intersects(geometry, harbours$geometry)) > 0)
 
-eflalo <- 
+# Bit stuck here:
+eflalo2 <-
   eflalo |> 
+  # do things upfront rather than downstream
+  mutate(FT_DDATIM = dmy_hms(paste(FT_DDAT, FT_DTIME)),
+         FT_LDATIM = dmy_hms(paste(FT_LDAT, FT_LTIME)),
+         # I FIND THIS VERY STRANGE - AT LEAST THE NAMING
+         LE_TRIP = paste0(LE_ID, "-", LE_CDAT)) |> 
+  select(-c(FT_DDAT, FT_DTIME, FT_LDAT, FT_LTIME)) |> 
+  arrange(VE_REF, FT_DDATIM) |> 
+  mutate(.rid = 1:n(),
+         .before = VE_COU) |> 
   # 1.3.3 Remove non-unique trip numbers
+  # HERE THE STRANGE BREW IS USED - BUT THEN NO MORE
   distinct(LE_TRIP, .keep_all = TRUE) |> 
   # 1.3.4 Remove impossible time stamp records
   drop_na(FT_DDATIM, FT_LDATIM) |> 
@@ -161,7 +162,19 @@ eflalo <-
   # 1.3.6 Remove records with arrival date before departure date
   filter(FT_LDATIM >= FT_DDATIM) |> 
   # 1.3.7 Remove trip with overlap with another trip
-  #  ... find better code
+  arrange(VE_COU, VE_REF, FT_DDATIM) |> 
+  nest(.by = c(VE_REF, VE_COU:FT_LDATIM)) |> # Change things here
+  group_by(VE_COU, VE_REF) |> 
+  mutate(issues = 
+           case_when(
+                     FT_DDATIM > FT_LDATIM ~ "arrival before departure",
+                     FT_DDATIM == FT_LDATIM ~ "arrival same as departure",
+                     FT_LDATIM > lead(FT_DDATIM) ~ "next departure before current arrival",
+                     lag(FT_LDATIM) > FT_DDATIM ~ "previous arrival after current departure",
+                     row_number() == 1 ~ "0_first row in a group", 
+                     row_number() == max(row_number()) ~ "0_last row in a group",
+                     .default = "0_no issues")) |> 
+  ungroup()
   # 1.4.1 Check Metier L4 (Gear) categories are accepted
   filter(LE_GEAR %in% ices_geartype$Key) |> 
   # 1,4,2 Check Metier L6 (Fishing Activity) categories are accepted

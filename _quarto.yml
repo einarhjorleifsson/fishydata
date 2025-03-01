@@ -10,6 +10,7 @@ website:
       - text: Something
         menu:
           - qmd/links.qmd
+          - qmd/datacall.qmd
       - text: Forritun
         menu:
           - qmd/links.qmd
@@ -23,6 +24,7 @@ format:
     theme: flatly
     css: styles.css
     toc: false
-    echo: false
     message: false
     warning: false
+    echo: true
+    code-fold: true

@@ -3,6 +3,11 @@ title: "Links"
 format: html
 ---
 
+* [Lög um vaktstöð siglinga](https://www.althingi.is/lagas/nuna/2003041.html)
+* [Vegagerðin: Vaktstöð siglinga](https://www.vegagerdin.is/samgongukerfid/siglinga-og-hafnamal/vaktstod-siglinga#)
+* [Vessel traffic monitoring in EU waters (SafeSeaNet)](https://emsa.europa.eu/ssn-main.html)
+
+
 ## Links
 
 * [An approach to map and quantify the fishing effort of polyvalent passive gear fishing fleets using geospatial data](https://academic.oup.com/icesjms/article/80/6/1658/7197498#supplementary-data)
