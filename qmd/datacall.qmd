@@ -1,6 +1,10 @@
 ---
 title: "datacall"
+format:
+  html:
+    code-fold: false
 ---
+
 
 * try to separate out mutation process and filter/qc process. i.e. don't do both at the same time
 
@@ -8,18 +12,55 @@ title: "datacall"
 
 This document is trying to emulate the process behind the (2024) datacall. Some deviations in the code flow, in particular if less terse approach can easily be implemented.
 
-## libraries
+### libraries
 
 ```{r}
 library(vmstools)
 library(sf)
 library(tidyverse)
-#library(tidylog)
+source("~/stasi/ices/ICES-VMS-and-Logbook-Data-Call/0_global-functions.R")
 library(conflicted)
 conflicts_prefer(dplyr::filter, dplyr::lag)
+
+format_vt_tacsat <- function(tacsat) {
+  tacsat |> 
+    dplyr::mutate(SI_DATE = stringr::str_replace(SI_DATE, "1800", "1803"),
+                  SI_DATE = stringr::str_replace(SI_DATE, "1801", "1804")) |> 
+    tidyr::unite(col = "SI_DDATIM", SI_DATE, SI_TIME, remove = FALSE) |> 
+    dplyr::mutate(SI_DATIM = dmy_hms(SI_DDATIM)) |> 
+    tibble::as_tibble()
+}
+format_vt_eflalo <- function(eflalo) {
+  eflalo |> 
+    dplyr::mutate(FT_DDAT = stringr::str_replace(FT_DDAT, "1800", "1803"),
+                  FT_DDAT = stringr::str_replace(FT_DDAT, "1801", "1804"),
+                  FT_LDAT = stringr::str_replace(FT_LDAT, "1800", "1803"),
+                  FT_LDAT = stringr::str_replace(FT_LDAT, "1801", "1804"),
+                  LE_CDAT = stringr::str_replace(LE_CDAT, "1800", "1803"),
+                  LE_CDAT = stringr::str_replace(LE_CDAT, "1801", "1804")) |> 
+    dplyr::rename(LE_MET = LE_MET_level6) |> 
+    tidyr::unite(col = "FT_DDATIM", FT_DDAT, FT_DTIME, remove = FALSE) |> 
+    tidyr::unite(col = "FT_LDATIM", FT_LDAT, FT_LTIME, remove = FALSE) |> 
+    dplyr::mutate(FT_DDATIM = lubridate::dmy_hms(FT_DDATIM),
+                  FT_LDATIM = lubridate::dmy_hms(FT_LDATIM),
+                  LE_CDAT = lubridate::dmy(LE_CDAT)) |> 
+    tibble::as_tibble()
+}
+
+# not_covered_by  = function(x, y) !sf::st_covered_by(x, y)
+rb_st_keep <- function(x, y) {
+  i <- sf::st_intersects(x, y) |> lengths() > 0
+  x <- x[i, ]
+  return(x)
+}
+rb_st_remove <- function(x, y) {
+  i <- lengths(st_intersects(x, y)) == 0
+  x <- x[i, ]
+  return(x)
+}
 ```
 
-## Globals
+### Globals
 
 ```{r}
 # Setting thresholds
@@ -52,13 +93,14 @@ speed <-
 ```
 
 
-## Auxillary data
+### Auxillary data
 
 ```{r}
 data(harbours)
 data(ICESareas)
 
 ices <- 
+  ia <-
   ICESareas |> 
   select(area = Area_27)
 sf_use_s2(TRUE)
@@ -70,6 +112,7 @@ harbours <-
                crs = 4326) |> 
   sf::st_buffer(dist = 3000) |>  # radius
   dplyr::select(harbour)
+#sf_use_s2(FALSE)
 # may use
 dictionary <- 
   tribble(~iso, ~vt,
@@ -81,17 +124,23 @@ dictionary <-
           "D2", "FT_LDAT")
 ```
 
-## Data prepre-processing
-
-Have leap year issues in the vmstools inbuilt dataset, hence:
+### Uses vmstools dataset
 
 ```{r}
 data(tacsat)
+# leap-year issue
 tacsat <- 
   tacsat |> 
   dplyr::mutate(SI_DATE = stringr::str_replace(SI_DATE, "1800", "1803"),
-                SI_DATE = stringr::str_replace(SI_DATE, "1801", "1804"))
+                SI_DATE = stringr::str_replace(SI_DATE, "1801", "1804")) |> 
+  dplyr::mutate(tmp = dmy_hms(paste(SI_DATE, SI_TIME))) |> 
+  # get order upfront (could have used sortTacsat)
+  dplyr::arrange(VE_REF, tmp) |> 
+  dplyr::select(-tmp) |> 
+  dplyr::mutate(.ridt = 1:n(), 
+                .before = VE_COU)
 data(eflalo)
+# leap-year issue
 eflalo <- 
   eflalo |> 
   dplyr::mutate(FT_DDAT = stringr::str_replace(FT_DDAT, "1800", "1803"),
@@ -100,64 +149,209 @@ eflalo <-
                 FT_LDAT = stringr::str_replace(FT_LDAT, "1801", "1804"),
                 LE_CDAT = stringr::str_replace(LE_CDAT, "1800", "1803"),
                 LE_CDAT = stringr::str_replace(LE_CDAT, "1801", "1804")) |> 
-  dplyr::rename(LE_MET = LE_MET_level6)
+  # get order upfront
+  dplyr::mutate(tmp = dmy_hms(paste0(FT_DDAT, FT_DTIME))) |> 
+  dplyr::arrange(VE_REF, tmp) |> 
+  dplyr::select(-tmp) |> 
+  dplyr::mutate(.ride = 1:n(), 
+                .before = VE_REF)
+# for the alt
+ais <- 
+  tacsat |> 
+  tibble::as_tibble() |> 
+  tidyr::unite(col = "time", SI_DATE, SI_TIME, sep = " ") |>
+  dplyr::mutate(time = lubridate::dmy_hms(time)) |> 
+  dplyr::select(.ridt,
+                vid = VE_REF,
+                time,
+                lon = SI_LONG,
+                lat = SI_LATI,
+                speed = SI_SP,
+                hd = SI_HE)
+
+lb <- 
+  eflalo |> 
+  tibble::as_tibble() |> 
+  dplyr::rename(d1 = LE_CDAT) |> 
+  # probably not kosher - 
+  dplyr::mutate(LE_STIME = dplyr::case_when(is.na(LE_STIME) ~ "00:00:01",
+                                            .default = LE_STIME),
+                LE_ETIME = dplyr::case_when(is.na(LE_ETIME) ~ "23:59:59")) |> 
+  tidyr::unite(col = "T1", FT_DDAT, FT_DTIME, sep = " ") |> 
+  tidyr::unite(col = "T2", FT_LDAT, FT_LTIME, sep = " ") |> 
+  dplyr::mutate(T1 = lubridate::dmy_hms(T1),
+                T2 = lubridate::dmy_hms(T2),
+                t1 = dmy_hms(paste(d1, LE_STIME)),
+                t2 = dmy_hms(paste(d1, LE_ETIME)),
+                d1 = lubridate::dmy(d1),
+                .after = LE_ID) |> 
+  # "haul can not be before nor after trip start-end
+  dplyr::mutate(t1 = dplyr::case_when(t1 < T1 ~ T1,
+                                      .default = t1),
+                t2 = dplyr::case_when(t2 > T2 ~ T2,
+                                      .default = t2)) |> 
+  select(-c(VE_COU, VE_LEN, VE_KW, VE_TON,
+            FT_DCOU, FT_DHAR, FT_LCOU, FT_LHAR,
+            LE_STIME, LE_ETIME,
+            LE_SLAT, LE_SLON, LE_ELAT, LE_ELON,
+            LE_EFF_VMS))
+# get rid of species stuff for now
+lb <- 
+  lb |> 
+  dplyr::select(-(LE_KG_ANE:LE_EURO_SWO)) |> 
+  # in the end just do this
+  dplyr::select(.ride, 
+                vid = VE_REF,
+                fleet = VE_FLT,
+                T1,
+                T2,
+                d1,
+                .tid = FT_REF,
+                gid = LE_GEAR,
+                ir = LE_RECT,
+                .sid = LE_ID,
+                # t1, t2,
+                mesh = LE_MSZ,
+                met6 = LE_MET_level6,
+                div = LE_DIV,
+                effort = LE_EFF,
+                unit = LE_UNIT)
 ```
 
 ## Preprocessing
 
-```{r, eval = FALSE}
-tacsat <- 
-  tacsat |> 
-  # do things upfront rather than downstream
-  mutate(SI_DATIM = dmy_hms(paste(SI_DATE, SI_TIME))) |>
-  st_as_sf(coords = c("SI_LONG", "SI_LATI"),
+### Positions
+
+::: {.panel-tabset}
+
+#### datacall
+
+```{r}
+tacsat <- formatTacsat(tacsat)
+# 1.2 Clean the TACSAT data ----------------------------------------------------
+
+## 1.2.0 Keep track of removed points ------------------------------------------
+#    not done here
+
+## 1.2.1 Remove VMS pings outside the ICES areas -------------------------------
+#  ia <- transform_to_sf(ICESareas, coords = c("SI_LONG", "SI_LATI"))
+tacsat <- transform_to_sf(tacsat, coords = c("SI_LONG", "SI_LATI"))
+# Make ia valid and transform it - redundant, already done
+#ia <- ia %>%
+#  sf::st_make_valid() %>%
+#  sf::st_transform(4326) |> 
+#  sf::st_zm()
+# Find intersections
+overs <- sf::st_intersects(tacsat, ia)
+tacsat <- tacsat[lengths(overs) > 0,]
+
+## 1.2.2 Remove duplicate records ----------------------------------------------
+# Convert SI_DATE and SI_TIME to POSIXct
+tacsat$SI_DATIM <- 
+  as.POSIXct(paste(tacsat$SI_DATE, tacsat$SI_TIME), tz = "GMT", format = "%d/%m/%Y  %H:%M")
+# Create a unique identifier for each row
+tacsat$unique_id <- paste(tacsat$VE_REF, tacsat$SI_LATI, tacsat$SI_LONG, tacsat$SI_DATIM)
+# Remove duplicates based on the unique identifier
+tacsat <- tacsat[!duplicated(tacsat$unique_id), ]
+
+## 1.2.3 Remove points that have impossible coordinates ------------------------
+# Extract coordinates from tacsat
+coords <- st_coordinates(tacsat)
+# Check for impossible positions
+invalid_positions <- which(coords[,2] > 90 | coords[,2] < -90 | coords[,1] > 180 | coords[,1] < -180)
+if (length(invalid_positions) > 0) {
+  # Print the invalid positions
+  print(tacsat[invalid_positions,])
+  # Remove points with impossible positions
+  tacsat <- tacsat[-invalid_positions,]
+}
+
+## 1.2.4 Remove points which are pseudo duplicates -----------------------------
+#    as they have an interval rate < x minutes ---
+# Sort tacsat and calculate intervals
+tacsat <- sfsortTacsat(tacsat)
+tacsat$INTV <- 
+  intervalTacsat(as.data.frame(tacsat), 
+                 level = "vessel", 
+                 fill.na = TRUE)$INTV
+# Remove rows with small intervals
+tacsat <- tacsat[tacsat$INTV >= intThres, ]
+# Remove INTV column from tacsat
+tacsat$INTV <- NULL
+
+## 1.2.5 Remove points in harbour ----------------------------------------------
+# Find intersections
+overs <- sf::st_intersects(tacsat, harbours)
+# Filter tacsat
+tacsat <- tacsat[!(lengths(overs) > 0),]
+tacsat <- as.data.frame(tacsat)
+tacsat <- tacsat %>% dplyr::select(-geometry)
+tacsat <- tacsat %>% dplyr::select(-unique_id)
+```
+
+#### alt
+
+```{r}
+ais <- 
+  ais |> 
+  sf::st_as_sf(coords = c("lon", "lat"),
            crs = 4326,
            remove = FALSE) |> 
-  # no need for this
-  select(-c(SI_DATE, SI_TIME)) |> 
-  arrange(VE_COU, VE_REF, SI_DATIM) |> 
-  mutate(.rid = 1:n(),
-         .before = VE_COU) |> 
-  # 1.2.1 Remove VMS pings outside the ICES areas
-  st_join(ices) |> 
-  filter(!is.na(area)) |> 
-  # 1.2.2 Remove duplicate records
-  distinct(VE_REF, SI_DATIM, SI_LATI, SI_LONG, .keep_all = TRUE) |> 
-  # 1.2.3 Remove points that have impossible coordinates
-  #       Redundant given above
-  # 1.2.4 Remove points which are pseudo duplicates as they have an interval rate < x minutes
-  group_by(VE_COU, VE_REF) |> 
-  # by convention
-  mutate(INTV = difftime(lead(SI_DATIM), SI_DATIM, units = "mins"),
-         # should possibly retain unit
-         INTV = as.numeric(INTV)) |> 
-  fill(INTV, .direction = "down") |> 
-  ungroup() |> 
-  filter(INTV >= intThres) |> 
-  # 1.2.5 Remove points in harbour
-  #       must be a nicer way
-  #       check for record expansion
-  filter(length(st_intersects(geometry, harbours$geometry)) > 0)
+  # should already be done
+  dplyr::arrange(vid, time) |> 
+  ## 1.2.1 Remove VMS pings outside the ICES areas -----------------------------
+  # takes a bit of time
+  rb_st_keep(ices) |> 
+  ## 1.2.2 Remove duplicate records --------------------------------------------
+  dplyr::distinct(vid, time, lon, lat, .keep_all = TRUE) |> 
+  ## 1.2.3 Remove points that have impossible coordinates ----------------------
+  #       Redundant given step 1.2.1
+  ## 1.2.4 Remove points which are pseudo duplicates ---------------------------
+  dplyr::group_by(vid) |> 
+  # this is not by convention
+  dplyr::mutate(dt = difftime(time, lag(time), units = "mins"),
+         dt = as.numeric(dt)) |> 
+  tidyr::fill(dt, .direction = "up") |> 
+  dplyr::ungroup() |> 
+  dplyr::filter(dt >= intThres) |> 
+  ## 1.2.5 Remove points in harbour --------------------------------------------
+  rb_st_remove(harbours)
+  #dplyr::filter(lengths(st_intersects(geometry, harbours$geometry)) == 0)
+```
 
-# Bit stuck here:
-eflalo2 <-
+#### Comparison
+
+```{r}
+identical(tacsat$.ridt, ais$.ridt)
+```
+
+:::
+
+### Logbooks
+
+::: {.panel-tabset}
+
+#### dcall
+
+#### alt
+
+```{r, eval = FALSE}
+data(eflalo)
+lb <- 
   eflalo |> 
-  # do things upfront rather than downstream
-  mutate(FT_DDATIM = dmy_hms(paste(FT_DDAT, FT_DTIME)),
-         FT_LDATIM = dmy_hms(paste(FT_LDAT, FT_LTIME)),
-         # I FIND THIS VERY STRANGE - AT LEAST THE NAMING
-         LE_TRIP = paste0(LE_ID, "-", LE_CDAT)) |> 
-  select(-c(FT_DDAT, FT_DTIME, FT_LDAT, FT_LTIME)) |> 
+  format_vt_eflalo() |> 
   arrange(VE_REF, FT_DDATIM) |> 
   mutate(.rid = 1:n(),
-         .before = VE_COU) |> 
-  # 1.3.3 Remove non-unique trip numbers
-  # HERE THE STRANGE BREW IS USED - BUT THEN NO MORE
-  distinct(LE_TRIP, .keep_all = TRUE) |> 
+         .before = VE_REF) |> 
+  # 1.3.3 Remove non-unique trip numbers - THIS IS A MISNOMER
+  #       Effectively dropping duplicates of trip-gear-ir-catch-date
+  #       Not sure if Kosher if the logbook records are individual settings
+  #       where a vessel can have more than 1 setting per day within an ices rectangle
+  distinct(LE_ID, LE_CDAT, .keep_all = TRUE) |> 
   # 1.3.4 Remove impossible time stamp records
   drop_na(FT_DDATIM, FT_LDATIM) |> 
   # 1.3.5 Remove trip starting before 1st Jan
-  #       Interpreted as trips that go over the new year
+  #       Interpreted here as trips that go over the new year
   filter(year(FT_DDATIM) == year(FT_LDATIM)) |> 
   # 1.3.6 Remove records with arrival date before departure date
   filter(FT_LDATIM >= FT_DDATIM) |> 
@@ -165,20 +359,486 @@ eflalo2 <-
   arrange(VE_COU, VE_REF, FT_DDATIM) |> 
   nest(.by = c(VE_REF, VE_COU:FT_LDATIM)) |> # Change things here
   group_by(VE_COU, VE_REF) |> 
-  mutate(issues = 
-           case_when(
-                     FT_DDATIM > FT_LDATIM ~ "arrival before departure",
-                     FT_DDATIM == FT_LDATIM ~ "arrival same as departure",
-                     FT_LDATIM > lead(FT_DDATIM) ~ "next departure before current arrival",
-                     lag(FT_LDATIM) > FT_DDATIM ~ "previous arrival after current departure",
-                     row_number() == 1 ~ "0_first row in a group", 
-                     row_number() == max(row_number()) ~ "0_last row in a group",
-                     .default = "0_no issues")) |> 
-  ungroup()
+  mutate(
+    issues = 
+      case_when(
+        FT_DDATIM > FT_LDATIM ~ "arrival before departure",
+        FT_DDATIM == FT_LDATIM ~ "arrival same as departure",
+        FT_LDATIM > lead(FT_DDATIM) ~ "next departure before current arrival",
+        lag(FT_LDATIM) > FT_DDATIM ~ "previous arrival after current departure",
+        row_number() == 1 ~ "0_first row in a group", 
+        row_number() == max(row_number()) ~ "0_last row in a group",
+        .default = "0_no issues"
+      )
+  ) |> 
+  ungroup() |> 
+  filter(str_starts(issues, "0_")) |> 
+  unnest(data) |> 
   # 1.4.1 Check Metier L4 (Gear) categories are accepted
   filter(LE_GEAR %in% ices_geartype$Key) |> 
   # 1,4,2 Check Metier L6 (Fishing Activity) categories are accepted
   filter(LE_MET %in% ices_fishingactivity$Key)
+
+st <- 
+  lb |> 
+  select(.rid, VE_REF:FT_LDATIM, VE_FLT:LE_EFF_VMS)
+```
+
+
+
+
+
+## Post processing
+
+bla, bla, bla, ...
+
+
+```{r, eval = FALSE}
+# 2: Linking TACSAT and EFLALO data --------------------------------------------
+# 2.1.0 load TACSAT and EFLALO data from file ----------------------------------
+# 2.1.1 Merge TACSAT and EFLALO ------------------------------------------------
+# 2.1.2 Assign gear and length -------------------------------------------------
+tap <- 
+  ais |> 
+  left_join(lb |> 
+              dplyr::select(VE_REF,
+                            FT_REF,
+                            LE_GEAR, 
+                            LE_MSZ, 
+                            VE_LEN, 
+                            VE_KW, 
+                            LE_RECT, LE_MET, VE_FLT, VE_COU,
+                            FT_DDATIM,
+                            FT_LDATIM) |> 
+              distinct(VE_REF, VE_COU, FT_REF, .keep_all = TRUE),
+            by = join_by(VE_REF, VE_COU, between(SI_DATIM, FT_DDATIM, FT_LDATIM))) |> 
+  dplyr::select(-c(FT_DDATIM, FT_LDATIM)) |> 
+  dplyr::mutate(FT_REF = replace_na(FT_REF, "0")) |> 
+  dplyr::filter(FT_REF != "0")
+
+# 2.1.3 For multi gear/metier etc trips, divide the pings to the right gear/metier etc. ----
+tacsatpa_LE_GEAR <- trip_assign(tacsatp, eflalo, col = "LE_GEAR", trust_logbook = T)
+tacsatp <- rbindlist(list(tacsatp[tacsatp$FT_REF %!in% tacsatpa_LE_GEAR$FT_REF,], tacsatpa_LE_GEAR), fill = T)
+
+tacsatpa_LE_MSZ <- trip_assign(tacsatp, eflalo, col = "LE_MSZ", trust_logbook = T)
+tacsatp <- rbindlist(list(tacsatp[tacsatp$FT_REF %!in% tacsatpa_LE_MSZ$FT_REF,], tacsatpa_LE_MSZ), fill = T)
+
+tacsatpa_LE_RECT <- trip_assign(tacsatp, eflalo, col = "LE_RECT", trust_logbook = T)
+tacsatp <- rbindlist(list(tacsatp[tacsatp$FT_REF %!in% tacsatpa_LE_RECT$FT_REF,], tacsatpa_LE_RECT), fill = T)
+
+tacsatpa_LE_MET <- trip_assign(tacsatp, eflalo, col = "LE_MET", trust_logbook = T)
+tacsatp <- rbindlist(list(tacsatp[tacsatp$FT_REF %!in% tacsatpa_LE_MET$FT_REF,], tacsatpa_LE_MET), fill = T)
+
+if("LE_WIDTH" %in% names(eflalo)){
+  tacsatpa_LE_WIDTH <- trip_assign(tacsatp, eflalo, col = "LE_WIDTH", trust_logbook = T)
+  tacsatp <- rbindlist(list(tacsatp[tacsatp$FT_REF %!in% tacsatpa_LE_WIDTH$FT_REF,], tacsatpa_LE_WIDTH), fill = T)
+}
+
+#Set catch date to be equal to SI_DATE 
+tacsatp$LE_CDAT <- tacsatp$SI_DATE
+
+tacsatp <- as.data.frame(tacsatp)
+
+# Save 'tacsatp' to a file named "tacsatMerged<year>.RData" in the 'outPath' directory
+save(
+  tacsatp,
+  file = file.path(outPath, paste0("tacsatMerged", year, ".RData"))
+)
+
+
+# 2.1.4 Define activity --------------------------------------------------------
+# Calculate time interval between points
+tacsatp <- intvTacsat(tacsatp, level = "trip", fill.na = TRUE)
+
+# Reset values that are simply too high to 2x the regular interval rate  
+tacsatp$INTV[tacsatp$INTV > intvThres] <- 2 * intvThres
+
+# Assume that pings with NA in INTV has the normal interval value
+tacsatp$INTV[is.na(tacsatp$INTV)] <- intvThres
+
+# Remove points with NA's in them in critical places
+idx <-
+  which(
+    is.na(tacsatp$VE_REF) == TRUE |
+      is.na(tacsatp$SI_LONG) == TRUE |
+      is.na(tacsatp$SI_LATI) == TRUE |
+      is.na(tacsatp$SI_DATIM) == TRUE |
+      is.na(tacsatp$SI_SP) == TRUE
+  )
+if (length(idx) > 0) {
+  tacsatp <- tacsatp[-idx, ]
+}
+
+
+# Define speed thresholds associated with fishing for gears =====================
+
+
+# Investigate speed pattern through visual inspection of histograms # 
+
+# Create a histogram of speeds for different gears
+# Start a new PNG device
+# Create a histogram of speeds for different gears
+diag.plot <- ggplot(data = tacsatp, aes(SI_SP)) +
+  geom_histogram(aes(fill = LE_GEAR), breaks = seq(0, 20, by = 1), color = "white") +
+  facet_wrap(~ LE_GEAR, ncol = 4, scales = "free_y") +
+  labs(x = "Speed (knots)", y = "Frequency", title = "Histogram of Speeds by Gear") +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(colour = "black"),
+    axis.text.x = element_text(colour = "black"),
+    axis.title.y = element_text(size = 14),
+    axis.title.x = element_text(size = 14),
+    plot.title = element_text(hjust = 0.5, size = 20),
+    strip.text.x = element_text(size = 12, face = "bold"),
+    strip.background = element_rect(fill = "grey60", colour = "black", linewidth = 1),
+    panel.background = element_blank()
+  ) +
+  scale_fill_manual(values = c("#000000", "#FCCF3F", "#FF0000", "#00FF00", "#0000FF",
+                               "#FF00FF", "#808080", "#800000", "#808000",
+                               "#008000", "#800080", "#008080", "#000080", "#666699", "#808080",
+                               "#003366", "#CCA099", "#333300", "#993300", "#993366", "#333399",
+                               "#333333"))
+
+ggsave(diag.plot, filename = file.path(outPath, paste0("SpeedHistogram_", year, ".jpg")))
+diag.plot
+
+# start by correctly formatting the level 5 metier
+tacsatp$LE_L5MET <-  sapply(strsplit(tacsatp$LE_MET, "_"), function(x) paste(x[1:2], collapse = "_"))  
+
+# Create a data frame with minimum and maximum speed thresholds for each gear
+speedarr <- as.data.frame(
+  cbind(
+    LE_L5MET = sort(unique(tacsatp$LE_L5MET)),
+    min = NA,
+    max = NA
+  ),
+  stringsAsFactors = FALSE
+)
+
+# Fill out the minimum and maximum speed thresholds
+speedarr$min <- rep(1, nrow(speedarr)) # It is important to fill out the personally inspected thresholds here!
+speedarr$max <- rep(6, nrow(speedarr))
+
+
+# Analyse activity automated for common gears only. Use the speedarr for the other gears =============== 
+
+subTacsat <- subset(tacsatp, LE_GEAR %in% autoDetectionGears)
+nonsubTacsat <- subset(tacsatp, !LE_GEAR %in% autoDetectionGears)
+
+if (visualInspection == TRUE){
+  storeScheme <-
+    ac.tac.anal(
+      subTacsat,
+      units = "year",
+      analyse.by = "LE_L5MET",
+      identify = "means")
+}else  {
+  storeScheme <-
+    expand.grid(
+      years = year,
+      months = 0,
+      weeks = 0,
+      analyse.by = unique(subTacsat[,"LE_L5MET"])
+    )
+  
+  storeScheme$peaks <- NA
+  storeScheme$means <- NA
+  storeScheme$fixPeaks <- FALSE
+  storeScheme$sigma0 <- 0.911
+  
+  
+  # Fill the storeScheme values based on analyses of the pictures = 
+  
+  storeScheme$LE_GEAR <- sapply(strsplit(as.character(storeScheme$analyse.by), "_"), `[`, 1)
+  
+  # Define mean values of the peaks and the number of peaks when they are different from 5 # 
+  
+  storeScheme$means[which(storeScheme$LE_GEAR == "TBB")] <- c("-11.5 -6 0 6 11.5")
+  storeScheme$means[which(storeScheme$LE_GEAR == "OTB")] <- c("-9 -3 0 3 9")
+  storeScheme$means[which(storeScheme$LE_GEAR == "OTT")] <- c("-9 -3 0 3 9")
+  storeScheme$means[which(storeScheme$LE_GEAR == "OTM")] <- c("-9 -3 0 3 9")
+  storeScheme$means[which(storeScheme$LE_GEAR == "MIS")] <- c("-9 -3 0 3 9")
+  storeScheme$means[which(storeScheme$LE_GEAR == "SSC")] <- c("-9 0 9")
+  storeScheme$means[which(storeScheme$LE_GEAR == "LLD")] <- c("-9 0 9")
+  storeScheme$means[which(storeScheme$LE_GEAR == "LLS")] <- c("-9 0 9")
+  storeScheme$means[which(storeScheme$LE_GEAR == "PTB")] <- c("-10 -3 0 3 10")
+  storeScheme$means[which(storeScheme$LE_GEAR == "DRB")] <- c("-10 0 10")
+  storeScheme$means[which(storeScheme$LE_GEAR == "HMD")] <- c("-9 0 9")
+  storeScheme$peaks[which(storeScheme$LE_GEAR == "SSC")] <- 3
+  storeScheme$peaks[which(storeScheme$LE_GEAR == "LLD")] <- 3
+  storeScheme$peaks[which(storeScheme$LE_GEAR == "LLS")] <- 3
+  storeScheme$peaks[which(storeScheme$LE_GEAR == "DRB")] <- 3
+  storeScheme$peaks[which(storeScheme$LE_GEAR == "HMD")] <- 3
+  storeScheme$peaks[which(is.na(storeScheme$peaks) == TRUE)] <- 5
+  storeScheme <- storeScheme[,-(dim(storeScheme)[2])]
+}
+
+#  acTa <- ac.tac.anal(subTacsat, units = "year", storeScheme = storeScheme, analyse.by = "LE_L5MET", identify = "peaks")
+
+acTa <-
+  act.tac(
+    subTacsat,
+    units = "year",
+    analyse.by = "LE_L5MET",
+    storeScheme = storeScheme,
+    plot = TRUE,
+    level = "all")
+subTacsat$SI_STATE <- acTa
+subTacsat$ID <- 1:nrow(subTacsat)
+
+# Check results, and if results are not satisfactory, run analyses again but now with fixed peaks # 
+
+summary_table <- subTacsat %>%
+  filter(SI_STATE == "f") %>%
+  group_by(LE_L5MET) %>%
+  dplyr::summarise(
+    min_SI_SP = min(SI_SP),
+    max_SI_SP = max(SI_SP)
+  )
+print(summary_table)
+message(paste("These are your maximum and minimum fishing speeds (in knots), as defined by the autodetection algorithm, for ", year, ". Check they look realistic!", sep  =""))
+
+# Write the summary table to a text file
+cat("\n\nYear:", year, "\n", file = file.path(outPath, "fishing_speeds_by_metier_and_year.txt"), append = TRUE)
+write.table(summary_table, file = file.path(outPath, "fishing_speeds_by_metier_and_year.txt"), 
+            append = TRUE, sep = "\t", row.names = FALSE, col.names = !file.exists(file.path(outPath, "fishing_speeds_by_metier_and_year.txt")))
+cat("\n", file = file.path(outPath, "fishing_speeds_by_metier_and_year.txt"), append = TRUE)
+
+for (iGear in autoDetectionGears) {
+  subDat <- subset(subTacsat, LE_GEAR == iGear)
+  
+  # Check if there are non-missing values for "s" state
+  if (any(!is.na(subDat$SI_SP[which(subDat$SI_STATE == "s")]))) {
+    minS <- min(subDat$SI_SP[which(subDat$SI_STATE == "s")], na.rm = TRUE)
+  } else {
+    minS <- Inf  # or assign a default value or handle the case accordingly
+  }
+  
+  # Check if there are non-missing values for "f" state
+  if (any(!is.na(subDat$SI_SP[which(subDat$SI_STATE == "f")]))) {
+    minF <- min(subDat$SI_SP[which(subDat$SI_STATE == "f")], na.rm = TRUE)
+  } else {
+    minF <- Inf  # or assign a default value or handle the case accordingly
+  }
+  
+  if (minS < minF) {
+    storeScheme$fixPeaks[which(storeScheme$analyse.by == iGear)] <- TRUE
+    subacTa <- activityTacsat(
+      subDat,
+      units = "year",
+      analyse.by = "LE_GEAR",
+      storeScheme,
+      plot = FALSE,
+      level = "all"
+    )
+    subTacsat$SI_STATE[subDat$ID] <- subacTa
+  }
+}  
+subTacsat <-
+  subTacsat[,
+            -rev(grep("ID", colnames(subTacsat)))[1]
+  ]
+
+# Assign for visually inspected gears a simple speed rule classification =============== 
+
+
+
+metiers <- unique(nonsubTacsat$LE_l5MET)
+nonsubTacsat$SI_STATE <- NA
+for (mm in metiers) {
+  nonsubTacsat$SI_STATE[
+    nonsubTacsat$LE_GEAR == mm &
+      nonsubTacsat$SI_SP >= speedarr[speedarr$LE_GEAR == mm, "min"] &
+      nonsubTacsat$SI_SP <= speedarr[speedarr$LE_GEAR == mm, "max"]
+  ] <- "f";
+}
+nonsubTacsat$SI_STATE[
+  nonsubTacsat$LE_GEAR == "NA" &
+    nonsubTacsat$SI_SP >= speedarr[speedarr$LE_GEAR == "MIS", "min"] &
+    nonsubTacsat$SI_SP <= speedarr[speedarr$LE_GEAR == "MIS", "max"]
+] <- "f"
+nonsubTacsat$SI_STATE[ is.na(nonsubTacsat$SI_STATE) ] <- "s"
+
+
+# Combine the two dataset together again =============== 
+
+
+tacsatp <- rbindTacsat(subTacsat, nonsubTacsat)
+tacsatp <- orderBy( ~ VE_REF + SI_DATIM, data = tacsatp)
+
+# This next step is retained from previous code. The new function to assign
+# fishing activity states does not use "h" (harbour), but if you are using your
+# own workflow code, you may wish to look for this. We do not recommend it.
+#
+# Set fishing sequences with hauling in the middle to "f" ##################
+#
+# idx <-
+# which(
+#   tacsatp$SI_STATE[2:(nrow(tacsatp) - 1)] == "h" &
+#     tacsatp$SI_STATE[1:(nrow(tacsatp) - 2)] == "f" &
+#     tacsatp$SI_STATE[3:(nrow(tacsatp))    ] == "f" &
+#     tacsatp$VE_REF[2:(nrow(tacsatp) - 1)] == tacsatp$VE_REF[1:(nrow(tacsatp) - 2)] &
+#     tacsatp$VE_REF[2:(nrow(tacsatp) - 1)] == tacsatp$VE_REF[3:(nrow(tacsatp))]
+#  ) + 1
+# tacsatp$SI_STATE[idx] <- "f"
+
+save(
+  tacsatp,
+  file = file.path(outPath, paste0("tacsatActivity", year, ".RData"))
+)
+
+message("Defining activity completed")
+
+# 2.2 Dispatch landings of merged eflalo at the ping scale ---------------------
+
+# 2.2.1 continued, filter out invalid metier level 6 codes ---------------------
+kept <- nrow(tacsatp)
+removed <- nrow(tacsatp %>% filter(LE_MET %!in% valid_metiers))
+tacsatp <- tacsatp %>% filter(LE_MET %in% valid_metiers)
+cat(sprintf("%.2f%% of of the tacsatp removed due to invalid metier l6 \n", (removed / (removed + kept) * 100)))
+
+# 2.2.2 Calculate total landings weight and sales value ------------------------
+
+# Get the indices of columns in eflalo that contain "LE_KG_" or "LE_EURO_"
+idx_kg <- grep("LE_KG_", colnames(eflalo)[colnames(eflalo) %!in% c("LE_KG_TOT")])
+idx_euro <- grep("LE_EURO_", colnames(eflalo)[colnames(eflalo) %!in% c("LE_EURO_TOT")])
+
+# Calculate the total KG and EURO for each row
+if("LE_KG_TOT" %!in% names(eflalo))
+  eflalo$LE_KG_TOT <- rowSums(eflalo[, idx_kg], na.rm = TRUE)
+if("LE_EURO_TOT" %!in% names(eflalo))
+  eflalo$LE_EURO_TOT <- rowSums(eflalo[, idx_euro], na.rm = TRUE)
+
+# Remove the columns used for the total calculation
+eflalo <- eflalo[, -c(idx_kg, idx_euro)]
+
+
+# 2.2.3 Retain only EFLALO fishing trip records with related  VMS Records  (EFLALOM) ---
+
+eflaloNM <- subset(eflalo, !FT_REF %in% unique(tacsatp$FT_REF))
+eflaloM <- subset(eflalo, FT_REF %in% unique(tacsatp$FT_REF))
+
+message(sprintf("%.2f%% of the eflalo data not in tacsat\n", (nrow(eflaloNM) / (nrow(eflaloNM) ))))
+
+
+# 2.2.4 Retain only VMS Records identified  as fishing  operations -------------
+
+# Convert SI_STATE to binary (0/1) format
+tacsatp$SI_STATE <- ifelse(tacsatp$SI_STATE == "f", 1, 0)
+
+# Filter rows where SI_STATE is 1
+tacsatEflalo <- tacsatp[tacsatp$SI_STATE == 1,]
+
+
+# 2.2.5 Retain only VMS Records with associated effort ( INTV ) ----------------
+
+tacsatp <- tacsatp[!is.na(tacsatp$INTV),]
+
+# 2.2.6 Split landings among VMS records pings ---------------------------------
+
+# Distribute landings among pings, first by day, metier and trip; then by metier and trip; then by trip
+tacsatEflalo <- splitAmongPings2(tacsatp, eflalo)
+
+eflalo$tripInTacsat <- ifelse(eflalo$FT_REF %in% tacsatEflalo$FT_REF, "Y", "N")
+
+
+save(
+  tacsatEflalo,
+  file = file.path(outPath, paste0("tacsatEflalo", year, ".RData"))
+)
+
+save(
+  eflalo,
+  file = file.path(outPath, paste0("/cleanEflalo", year, ".RData"))
+)
+
+
+print("Dispatching landings completed")
+
+
+
+print("")
+
+##End of the  loop
+
+
+
+
+# 2.3 Add auxiliary spatial information to tacsatEflalo   and data preparation before data aggregation ----
+
+# If you already have cleaned tacsatEflalo files elsewhere, 
+# change file location below, and make sure data is called tacsatEflalo
+# Loop trough years to submit
+
+for(year in yearsToSubmit){
+  
+  #'------------------------------------------------------------------------------
+  # 2.3.1 Add auxiliary spatial information to tacsatEflalo                                     ----
+  #'------------------------------------------------------------------------------
+  
+  print(paste0("Start loop for year ",year))
+  load(file = paste0(outPath,"tacsatEflalo",year,".RData"))
+  
+  
+  # Add habitat and bathymetry to the tacsatEflalo file
+  tacsatEflalo <- tacsatEflalo |> 
+    sf::st_as_sf(coords = c("SI_LONG", "SI_LATI"), remove = F) |> 
+    sf::st_set_crs(4326) |> 
+    st_join(eusm, join = st_intersects) |> 
+    st_join(bathy, join = st_intersects) |> 
+    mutate(geometry = NULL) |> 
+    data.frame()
+  
+  #'------------------------------------------------------------------------------
+  # 2.3.2 Add CSquare geocode to  tacsatEflalo   VMS records                    ----
+  #'------------------------------------------------------------------------------
+  
+  # Calculate the c-square based on longitude and latitude
+  tacsatEflalo$Csquare <- CSquare(tacsatEflalo$SI_LONG, tacsatEflalo$SI_LATI, degrees = 0.05)
+  
+  #'------------------------------------------------------------------------------
+  # 2.3.3 Calcualte time fields and  convert effort indicators    to Hours      ----
+  #'------------------------------------------------------------------------------
+  
+  # Extract the year and month from the date-time
+  tacsatEflalo$Year <- year(tacsatEflalo$SI_DATIM)
+  tacsatEflalo$Month <- month(tacsatEflalo$SI_DATIM)
+  
+  ### ATTENTION: ONLY RUN THIS CODE IF YOUR EFFORT IS IN CALCUALTED MINUTES!!!!!!
+  
+  # Calculate the kilowatt-hour and convert interval to hours
+  tacsatEflalo$kwHour <- tacsatEflalo$VE_KW * tacsatEflalo$INTV / 60
+  tacsatEflalo$INTV <- tacsatEflalo$INTV / 60
+  
+  
+  #'------------------------------------------------------------------------------
+  # 2.3.4 Calculate SWEPT AREA   by VMS record in TACSATEFLALO                   ----
+  #'------------------------------------------------------------------------------
+  
+  # Add the calculated gear width to each fishing point
+  tacsatEflalo$GEARWIDTH <- add_gearwidth(tacsatEflalo)
+  
+  # Add swept area(m2) for each point in the tacsateflalo
+  tacsatEflalo$SA_M2 <- tacsatEflalo$GEARWIDTH * tacsatEflalo$INTV * tacsatEflalo$SI_SP * 1852
+  
+  # Check if logical
+  tacsatEflalo[,.(min = min(GEARWIDTH), max = max(GEARWIDTH)), by = .(LE_MET)]
+  
+  
+  save(
+    tacsatEflalo,
+    file = file.path(outPath, paste0("tacsatEflalo", year, ".RData"))
+  )
+  
+  
+}
+
+
+# Housekeeping
+rm(speedarr, tacsatp, tacsatEflalo,
+   eflalo, eflaloM, eflaloNM)
+
+
 
 ```
 
