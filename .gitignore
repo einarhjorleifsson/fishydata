@@ -7,10 +7,15 @@ data
 data-raw/harbours
 data-raw/older
 data-raw/vessels
+data-raw/whales
+data-raw/datamodel
+data-raw/EUSeaMap_2023.zip
 data-raw/stk_mobile_match-and-duals/older
 *.log
 _freeze
 _site
+garbage
+docs
 
 *.html
 

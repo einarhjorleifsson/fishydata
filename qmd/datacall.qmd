@@ -21,33 +21,6 @@ library(tidyverse)
 source("~/stasi/ices/ICES-VMS-and-Logbook-Data-Call/0_global-functions.R")
 library(conflicted)
 conflicts_prefer(dplyr::filter, dplyr::lag)
-
-format_vt_tacsat <- function(tacsat) {
-  tacsat |> 
-    dplyr::mutate(SI_DATE = stringr::str_replace(SI_DATE, "1800", "1803"),
-                  SI_DATE = stringr::str_replace(SI_DATE, "1801", "1804")) |> 
-    tidyr::unite(col = "SI_DDATIM", SI_DATE, SI_TIME, remove = FALSE) |> 
-    dplyr::mutate(SI_DATIM = dmy_hms(SI_DDATIM)) |> 
-    tibble::as_tibble()
-}
-format_vt_eflalo <- function(eflalo) {
-  eflalo |> 
-    dplyr::mutate(FT_DDAT = stringr::str_replace(FT_DDAT, "1800", "1803"),
-                  FT_DDAT = stringr::str_replace(FT_DDAT, "1801", "1804"),
-                  FT_LDAT = stringr::str_replace(FT_LDAT, "1800", "1803"),
-                  FT_LDAT = stringr::str_replace(FT_LDAT, "1801", "1804"),
-                  LE_CDAT = stringr::str_replace(LE_CDAT, "1800", "1803"),
-                  LE_CDAT = stringr::str_replace(LE_CDAT, "1801", "1804")) |> 
-    dplyr::rename(LE_MET = LE_MET_level6) |> 
-    tidyr::unite(col = "FT_DDATIM", FT_DDAT, FT_DTIME, remove = FALSE) |> 
-    tidyr::unite(col = "FT_LDATIM", FT_LDAT, FT_LTIME, remove = FALSE) |> 
-    dplyr::mutate(FT_DDATIM = lubridate::dmy_hms(FT_DDATIM),
-                  FT_LDATIM = lubridate::dmy_hms(FT_LDATIM),
-                  LE_CDAT = lubridate::dmy(LE_CDAT)) |> 
-    tibble::as_tibble()
-}
-
-# not_covered_by  = function(x, y) !sf::st_covered_by(x, y)
 rb_st_keep <- function(x, y) {
   i <- sf::st_intersects(x, y) |> lengths() > 0
   x <- x[i, ]
@@ -139,6 +112,20 @@ tacsat <-
   dplyr::select(-tmp) |> 
   dplyr::mutate(.ridt = 1:n(), 
                 .before = VE_COU)
+# for the alt
+ais <- 
+  tacsat |> 
+  tibble::as_tibble() |> 
+  tidyr::unite(col = "time", SI_DATE, SI_TIME, sep = " ") |>
+  dplyr::mutate(time = lubridate::dmy_hms(time)) |> 
+  dplyr::select(.ridt,
+                vid = VE_REF,
+                time,
+                lon = SI_LONG,
+                lat = SI_LATI,
+                speed = SI_SP,
+                hd = SI_HE)
+
 data(eflalo)
 # leap-year issue
 eflalo <- 
@@ -154,21 +141,8 @@ eflalo <-
   dplyr::arrange(VE_REF, tmp) |> 
   dplyr::select(-tmp) |> 
   dplyr::mutate(.ride = 1:n(), 
-                .before = VE_REF)
-# for the alt
-ais <- 
-  tacsat |> 
-  tibble::as_tibble() |> 
-  tidyr::unite(col = "time", SI_DATE, SI_TIME, sep = " ") |>
-  dplyr::mutate(time = lubridate::dmy_hms(time)) |> 
-  dplyr::select(.ridt,
-                vid = VE_REF,
-                time,
-                lon = SI_LONG,
-                lat = SI_LATI,
-                speed = SI_SP,
-                hd = SI_HE)
-
+                .before = VE_REF) |> 
+  dplyr::rename(LE_MET = LE_MET_level6)
 lb <- 
   eflalo |> 
   tibble::as_tibble() |> 
@@ -212,7 +186,7 @@ lb <-
                 .sid = LE_ID,
                 # t1, t2,
                 mesh = LE_MSZ,
-                met6 = LE_MET_level6,
+                met6 = LE_MET,
                 div = LE_DIV,
                 effort = LE_EFF,
                 unit = LE_UNIT)
@@ -227,6 +201,7 @@ lb <-
 #### datacall
 
 ```{r}
+#| label: tacsat_preprocessing
 tacsat <- formatTacsat(tacsat)
 # 1.2 Clean the TACSAT data ----------------------------------------------------
 
@@ -289,39 +264,41 @@ tacsat <- tacsat %>% dplyr::select(-geometry)
 tacsat <- tacsat %>% dplyr::select(-unique_id)
 ```
 
-#### alt
+#### Alternative
 
 ```{r}
+#| label: ais_preprocessing
 ais <- 
   ais |> 
   sf::st_as_sf(coords = c("lon", "lat"),
-           crs = 4326,
-           remove = FALSE) |> 
+               crs = 4326,
+               remove = FALSE) |> 
   # should already be done
   dplyr::arrange(vid, time) |> 
   ## 1.2.1 Remove VMS pings outside the ICES areas -----------------------------
-  # takes a bit of time
-  rb_st_keep(ices) |> 
+# takes a bit of time
+rb_st_keep(ices) |> 
   ## 1.2.2 Remove duplicate records --------------------------------------------
-  dplyr::distinct(vid, time, lon, lat, .keep_all = TRUE) |> 
+dplyr::distinct(vid, time, lon, lat, .keep_all = TRUE) |> 
   ## 1.2.3 Remove points that have impossible coordinates ----------------------
-  #       Redundant given step 1.2.1
-  ## 1.2.4 Remove points which are pseudo duplicates ---------------------------
-  dplyr::group_by(vid) |> 
+#       Redundant given step 1.2.1
+## 1.2.4 Remove points which are pseudo duplicates ---------------------------
+dplyr::group_by(vid) |> 
   # this is not by convention
   dplyr::mutate(dt = difftime(time, lag(time), units = "mins"),
-         dt = as.numeric(dt)) |> 
+                dt = as.numeric(dt)) |> 
   tidyr::fill(dt, .direction = "up") |> 
   dplyr::ungroup() |> 
   dplyr::filter(dt >= intThres) |> 
   ## 1.2.5 Remove points in harbour --------------------------------------------
-  rb_st_remove(harbours)
-  #dplyr::filter(lengths(st_intersects(geometry, harbours$geometry)) == 0)
+rb_st_remove(harbours)
+#dplyr::filter(lengths(st_intersects(geometry, harbours$geometry)) == 0)
 ```
 
 #### Comparison
 
 ```{r}
+#| label: ais_comparision
 identical(tacsat$.ridt, ais$.ridt)
 ```
 
@@ -331,64 +308,162 @@ identical(tacsat$.ridt, ais$.ridt)
 
 ::: {.panel-tabset}
 
-#### dcall
+#### datacall
 
-#### alt
+```{r eflalo_preprocessing}
+## 1.3.1 Keep track of removed points -----------------------------------------
+#   not done here
 
-```{r, eval = FALSE}
-data(eflalo)
-lb <- 
-  eflalo |> 
-  format_vt_eflalo() |> 
-  arrange(VE_REF, FT_DDATIM) |> 
-  mutate(.rid = 1:n(),
-         .before = VE_REF) |> 
-  # 1.3.3 Remove non-unique trip numbers - THIS IS A MISNOMER
-  #       Effectively dropping duplicates of trip-gear-ir-catch-date
-  #       Not sure if Kosher if the logbook records are individual settings
-  #       where a vessel can have more than 1 setting per day within an ices rectangle
-  distinct(LE_ID, LE_CDAT, .keep_all = TRUE) |> 
-  # 1.3.4 Remove impossible time stamp records
-  drop_na(FT_DDATIM, FT_LDATIM) |> 
-  # 1.3.5 Remove trip starting before 1st Jan
-  #       Interpreted here as trips that go over the new year
-  filter(year(FT_DDATIM) == year(FT_LDATIM)) |> 
-  # 1.3.6 Remove records with arrival date before departure date
-  filter(FT_LDATIM >= FT_DDATIM) |> 
-  # 1.3.7 Remove trip with overlap with another trip
-  arrange(VE_COU, VE_REF, FT_DDATIM) |> 
-  nest(.by = c(VE_REF, VE_COU:FT_LDATIM)) |> # Change things here
-  group_by(VE_COU, VE_REF) |> 
-  mutate(
-    issues = 
-      case_when(
-        FT_DDATIM > FT_LDATIM ~ "arrival before departure",
-        FT_DDATIM == FT_LDATIM ~ "arrival same as departure",
-        FT_LDATIM > lead(FT_DDATIM) ~ "next departure before current arrival",
-        lag(FT_LDATIM) > FT_DDATIM ~ "previous arrival after current departure",
-        row_number() == 1 ~ "0_first row in a group", 
-        row_number() == max(row_number()) ~ "0_last row in a group",
-        .default = "0_no issues"
-      )
-  ) |> 
-  ungroup() |> 
-  filter(str_starts(issues, "0_")) |> 
-  unnest(data) |> 
-  # 1.4.1 Check Metier L4 (Gear) categories are accepted
-  filter(LE_GEAR %in% ices_geartype$Key) |> 
-  # 1,4,2 Check Metier L6 (Fishing Activity) categories are accepted
-  filter(LE_MET %in% ices_fishingactivity$Key)
+## 1.3.2 Warn for outlying catch records ---------------------------------------
 
-st <- 
-  lb |> 
-  select(.rid, VE_REF:FT_LDATIM, VE_FLT:LE_EFF_VMS)
+## 1.3.3 Remove non-unique trip numbers ----------------------------------------
+
+# Apply the trip ID function to the eflalo data frame
+#   function name is bit of a misnomer
+trip_id <- create_trip_id(eflalo)
+# Remove records with non-unique trip identifiers
+eflalo <- eflalo[!duplicated(trip_id), ]
+
+## 1.3.4 Remove impossible time stamp records ----------------------------------
+# Apply the convert to date-time function to the FT_DDAT and FT_DTIME columns
+eflalo$FT_DDATIM <- convert_to_datetime(eflalo$FT_DDAT, eflalo$FT_DTIME)
+# Apply the function to the FT_LDAT and FT_LTIME columns
+eflalo$FT_LDATIM <- convert_to_datetime(eflalo$FT_LDAT, eflalo$FT_LTIME)
+# Remove records with NA in either FT_DDATIM or FT_LDATIM
+eflalo <- eflalo[!is.na(eflalo$FT_DDATIM) & !is.na(eflalo$FT_LDATIM), ]
+
+## 1.3.5 Remove trip starting before 1st Jan -----------------------------------
+# Call the remove before january function with the appropriate arguments
+# not run in test
+if(FALSE) eflalo <- remove_before_jan(eflalo, year)
+
+## 1.3.6 Remove records with arrival date before departure date  ---------------
+# Find the indices of rows where 'FT_LDATIM' is greater than or equal to 'FT_DDATIM'
+idx <- which(eflalo$FT_LDATIM >= eflalo$FT_DDATIM)
+# Keep only the rows in 'eflalo' where 'FT_LDATIM' is greater than or equal to 'FT_DDATIM'
+eflalo <- eflalo[idx,]
+
+## 1.3.7 Remove trip with overlap with another trip ----------------------------
+# Order 'eflalo' by 'VE_COU', 'VE_REF', 'FT_DDATIM', and 'FT_LDATIM'
+eflalo <- orderBy(~ VE_COU + VE_REF + FT_DDATIM + FT_LDATIM, data = eflalo)
+
+# If a trip (same depart and return times) has more than one FT_REF, make them all into the same (first) FT_REF. 
+dt1 <- data.table::data.table(eflalo)[,.(VE_REF, FT_REF, FT_DDATIM, FT_LDATIM)]
+dt1 <- unique(dt1, by = c("VE_REF", "FT_REF"))
+data.table::setkey(dt1, VE_REF, FT_DDATIM, FT_LDATIM)
+dt2 <- dt1[, ref := .N > 1, by = data.table::key(dt1)][ref == T]
+dt3 <- dt2[,.(FT_REF_NEW = FT_REF[1]), by = .(VE_REF, FT_DDATIM, FT_LDATIM)]
+dt4 <- merge(dt2, dt3)
+eflalo2 <- merge(data.table::data.table(eflalo), dt4, all.x = T)
+eflalo2[!is.na(FT_REF_NEW), FT_REF := FT_REF_NEW]
+eflalo2[, FT_REF_NEW := NULL]
+eflalo <- data.frame(eflalo2)
+eflalo <- eflalo %>% select(-ref)
+
+# Create a data table 'dt1' with the necessary columns from 'eflalo'
+dt1 <- data.table::data.table(ID = eflalo$VE_REF, FT = eflalo$FT_REF,
+                              startdate = eflalo$FT_DDATIM,
+                              enddate = eflalo$FT_LDATIM)
+# Remove duplicate rows from 'dt1'
+dt1 <- dt1[!duplicated(paste(dt1$ID, dt1$FT)), ]
+# Set keys for 'dt1' for efficient joining and overlapping
+data.table::setkey(dt1, ID, startdate, enddate)
+# Find overlapping trips in 'dt1'
+result <- data.table::foverlaps(dt1, dt1, by.x = c("ID", "startdate", "enddate"),
+                                by.y = c("ID", "startdate", "enddate"))
+# Filter 'result' to get only the rows where trips overlap
+overlapping.trips <- subset(result, startdate < i.enddate & enddate > i.startdate & FT != i.FT)
+# If there are overlapping trips, remove them from 'eflalo' and save them to a file
+if (nrow(overlapping.trips) > 0) {
+  eflalo <- eflalo[!eflalo$FT_REF %in% overlapping.trips$FT, ]
+  print("THERE ARE OVERLAPPING TRIPS IN THE DATASET -> SEE THE FILE overlappingTrips SAVED IN THE RESULTS FOLDER")
+  save(overlapping.trips, file = file.path(outPath, paste0("overlappingTrips", year, ".RData")))
+} 
+
+#'----------------------------------------------------------------------------
+# 1.4 METIERS ICES Vocabulary Quality Control ----------------------------------------
+#'----------------------------------------------------------------------------
+#'
+#' Check the fields with related Metier ICES Vocabularies prior the analysis block (2_eflalo_tacsat_analysis.R)
+#' Some functions in this analysis will rise errors if there are  values with  not valid controlled vocabulary 
+#' 
+
+## 1.4.1 Check Metier L4 (Gear) categories are accepted ------------------------
+m4_ices         <-  icesVocab::getCodeList("GearType")
+table ( eflalo$LE_GEAR %in%m4_ices$Key )   # TRUE records accepted in DATSU, FALSE aren't
+# Get summary  of   DATSU valid/not valid records
+eflalo [ ! eflalo$LE_GEAR %in%m4_ices$Key,]%>%group_by(LE_GEAR)%>%dplyr::select(LE_GEAR)%>%tally()
+# Correct or dismiss not valid records (if any) and filter only valid ones
+eflalo      <-  eflalo%>%filter(LE_GEAR %in% m4_ices$Key)
+
+## 3.5.5 Check Metier L6 (Fishing Activity) categories are accepted -----------
+m6_ices         <-  icesVocab::getCodeList("Metier6_FishingActivity")
+table ( eflalo$LE_MET %in%m6_ices$Key )   # TRUE records accepted in DATSU, FALSE aren't
+# Get summary  of   DATSU valid/not valid records
+eflalo [ ! eflalo$LE_MET  %in%m6_ices$Key,]%>%group_by(LE_MET)%>%dplyr::select(LE_MET)%>%tally()
+# Correct them if any not valid and filter only valid ones
+eflalo      <-  eflalo%>%filter(LE_MET %in% m6_ices$Key)
 ```
 
+#### Alternative
 
+```{r}
+## 1.3.1 Keep track of removed points -----------------------------------------
+#   not done here
+## 1.3.2 Warn for outlying catch records ---------------------------------------
+## 1.3.3 Remove non-unique trip numbers ----------------------------------------
+lb <- 
+  lb |> 
+  # I would also use vessel id here, but that is another matter
+  distinct(.sid, d1, .keep_all = TRUE) |> 
+  ## 1.3.4 Remove impossible time stamp records ----------------------------------
+filter(!is.na(T1) & !is.na(T2)) |> 
+  ## 1.3.5 Remove trip starting before 1st Jan -----------------------------------
+#        not run here, have mupltiple years
+## 1.3.6 Remove records with arrival date before departure date  ---------------
+filter(T2 >= T1) |> 
+  ## 1.3.7 Remove trip with overlap with another trip --------------------------
+#        NOT IMPLEMENTED because of lack of understanding
+#        If a trip (same depart and return times) has more than one FT_REF, 
+#        make them all into the same (first) FT_REF
+nest(.by = c(vid, fleet, .tid, T1, T2)) |> 
+  group_by(vid, fleet) |> 
+  mutate(issues = 
+           case_when(
+             T1 > T2 ~ "arrival before departure",
+             # NOTE: SHOULD REALLY BE A CAUSE FOR A DROP
+             #       so in production remove the prefix
+             T1 == T2 ~ "0_arrival same as departure",    
+             T2 > lead(T1) ~ "next departure before current arrival",
+             lag(T2) > T1 ~ "previous arrival after current departure",
+             row_number() == 1 ~ "0_first row in a group", 
+             row_number() == max(row_number()) ~ "0_last row in a group",
+             .default = "0_no issues")) |> 
+  ungroup() |> 
+  filter(stringr::str_starts(issues, "0_")) |> 
+  select(-issues) |> 
+  unnest(data) |> 
+  ## 1.4.1 Check Metier L4 (Gear) categories are accepted ----------------------
+filter(gid %in% ices_geartype$Key) |> 
+  ## 3.5.5 Check Metier L6 (Fishing Activity) categories are accepted ----------
+filter(met6 %in% ices_fishingactivity$Key)
+```
 
+#### Comparison
 
+```{r}
+eflalo <- eflalo |> arrange(.ride)
+near(eflalo$.ride, lb$.ride) |> table()
+```
+
+:::
 
 ## Post processing
+
+::: {.panel-tabset}
+
+
+### datacall
 
 bla, bla, bla, ...
 
@@ -397,24 +472,36 @@ bla, bla, bla, ...
 # 2: Linking TACSAT and EFLALO data --------------------------------------------
 # 2.1.0 load TACSAT and EFLALO data from file ----------------------------------
 # 2.1.1 Merge TACSAT and EFLALO ------------------------------------------------
+tacsatp <- mergeEflalo2Tacsat(eflalo,tacsat)
 # 2.1.2 Assign gear and length -------------------------------------------------
+# Define the columns to be added
+cols <- c("LE_GEAR", "LE_MSZ", "VE_LEN", "VE_KW", "LE_RECT", 
+          "LE_MET", "LE_WIDTH", "VE_FLT", "VE_COU")
+# Use a loop to add each column
+for (col in cols) {
+  # Match 'FT_REF' values in 'tacsatp' and 'eflalo' and use these to add the column from 'eflalo' to 'tacsatp'
+  tacsatp[[col]] <- eflalo[[col]][match(tacsatp$FT_REF, eflalo$FT_REF)]
+}
+tacsatp <- data.frame(tacsatp)
+# Subset 'tacsatp' where 'FT_REF' does not equal 0 (merged)
+tacsatp <- subset(tacsatp, FT_REF != 0)
+t1 <- tacsatp
+t1 <- t1 |> as_tibble()
 tap <- 
   ais |> 
   left_join(lb |> 
-              dplyr::select(VE_REF,
-                            FT_REF,
-                            LE_GEAR, 
-                            LE_MSZ, 
-                            VE_LEN, 
-                            VE_KW, 
-                            LE_RECT, LE_MET, VE_FLT, VE_COU,
-                            FT_DDATIM,
-                            FT_LDATIM) |> 
-              distinct(VE_REF, VE_COU, FT_REF, .keep_all = TRUE),
-            by = join_by(VE_REF, VE_COU, between(SI_DATIM, FT_DDATIM, FT_LDATIM))) |> 
-  dplyr::select(-c(FT_DDATIM, FT_LDATIM)) |> 
-  dplyr::mutate(FT_REF = replace_na(FT_REF, "0")) |> 
-  dplyr::filter(FT_REF != "0")
+              dplyr::select(vid,
+                            .tid,
+                            .sid,
+                            T1,
+                            T2) |> 
+              distinct(vid, .tid, .keep_all = TRUE),
+            by = join_by(vid, between(time, T1, T2))) |> 
+  dplyr::select(-c(T1, T2)) |> 
+  dplyr::mutate(.tid = replace_na(.tid, "0")) |> 
+  dplyr::filter(.tid != "0")
+identical(tap$.ridt, tacsatp$.ridt)
+
 
 # 2.1.3 For multi gear/metier etc trips, divide the pings to the right gear/metier etc. ----
 tacsatpa_LE_GEAR <- trip_assign(tacsatp, eflalo, col = "LE_GEAR", trust_logbook = T)
@@ -434,10 +521,13 @@ if("LE_WIDTH" %in% names(eflalo)){
   tacsatp <- rbindlist(list(tacsatp[tacsatp$FT_REF %!in% tacsatpa_LE_WIDTH$FT_REF,], tacsatpa_LE_WIDTH), fill = T)
 }
 
+t2 <- tacsatp |> as_tibble() |> arrange(.ridt)
 #Set catch date to be equal to SI_DATE 
 tacsatp$LE_CDAT <- tacsatp$SI_DATE
 
 tacsatp <- as.data.frame(tacsatp)
+
+
 
 # Save 'tacsatp' to a file named "tacsatMerged<year>.RData" in the 'outPath' directory
 save(
@@ -763,7 +853,6 @@ print("")
 
 
 
-
 # 2.3 Add auxiliary spatial information to tacsatEflalo   and data preparation before data aggregation ----
 
 # If you already have cleaned tacsatEflalo files elsewhere, 
@@ -842,3 +931,14 @@ rm(speedarr, tacsatp, tacsatEflalo,
 
 ```
 
+### Alternative
+
+more bla, bla. bla, ...
+
+```{r}
+
+```
+
+### Comparison
+
+:::

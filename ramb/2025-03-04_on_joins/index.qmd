@@ -1,0 +1,43 @@
+---
+title: "On joins by time"
+author: Einar Hjörleifsson
+description: ""
+date: "2025-03-04"
+categories: [code, rtip]
+echo: true
+draft: true
+---
+
+```{r, eval = FALSE}
+# https://medium.com/number-around-us/joins-are-no-mystery-anymore-hands-on-tutorial-part-3-34119d50b476
+# https://stackoverflow.com/questions/76043007/left-rolling-join-with-the-nearest-and-anterior-date
+library(tidyverse)
+d1 <- 
+  tribble(~ID,	~date,
+          "A",  "2010-09-12",
+          "B",  "2009-05-28",
+          "C",  "2008-04-16") |> 
+  mutate(date = ymd(date))
+d2 <- 
+  tribble(~ID, ~date, ~Rating,
+          "A", "2010-06-13",  1,
+          "A", "2010-10-03",  7,
+          "B", "2008-12-28",  3,
+          "B", "2009-06-28",  5,
+          "C", "2008-01-02", 12,
+          "C", "2008-05-23",  6) |> 
+  mutate(date = ymd(date))
+d1 %>%
+  left_join(d2, 
+            by = join_by(ID, closest(date >= date)),
+            suffix = c("", ".y"))
+d1 |> 
+  left_join(d2, 
+            by = join_by(ID, closest(date <= date)),
+            suffix = c("", ".y"))
+```
+
+Check also:
+
+* algorithm in bayesbio::nearestTime
+
