@@ -1,32 +1,44 @@
 ---
 title: "On joins by time"
 author: Einar Hjörleifsson
-description: ""
+description: "Joining ..."
 date: "2025-03-04"
 categories: [code, rtip]
 echo: true
 draft: true
 ---
 
+## Joining times
+
+Let's say we have some vessel trip departure and arrival dates and then within each trip we have some daily logbook records.
+
 ```{r, eval = FALSE}
 # https://medium.com/number-around-us/joins-are-no-mystery-anymore-hands-on-tutorial-part-3-34119d50b476
 # https://stackoverflow.com/questions/76043007/left-rolling-join-with-the-nearest-and-anterior-date
 library(tidyverse)
-d1 <- 
-  tribble(~ID,	~date,
-          "A",  "2010-09-12",
-          "B",  "2009-05-28",
-          "C",  "2008-04-16") |> 
-  mutate(date = ymd(date))
-d2 <- 
-  tribble(~ID, ~date, ~Rating,
-          "A", "2010-06-13",  1,
-          "A", "2010-10-03",  7,
-          "B", "2008-12-28",  3,
-          "B", "2009-06-28",  5,
-          "C", "2008-01-02", 12,
-          "C", "2008-05-23",  6) |> 
-  mutate(date = ymd(date))
+trips <- 
+  tribble(~.tid,	         ~D1,    ~D2,       
+              1,  "2025-01-01",  "2025-01-02",
+              2,  "2025-01-03",  "2025-01-09",
+              3,  "2025-01-10",  "2025-01-15") |> 
+  mutate(D1 = ymd(D1),
+         D2 = ymd(D2))
+logbooks <- 
+  tribble(~.sid,     ~d1,  ~catch,
+          101,  "2025-01-01", 10,
+          102,  "2025-01-02", 20,
+          201,  "2025-01-05", 15,
+          202,  "2025-01-09", 12,
+          301,  "2025-01-10", 25,
+          302,  "2025-01-11", 10) |> 
+  mutate(d1 = ymd(d1))
+
+ggplot() +
+  geom_rect(data = trips,
+            aes(xmin = D1, xmax = D2,
+                ymin = 1, ymax = 2),
+            fill = "pink")
+
 d1 %>%
   left_join(d2, 
             by = join_by(ID, closest(date >= date)),
@@ -41,3 +53,8 @@ Check also:
 
 * algorithm in bayesbio::nearestTime
 
+## Joining time and interval
+
+### within
+
+### nearest

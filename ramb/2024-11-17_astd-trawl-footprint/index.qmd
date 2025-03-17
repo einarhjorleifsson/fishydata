@@ -31,7 +31,7 @@ library(arrow)
 library(duckdb)
 
 lgs <- 
-  open_dataset("/u3/haf/stasi/fishydata/data/logbooks/stations.parquet") |> 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/stations.parquet") |> 
   to_duckdb() |> 
   filter(between(year(date), 2015, 2024),
          # Note: this is gear id in the gafl landings database which is rarely
@@ -40,10 +40,10 @@ lgs <-
   distinct(vid, mmsi, date, t1, t2, catch_total, .keep_all = TRUE) |> 
   select(.sid, mmsi, vid, gid, gid_ln_agf, date, t1, t2, lb_base)
 catch <- 
-  open_dataset("/u3/haf/stasi/fishydata/data/logbooks/catch.parquet") |> 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/catch.parquet") |> 
   to_duckdb()
 ais <- 
-  open_dataset("/u3/haf/stasi/fishydata/data/ais/astd_isleez") |> 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/astd_isleez") |> 
   to_duckdb() |> 
   # Not in harbour
   filter(.cid > 0) |> 
