@@ -1,12 +1,17 @@
-# nohup R < scripts/93_DATASET_ais_trail.R --vanilla > scripts/log/93_DATASET_ais_trail_2025-03-20.log &
+# nohup R < scripts/93_DATASET_ais_trail.R --vanilla > scripts/log/93_DATASET_ais_trail_2025-03-26.log &
 
 # checkout: https://stackoverflow.com/questions/63821533/find-the-nearest-polygon-for-a-given-point
 # pts <- st_join(pts, p, join = st_nearest_feature)
+library(tictoc)
+tic()
+lubridate::now() |> print()
+
 YEARS <- 2024:2007
 
 library(conflicted)
 library(traipse)
 library(sf)
+library(ramb)
 library(arrow)
 library(tidyverse)
 
@@ -67,7 +72,7 @@ for(y in YEARS) {
     filter(year == y) |> 
     collect() |> 
     # when testing
-    filter(month(time) == 6) |> 
+    # filter(month(time) == 6) |> 
     distinct(vid, time, .keep_all = TRUE)
   
   trail <- 
@@ -173,3 +178,9 @@ for(y in YEARS) {
                          partitioning = c("year"))
   
 }
+
+toc()
+lubridate::now() |> print()
+devtools::session_info()
+
+
