@@ -61,6 +61,7 @@ vessel_ISL <-
                 mclass = usage_category_no,   # mclass
                 imo = imo_no,
                 .vid = vessel_id,
+                kw = power_kw,
                 loa = max_length) |>
   dplyr::left_join(tbl_mar(con, "vessel.vessel_identification") |>
                      select(uid = region_acronym,
@@ -82,6 +83,7 @@ vessel_ISL <-
                 flag,
                 vid,
                 loa,
+                kw,
                 source,
                 .id = .vid) |>
   filter(!vid %in% c(0))
@@ -172,6 +174,7 @@ vessel_ISL <-
 
 # Save -------------------------------------------------------------------------
 vessel_ISL |> 
+  mutate(kw = ifelse(kw == 0, NA, kw)) |> 
   write_parquet("data/vessels/vessels_iceland.parquet")
 
 
