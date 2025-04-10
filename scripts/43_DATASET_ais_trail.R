@@ -1,4 +1,4 @@
-# nohup R < scripts/93_DATASET_ais_trail.R --vanilla > scripts/log/93_DATASET_ais_trail_2025-03-26.log &
+# nohup R < scripts/93_DATASET_ais_trail.R --vanilla > scripts/log/93_DATASET_ais_trail_2025-04-08.log &
 
 # checkout: https://stackoverflow.com/questions/63821533/find-the-nearest-polygon-for-a-given-point
 # pts <- st_join(pts, p, join = st_nearest_feature)
@@ -163,7 +163,15 @@ for(y in YEARS) {
   trips |> filter(is.na(hid1) | is.na(hid2)) |> count(.cid)
   }
   
-  trail5 |> 
+  trail6 <- 
+    trail5 |> 
+    group_by(vid, .cid) |> 
+    mutate(whack = case_when(.cid > 0 ~ ramb::rb_whacky_speed(lon, lat, time),
+                             .default = NA)) |> 
+    ungroup()
+    
+  
+  trail6 |> 
     group_by(vid, .cid) |> 
     mutate(dt = track_time(time),
            dd = track_distance(lon, lat)) |> 
