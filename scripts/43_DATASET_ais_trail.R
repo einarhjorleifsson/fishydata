@@ -1,4 +1,4 @@
-# nohup R < scripts/93_DATASET_ais_trail.R --vanilla > scripts/log/93_DATASET_ais_trail_2025-04-08.log &
+# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-04-22.log &
 
 # checkout: https://stackoverflow.com/questions/63821533/find-the-nearest-polygon-for-a-given-point
 # pts <- st_join(pts, p, join = st_nearest_feature)
@@ -21,12 +21,11 @@ conflicts_prefer(dplyr::lead)
 
 # auxillary data ---------------------------------------------------------------
 island <- read_sf("~/stasi/gis/AIS_TRAIL/data-raw/island.gpkg")
-harbour <- 
-  read_sf("~/stasi/gis/AIS_TRAIL/data-raw/harbours-hidstd.gpkg") |> 
-  select(hid_std, harbour)
-harbours.standards <- 
-  read_csv("~/stasi/fishydata/data-raw/harbours/stk_harbours.csv") |> 
-  select(hid, hid_std)
+ports <- 
+  read_sf("~/stasi/fishydata/data/auxillary/ports.gpkg")
+# harbours.standards <- 
+#   read_csv("~/stasi/fishydata/data-raw/harbours/stk_harbours.csv") |> 
+#   select(hid, pid)
 # data -------------------------------------------------------------------------
 stk_vid <- 
   open_dataset("~/stasi/fishydata/data/vessels/stk_vessel_match.parquet") |> 
@@ -56,17 +55,18 @@ ASTD <-
 # processing - year loop -------------------------------------------------------
 
 for(y in YEARS) {
+  print(y)
   stk <-
     STK |> 
     filter(year == y) |> 
     # when testing
     #filter(month(time) == 6) |> 
-    collect() |> 
+    collect() #|> 
     # Replace stk harbour with standardized harbour name 
-    left_join(harbours.standards,
-              by = join_by(hid)) |> 
-    select(-c(hid)) |> 
-    rename(hid = hid_std)
+    #left_join(harbours.standards,
+    #          by = join_by(hid)) |> 
+    #select(-c(hid)) |> 
+    #rename(hid = pid)
   astd <- 
     ASTD |> 
     filter(year == y) |> 
@@ -83,30 +83,30 @@ for(y in YEARS) {
     st_as_sf(coords = c("lon", "lat"),
              crs = 4326,
              remove = FALSE) |> 
-    st_join(harbour) |> 
+    st_join(ports) |> 
     st_join(island)
   # drop points on land and where wrong stk hid
   trail2 <- 
     trail |> 
-    mutate(where = case_when(on_land == TRUE &  is.na(hid_std) ~ "on_land",
-                             on_land == TRUE & !is.na(hid_std) ~ "in_harbour",
-                             is.na(on_land) &  !is.na(hid_std) ~ "in_harbour",
-                             is.na(on_land) &   is.na(hid_std) ~ "at_sea",
+    mutate(where = case_when(on_land == TRUE &  is.na(pid) ~ "on_land",
+                             on_land == TRUE & !is.na(pid) ~ "in_harbour",
+                             is.na(on_land) &  !is.na(pid) ~ "in_harbour",
+                             is.na(on_land) &   is.na(pid) ~ "at_sea",
                              .default = "bug")) |> 
     filter(where %in% c("in_harbour", "at_sea")) |> 
     select(-on_land) #|> 
-    # drop records where stk hid is different than hid_std
-    #filter(!(!is.na(hid) & !is.na(hid_std) & hid != hid_std))
+    # drop records where stk hid is different than pid
+    #filter(!(!is.na(hid) & !is.na(pid) & hid != pid))
   
   trail3 <- 
     trail2 |> 
     # hail mary
     #filter(is.na(io)) |> 
     group_by(vid) |> 
-    mutate(.cid = ramb::rb_trip(!is.na(hid_std))) |> 
+    mutate(.cid = ramb::rb_trip(!is.na(pid))) |> 
     # may want to do this after filtering whacky
-    mutate(hid_dep = hid_std,
-           hid_arr = hid_std) |> 
+    mutate(hid_dep = pid,
+           hid_arr = pid) |> 
     fill(hid_dep, .direction = "downup") |> 
     fill(hid_arr, .direction = "updown") |> 
     ungroup()
@@ -116,7 +116,7 @@ for(y in YEARS) {
   trail4 <- 
     trail3 |> 
     # order matters for the distinct below
-    arrange(vid, time, source, hid_std, io) |> 
+    arrange(vid, time, source, pid, io) |> 
     # have to drop geometry, because it is sticky
     st_drop_geometry() |> 
     distinct(vid, time, .keep_all = TRUE)
@@ -136,7 +136,7 @@ for(y in YEARS) {
     fill(dd) |> 
     ungroup() |> 
     filter(dd <= 1852 * 20) |> 
-    select(.rid, vid, mmsi, .cid, source, time, lon, lat, speed, heading, hid_std, harbour, hid_dep, hid_arr)
+    select(.rid, vid, mmsi, .cid, source, time, lon, lat, speed, heading, pid, hid_dep, hid_arr, hid, io)
   
   if(FALSE) {
     trail5 |> 
@@ -180,6 +180,9 @@ for(y in YEARS) {
     ungroup() |> 
     mutate(year = year(time),
            month = month(time)) |> 
+    rename(pid2 = pid, hid_stk = hid, io_stk = io) |> 
+    mutate(pid = str_remove(pid2, "2"),
+           .before = hid_dep) |> 
     arrow::write_dataset(path = "~/stasi/fishydata/data/ais/trail",
                          format = "parquet",
                          existing_data_behavior = "overwrite",
