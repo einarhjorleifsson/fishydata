@@ -1,4 +1,4 @@
-# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-04-22.log &
+# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-04-23.log &
 
 # checkout: https://stackoverflow.com/questions/63821533/find-the-nearest-polygon-for-a-given-point
 # pts <- st_join(pts, p, join = st_nearest_feature)
@@ -20,21 +20,33 @@ conflicts_prefer(dplyr::lag)
 conflicts_prefer(dplyr::lead)
 
 # auxillary data ---------------------------------------------------------------
-island <- read_sf("~/stasi/gis/AIS_TRAIL/data-raw/island.gpkg")
+sf::sf_use_s2(use_s2 = FALSE)  # because eusm has invalids, thus st_join 
+#                              #  creates error
+island <- read_sf("data/auxillary/shoreline.gpkg")
+eusm <- 
+  read_sf("data/auxillary/eusm.gpkg") |> 
+  select(.eusm = MSFD_BBHT)
+gebco <- 
+  read_sf("data/auxillary/ICES_GEBCO.gpkg")
+ia <- 
+  read_sf("data/auxillary/ICESareas.gpkg")
 ports <- 
   read_sf("~/stasi/fishydata/data/auxillary/ports.gpkg")
-# harbours.standards <- 
-#   read_csv("~/stasi/fishydata/data-raw/harbours/stk_harbours.csv") |> 
-#   select(hid, pid)
+
+# Logbooks ---------------------------------------------------------------------
+
+
+
+
 # data -------------------------------------------------------------------------
 stk_vid <- 
-  open_dataset("~/stasi/fishydata/data/vessels/stk_vessel_match.parquet") |> 
+  open_dataset("data/vessels/stk_vessel_match.parquet") |> 
   to_duckdb() |> 
   select(mid, d1, d2, vid, mmsi) |> 
   filter(vid > 0) |> 
   filter(!vid %in% 3700:4999)
 STK <- 
-  open_dataset("~/stasi/fishydata/data/ais/stk-raw") |> 
+  open_dataset("data/ais/stk-raw") |> 
   to_duckdb() |> 
   filter(between(lon, -35, 30),
          between(lat, 50, 79)) |> 
@@ -43,7 +55,7 @@ STK <-
              by = join_by(mid, between(time, d1, d2)))  |> 
   select(-c(d1, d2))
 ASTD <- 
-  open_dataset("~/stasi/fishydata/data/ais/astd_isleez") |> 
+  open_dataset("data/ais/astd_isleez") |> 
   to_duckdb() |> 
   filter(between(lon, -35, 30),
          between(lat, 50, 79)) |> 
@@ -84,7 +96,8 @@ for(y in YEARS) {
              crs = 4326,
              remove = FALSE) |> 
     st_join(ports) |> 
-    st_join(island)
+    st_join(island) |> 
+    st_join(eusm)
   # drop points on land and where wrong stk hid
   trail2 <- 
     trail |> 
@@ -105,10 +118,10 @@ for(y in YEARS) {
     group_by(vid) |> 
     mutate(.cid = ramb::rb_trip(!is.na(pid))) |> 
     # may want to do this after filtering whacky
-    mutate(hid_dep = pid,
-           hid_arr = pid) |> 
-    fill(hid_dep, .direction = "downup") |> 
-    fill(hid_arr, .direction = "updown") |> 
+    mutate(pid_dep = pid,
+           pid_arr = pid) |> 
+    fill(pid_dep, .direction = "downup") |> 
+    fill(pid_arr, .direction = "updown") |> 
     ungroup()
   
   
@@ -136,7 +149,7 @@ for(y in YEARS) {
     fill(dd) |> 
     ungroup() |> 
     filter(dd <= 1852 * 20) |> 
-    select(.rid, vid, mmsi, .cid, source, time, lon, lat, speed, heading, pid, hid_dep, hid_arr, hid, io)
+    select(.rid, vid, mmsi, .cid, source, time, lon, lat, speed, heading, pid, pid_dep, pid_arr, hid, io, .eusm)
   
   if(FALSE) {
     trail5 |> 
@@ -180,9 +193,7 @@ for(y in YEARS) {
     ungroup() |> 
     mutate(year = year(time),
            month = month(time)) |> 
-    rename(pid2 = pid, hid_stk = hid, io_stk = io) |> 
-    mutate(pid = str_remove(pid2, "2"),
-           .before = hid_dep) |> 
+    rename(hid_stk = hid, io_stk = io) |> 
     arrow::write_dataset(path = "~/stasi/fishydata/data/ais/trail",
                          format = "parquet",
                          existing_data_behavior = "overwrite",

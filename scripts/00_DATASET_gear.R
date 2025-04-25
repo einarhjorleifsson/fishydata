@@ -2,28 +2,30 @@ library(tidyverse)
 library(omar)
 con <- connect_mar()
 
-met <- 
-  read_csv("https://raw.githubusercontent.com/ices-eg/RCGs/master/Metiers/Reference_lists/RDB_ISSG_Metier_list.csv") |> 
-  janitor::remove_empty(which = "cols") |> 
-  janitor::clean_names() |> 
-  select(met5 = metier_level5,
-         met6 = metier_level6,
-         benthis = benthis_metiers,
-         description,
-         comment,
-         n = total_n_trips_rdb_2009t2017) |> 
-  mutate(description = str_remove(description, ", see the code reg. mesh size and selectivity device")) |> 
-  distinct() |> 
-  arrange(met5) |> 
-  filter(!is.na(met5)) |> 
-  filter(!str_detect(description, "ending")) |> 
-  filter(!str_detect(description, "starting")) |> 
-  distinct(met5, .keep_all = TRUE)
-
+m4_ices <- 
+  icesVocab::getCodeList("GearType") |> 
+  as_tibble() |> 
+  janitor::clean_names()
+m5_ices <- 
+  icesVocab::getCodeList("TargetAssemblage") |> 
+  as_tibble() |> 
+  janitor::clean_names()
+m6_ices <- 
+  icesVocab::getCodeList("Metier6_FishingActivity") |> 
+  as_tibble() |> 
+  janitor::clean_names()
 
 met5 <- 
-  met |> 
-  select(met5, description)
+  m6_ices |> 
+  select(key, description) |> 
+  mutate(description = str_remove(description, ", see the code reg. mesh size and selectivity device")) |> 
+  mutate(met5 = case_when(str_sub(key, 8, 8) == "_" ~ str_sub(key, 1, 7),
+                           str_sub(key, 7, 7) == "_" ~ str_sub(key, 1, 6),
+                           .default = "should not be here")) |> 
+  select(met5, description) |> 
+  distinct(met5, .keep_all = TRUE) |> 
+  arrange(met5) 
+
 
 gid_agf <- 
   tbl_mar(con, "agf.aflagrunnur_v") |> 
@@ -69,12 +71,12 @@ gid_agf <-
                           gid_agf ==  8 ~ "OTB_MCD",  # Rækjuvarpa
                           gid_agf ==  9 ~ "OTM_SPF",  # Flotvarpa
                           gid_agf == 10 ~ "PS_SPF",   # Nót
-                          gid_agf == 11 ~ "SV_DEF",   # Dragnót - check
+                          gid_agf == 11 ~ "SDN_DEF",  # Dragnót - CHECK
                           gid_agf == 12 ~ "LLS_DEF",  # Lína
                           gid_agf == 13 ~ "LLS_DEF",  # Landbeitt lína
                           gid_agf == 14 ~ "LHM_DEF",  # Handfæri
                           gid_agf == 15 ~ "DRB_DES",  # Plógur
-                          gid_agf == 16 ~ "FPO_DEF",  # Gildra - check main species
+                          gid_agf == 16 ~ "FPO_DEF",  # Gildra - CHECK main species
                           gid_agf == 17 ~ "MIS_DWF",  # Annað
                           gid_agf == 18 ~ NA,         # Eldiskví
                           gid_agf == 19 ~ "LHP_FIF",  # Sjóstöng

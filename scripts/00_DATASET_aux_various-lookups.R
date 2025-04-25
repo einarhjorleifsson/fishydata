@@ -80,13 +80,4 @@ tbl_mar(con, "agf.aflagrunnur_v") |>
   arrange(sid) |> 
   nanoparquet::write_parquet("data/auxillary/agf_species.parquet")
 
-## agf harbour -----------------------------------------------------------------
-tbl_mar(con, "agf.aflagrunnur_v") |> 
-  select(starts_with("hafnarnumer")) |> 
-  distinct() |> 
-  rename(hid = 1,
-         hid_id = 2,
-         harbour = 3) |> 
-  collect() |> 
-  arrange(hid) |> 
-  nanoparquet::write_parquet("data/auxillary/agf_harbour.parquet")
+

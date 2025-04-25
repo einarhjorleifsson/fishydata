@@ -647,6 +647,112 @@ lgs |>
   facet_wrap(~ gid_ln_agf, scales = "free")
 
 
+# 8. For ais -------------------------------------------------------------------
+# Move this stuff to the logbook script
+lb <- 
+  read_parquet("data/logbooks/stations.parquet") |> 
+  filter(year(date) >= 2008,
+         vid > 5) |> 
+  filter(!vid %in% 3700:4999)
+ca <- read_parquet("data/logbooks/catch.parquet")
+
+
+## 8.1 median efort if missing and cap effort ----------------------------------
+median.effort <- 
+  lb %>% 
+  group_by(gid) %>% 
+  summarise(median = median(effort, na.rm = TRUE)) %>% 
+  drop_na()
+lb <- 
+  lb %>% 
+  left_join(median.effort, by = "gid") %>% 
+  mutate(effort = ifelse(!is.na(effort), effort, median)) %>% 
+  select(-median) %>% 
+  # cap effort hours
+  # TODO: DO THIS UPSTREAM
+  mutate(effort = case_when(effort > 50000 & gid == 1 ~ 50000,
+                            effort < 0 & gid == 2 ~ 50,
+                            effort > 1000 & gid == 2 ~ 1000,
+                            effort < 0 & gid == 3 ~ 10,
+                            effort > 100 & gid == 3 ~ 100,
+                            effort > 12 & gid ==  6 ~ 12,
+                            effort > 24 & gid ==  7 ~ 24,
+                            effort > 10 & gid == 9 ~ 10,
+                            effort > 25 & gid == 11 ~ 25,
+                            effort > 15 & gid == 14 ~ 15,
+                            effort > 15 & gid == 15 ~ 15,
+                            effort > 20000 & gid == 18 ~ 20000,
+                            effort < 0 & gid == 25 ~ 500,
+                            effort > 500 & gid == 25 ~ 500,
+                            effort > 400 & gid == 29 ~ 400,
+                            effort > 10 & gid == 38 ~ 10,
+                            effort > 10 & gid == 40 ~ 10,
+                            effort > 5 & gid == 52 ~ 5,
+                            effort > 2 & gid == 53 ~ 2,
+                            effort > 50 & gid == 91 ~ 50,
+                            effort > 2000 & gid == 92 ~ 2000,
+                            TRUE ~ effort))
+
+## 8.2 Collapse records with missing t1 or t2 to daily records -----------------
+# first an overview by gear
+lb |> 
+  mutate(flag = ifelse(!is.na(t1) & !is.na(t2), "has_t1_t2", "rest")) |> 
+  count(gid, flag) |> 
+  spread(flag, n) |> 
+  mutate(total = has_t1_t2 + rest,
+         p = has_t1_t2 / total) |> 
+  knitr::kable()
+
+lb_t1_t2 <- 
+  lb |> 
+  filter(!is.na(t1) & !is.na(t2))
+lb_rest <- 
+  lb |> 
+  filter(!.sid %in% lb_t1_t2$.sid)
+
+# now for the catches
+ca_t1_t2 <-
+  ca |> 
+  filter(.sid %in% lb_t1_t2$.sid)
+ca_rest <- 
+  lb_rest |> 
+  select(.sid, vid, date) |> 
+  left_join(ca |> 
+              filter(!.sid %in% lb_t1_t2$.sid),
+            relationship = "many-to-many") |> 
+  group_by(vid, date, sid) %>%
+  summarise(.sid = min(.sid),
+            catch = sum(catch, na.rm = TRUE),
+            .groups = "drop") |> 
+  select(.sid, sid, catch)
+ca <- 
+  bind_rows(ca_t1_t2, ca_rest)
+
+
+lb_rest <- 
+  lb_rest |> 
+  group_by(vid, date, gid) %>%
+  # get here all essential variables that are needed downstream
+  summarise(.sid = min(.sid),
+            n.sids = n(),
+            effort = sum(effort, na.rm = TRUE),
+            catch_total = sum(catch_total, na.rm = TRUE),
+            .groups = "drop") %>%
+  mutate(t1 = ymd_hms(paste0(year(date), "-", month(date), "-", day(date),
+                             " 00:00:00")),
+         t2 = ymd_hms(paste0(year(date), "-", month(date), "-", day(date),
+                             " 23:59:00")))
+lb <-
+  bind_rows(lb_rest, lb_t1_t2) |> 
+  arrange(vid, t1)
+lb |> glimpse()
+
+# Save -------------------------------------------------------------------------
+
+lb |> write_parquet("data/logbooks/station-for-ais.parquet")
+ca |> write_parquet("data/logbooks/catch-for-ais.parquet")
+
+
 # 8. Info ----------------------------------------------------------------------
 toc()
 
