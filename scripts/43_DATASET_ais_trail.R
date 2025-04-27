@@ -1,4 +1,4 @@
-# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-04-23.log &
+# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-04-25.log &
 
 # checkout: https://stackoverflow.com/questions/63821533/find-the-nearest-polygon-for-a-given-point
 # pts <- st_join(pts, p, join = st_nearest_feature)
@@ -6,7 +6,7 @@ library(tictoc)
 tic()
 lubridate::now() |> print()
 
-YEARS <- 2024:2007
+YEARS <- 2024:2008
 
 library(conflicted)
 library(traipse)
@@ -23,18 +23,22 @@ conflicts_prefer(dplyr::lead)
 sf::sf_use_s2(use_s2 = FALSE)  # because eusm has invalids, thus st_join 
 #                              #  creates error
 island <- read_sf("data/auxillary/shoreline.gpkg")
-eusm <- 
-  read_sf("data/auxillary/eusm.gpkg") |> 
-  select(.eusm = MSFD_BBHT)
-gebco <- 
-  read_sf("data/auxillary/ICES_GEBCO.gpkg")
-ia <- 
-  read_sf("data/auxillary/ICESareas.gpkg")
-ports <- 
-  read_sf("~/stasi/fishydata/data/auxillary/ports.gpkg")
+ports <-  read_sf("~/stasi/fishydata/data/auxillary/ports.gpkg")
+# DO LATER
+if(FALSE) {
+  eusm <- 
+    read_sf("data/auxillary/eusm.gpkg") |> 
+    select(.eusm = MSFD_BBHT)
+  gebco <- 
+    read_sf("data/auxillary/ICES_GEBCO.gpkg")
+  ia <- 
+    read_sf("data/auxillary/ICESareas.gpkg")
+}
 
 # Logbooks ---------------------------------------------------------------------
-
+lb <- 
+  read_parquet("data/logbooks/station-for-ais.parquet") |> 
+  filter(year(date) %in% YEARS)
 
 
 
@@ -74,11 +78,11 @@ for(y in YEARS) {
     # when testing
     #filter(month(time) == 6) |> 
     collect() #|> 
-    # Replace stk harbour with standardized harbour name 
-    #left_join(harbours.standards,
-    #          by = join_by(hid)) |> 
-    #select(-c(hid)) |> 
-    #rename(hid = pid)
+  # Replace stk harbour with standardized harbour name 
+  #left_join(harbours.standards,
+  #          by = join_by(hid)) |> 
+  #select(-c(hid)) |> 
+  #rename(hid = pid)
   astd <- 
     ASTD |> 
     filter(year == y) |> 
@@ -96,9 +100,8 @@ for(y in YEARS) {
              crs = 4326,
              remove = FALSE) |> 
     st_join(ports) |> 
-    st_join(island) |> 
-    st_join(eusm)
-  # drop points on land and where wrong stk hid
+    st_join(island)
+  # drop points on land (and where wrong stk hid?)
   trail2 <- 
     trail |> 
     mutate(where = case_when(on_land == TRUE &  is.na(pid) ~ "on_land",
@@ -108,8 +111,8 @@ for(y in YEARS) {
                              .default = "bug")) |> 
     filter(where %in% c("in_harbour", "at_sea")) |> 
     select(-on_land) #|> 
-    # drop records where stk hid is different than pid
-    #filter(!(!is.na(hid) & !is.na(pid) & hid != pid))
+  # drop records where stk hid is different than pid
+  #filter(!(!is.na(hid) & !is.na(pid) & hid != pid))
   
   trail3 <- 
     trail2 |> 
@@ -149,7 +152,7 @@ for(y in YEARS) {
     fill(dd) |> 
     ungroup() |> 
     filter(dd <= 1852 * 20) |> 
-    select(.rid, vid, mmsi, .cid, source, time, lon, lat, speed, heading, pid, pid_dep, pid_arr, hid, io, .eusm)
+    select(.rid, vid, mmsi, .cid, source, time, lon, lat, speed, heading, pid, pid_dep, pid_arr, hid, io)
   
   if(FALSE) {
     trail5 |> 
@@ -182,9 +185,9 @@ for(y in YEARS) {
     mutate(whack = case_when(.cid > 0 ~ ramb::rb_whacky_speed(lon, lat, time),
                              .default = NA)) |> 
     ungroup()
-    
   
-  trail6 |> 
+  trail7 <- 
+    trail6 |> 
     group_by(vid, .cid) |> 
     mutate(dt = track_time(time),
            dd = track_distance(lon, lat)) |> 
@@ -193,7 +196,17 @@ for(y in YEARS) {
     ungroup() |> 
     mutate(year = year(time),
            month = month(time)) |> 
-    rename(hid_stk = hid, io_stk = io) |> 
+    rename(hid_stk = hid, io_stk = io) 
+  
+  trail8 <- 
+    trail7 |> 
+    left_join(lb |> 
+                filter(year(date) == y) |> 
+                select(vid, .sid, lb_base, date, t1, t2, gid, effort, effort_unit, gid_agf = gid_ln_agf, .lid_agf, date_ln_agf),
+              by = join_by(vid, between(time, t1, t2)))
+  
+  
+  trail8 |> 
     arrow::write_dataset(path = "~/stasi/fishydata/data/ais/trail",
                          format = "parquet",
                          existing_data_behavior = "overwrite",
