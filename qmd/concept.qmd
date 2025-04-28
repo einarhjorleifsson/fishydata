@@ -1,8 +1,5 @@
 ---
-title: "ASTD trawl footprint"
-description: "A simple script to grid parquet data as well as attept to identify trawl foot print based on speed alone and then on interval in the logbooks."
-date: "2024-11-17"
-categories: [code, ais, fishing]
+title: "Concept"
 ---
 
 ## Loading the data
@@ -31,30 +28,30 @@ library(arrow)
 library(duckdb)
 
 lgs <- 
-  open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/stations.parquet") |> 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/station-for-ais.parquet") |> 
   to_duckdb() |> 
-  filter(between(year(date), 2015, 2024),
+  filter(between(year(date), 2008, 2024),
          # Note: this is gear id in the gafl landings database which is rarely
          #  the same as in the other databases
          gid_ln_agf == 6) |> 
-  distinct(vid, mmsi, date, t1, t2, catch_total, .keep_all = TRUE) |> 
-  select(.sid, mmsi, vid, gid, gid_ln_agf, date, t1, t2, lb_base)
+  distinct(vid, date, t1, t2, catch_total, .keep_all = TRUE) |> 
+  select(.sid, vid, gid, gid_ln_agf, date, t1, t2, lb_base)
 catch <- 
-  open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/catch.parquet") |> 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/catch-for-ais.parquet") |> 
   to_duckdb()
 ais <- 
-  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/astd_isleez") |> 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
   to_duckdb() |> 
   # Not in harbour
-  filter(.cid > 0) |> 
+  filter(.cid > 0,
+         whack == FALSE) |> 
   # Fishing occurred on date
-  filter(between(year, 2015, 2024),
-         gid_ln_agf == 6) |> 
-  select(.rid, mmsi, time, vessel, astd_cat, dmeters:lat, x, y) |> 
+  filter(between(year, 2008, 2024)) |> 
+  select(.cid, vid, time, speed, lon, lat) |> 
   mutate(speed = ifelse(speed > 15, 15, speed)) |>  
   # merge with the logbooks
-  left_join(lgs,
-            by = join_by(mmsi, between(time, t1, t2)))
+  inner_join(lgs |> filter(gid_ln_agf == 6),
+            by = join_by(vid, between(time, t1, t2)))
 ```
 
 ## Using speed alone
@@ -62,7 +59,7 @@ ais <-
 ```{r}
 #| fig-height: 2.5
 
-dx <- 0.1
+dx <- 0.25
 ais |> 
   mutate(speed = speed %/% dx * dx + dx/2) |> 
   count(vid, speed) |> 
