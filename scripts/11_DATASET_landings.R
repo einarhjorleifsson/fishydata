@@ -42,8 +42,6 @@ library(arrow)
 library(omar)
 con <- connect_mar()
 
-read_parquet("data/auxillary/agf_harbour.parquet")
-
 
 # AGF landings -----------------------------------------------------------------
 ## Get data --------------------------------------------------------------------

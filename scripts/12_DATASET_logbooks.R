@@ -648,13 +648,12 @@ lgs |>
 
 
 # 8. For ais -------------------------------------------------------------------
-# Move this stuff to the logbook script
 lb <- 
-  read_parquet("data/logbooks/stations.parquet") |> 
+  read_parquet("~/stasi/fishydata/data/logbooks/stations.parquet") |> 
   filter(year(date) >= 2008,
          vid > 5) |> 
   filter(!vid %in% 3700:4999)
-ca <- read_parquet("data/logbooks/catch.parquet")
+ca <- read_parquet("~/stasi/fishydata/data/logbooks/catch.parquet")
 
 
 ## 8.1 median efort if missing and cap effort ----------------------------------
@@ -705,7 +704,9 @@ lb |>
 
 lb_t1_t2 <- 
   lb |> 
-  filter(!is.na(t1) & !is.na(t2))
+  filter(!is.na(t1) & !is.na(t2)) |> 
+  mutate(n.sids = 1) |> 
+  select(vid, date, t1, t2, gid, gid_ln_agf, effort, effort_unit, catch_total, n.sids, .sid, lb_base)
 lb_rest <- 
   lb |> 
   filter(!.sid %in% lb_t1_t2$.sid)
@@ -716,22 +717,22 @@ ca_t1_t2 <-
   filter(.sid %in% lb_t1_t2$.sid)
 ca_rest <- 
   lb_rest |> 
-  select(.sid, vid, date) |> 
+  select(.sid, lb_base, vid, date) |> 
   left_join(ca |> 
               filter(!.sid %in% lb_t1_t2$.sid),
             relationship = "many-to-many") |> 
-  group_by(vid, date, sid) %>%
+  group_by(vid, date, lb_base, sid) %>%
   summarise(.sid = min(.sid),
             catch = sum(catch, na.rm = TRUE),
             .groups = "drop") |> 
-  select(.sid, sid, catch)
+  select(.sid, lb_base, sid, catch)
 ca <- 
   bind_rows(ca_t1_t2, ca_rest)
 
 
 lb_rest <- 
   lb_rest |> 
-  group_by(vid, date, gid) %>%
+  group_by(vid, date, gid, gid_ln_agf, lb_base, effort_unit) %>%
   # get here all essential variables that are needed downstream
   summarise(.sid = min(.sid),
             n.sids = n(),
@@ -742,15 +743,18 @@ lb_rest <-
                              " 00:00:00")),
          t2 = ymd_hms(paste0(year(date), "-", month(date), "-", day(date),
                              " 23:59:00")))
+lb_rest <- 
+  lb_rest |> 
+  select(vid, date, t1, t2, gid, gid_ln_agf, effort, effort_unit, catch_total, n.sids, .sid, lb_base)
 lb <-
-  bind_rows(lb_rest, lb_t1_t2) |> 
+  bind_rows(lb_rest, 
+            lb_t1_t2) |> 
   arrange(vid, t1)
-lb |> glimpse()
 
 # Save -------------------------------------------------------------------------
 
-lb |> write_parquet("data/logbooks/station-for-ais.parquet")
-ca |> write_parquet("data/logbooks/catch-for-ais.parquet")
+lb |> write_parquet("~/stasi/fishydata/data/logbooks/station-for-ais.parquet")
+ca |> write_parquet("~/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
 
 
 # 8. Info ----------------------------------------------------------------------
