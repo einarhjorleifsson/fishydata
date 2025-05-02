@@ -45,7 +45,7 @@ ports_kvoti <-
                           .default = port)) |> 
   filter(!stad_nr %in% c(150, 153, 155:212, 300:999)) |> 
   add_row(stad_nr = 140, port = "Grundartangi")
-
+ports_kvoti |> count(port) |> filter(n > 1) |> knitr::kable(caption = "Expect none")
 ports_table <- 
   tribble(~pid,       ~port,          ~unlocode,
           'FO-ANR', 'Ánirnar',             'no',
@@ -129,7 +129,7 @@ ports_table <-
           'IS-HJA', 'Hjalteyri',        'yes',       
           'IS-HNR', 'Hafnir',           'yes',          
           'IS-HOF', 'Hofsós',           'yes',          
-          'IS-HOL', 'Hólmavík',         'no',
+          #'IS-HOL', 'Hólmavík',         'no',
           'IS-HRI', 'Hrísey',           'yes',          
           'IS-HST', 'Hesteyrar',        'no',          
           'IS-HUS', 'Húsavík',          'yes',         
@@ -192,7 +192,7 @@ ports_table <-
           'IS-STD', 'Stöðvarfjörður',   'yes',  
           'IS-STK', 'Stokkseyri',       'yes',     
           'IS-STN', 'Seltjarnarnes',    'no',               
-          'IS-STO', 'Stöðvarfjörður',   'no',              
+          #'IS-STO', 'Stöðvarfjörður',   'no',              
           'IS-STU', 'Klauf',  'no',               
           'IS-STV', 'Straumsvík',       'no',               
           'IS-STY', 'Stykkishólmur',    'yes',
@@ -221,10 +221,12 @@ ports_table <-
           'IS-ALV', 'Alviðruvör', 'no',    # Alviðruvör, Núpur
           'IS-HDL', 'Hnífsdalur', 'no',     # Hnífsdalur
           'IS-OGV', 'Ögurvík', 'no')
+ports_table |> count(port) |> filter(n > 1) |> knitr::kable(caption = "Expect none")
 
 ports_table <- 
   ports_table |> 
   full_join(ports_kvoti)
+ports_table |> count(port) |> filter(n > 1) |> knitr::kable(caption = "Expect none")
 
 ## The polygons for the ports --------------------------------------------------
 #   First generate an additional table of some ports in kvoti.stadur that is
@@ -384,18 +386,17 @@ ports <-
   ungroup() |> 
   bind_rows(ports_add)
 
+ports |> st_drop_geometry() |> count(pid) |> filter(n > 1) |> knitr::kable(caption = "Expect none")
 ## Merge the final data and export ---------------------------------------------
 ports <- 
   ports |> 
+  # inner join drops "ports" on land and some others
   inner_join(ports_table) |> 
   select(pid, port, hid = stad_nr, everything())
 
 ports |> st_drop_geometry() |> count(pid) |> filter(n > 1) |> knitr::kable(caption = "Expect none")
+ports |> st_drop_geometry() |> count(port) |> filter(n > 1) |> knitr::kable(caption = "Expect none")
+
 
 ports |>  
-  select(-hid) |> 
   st_write("data/auxillary/ports.gpkg", append = FALSE)
-ports |> 
-  st_drop_geometry() |> 
-  filter(!is.na(hid)) |> 
-  write_parquet("data/auxillary/ports.parquet")
