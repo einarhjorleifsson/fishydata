@@ -730,11 +730,22 @@ lb |>
          p = has_t1_t2 / total) |> 
   knitr::kable()
 
+lb <- 
+  lb |> 
+  select(.sid, lb_base, vid, gid, date, t1, t2, datel, effort, effort_unit,
+         sweeps, plow_width, catch_total,
+         agf_date = date_agf,
+         agf_gid = gid_agf,
+         agf_lid = .lid_agf,
+         lods_date = date_lods,
+         lods_gid = gid_lods,
+         lods_lid = .lid_lods)
+
 lb_t1_t2 <- 
   lb |> 
   filter(!is.na(t1) & !is.na(t2)) |> 
-  mutate(n.sids = 1) |> 
-  select(vid, date, t1, t2, gid, gid_agf, hid_agf, effort, effort_unit, catch_total, n.sids, .sid, lb_base)
+  mutate(n.sids = 1,
+         .after = lb_base)
 lb_rest <- 
   lb |> 
   filter(!.sid %in% lb_t1_t2$.sid)
@@ -760,23 +771,23 @@ ca <-
 
 lb_rest <- 
   lb_rest |> 
-  group_by(vid, date, gid, gid_agf, hid_agf, lb_base, effort_unit) %>%
+  group_by(lb_base, vid, gid, date, datel, effort_unit,
+           agf_date, agf_gid, agf_lid, lods_date, lods_gid, lods_lid) |> 
   # get here all essential variables that are needed downstream
   summarise(.sid = min(.sid),
             n.sids = n(),
             effort = sum(effort, na.rm = TRUE),
             catch_total = sum(catch_total, na.rm = TRUE),
+            sweeps = mean(sweeps, na.rm = TRUE),
+            plow_width = mean(plow_width, na.rm = TRUE),
             .groups = "drop") %>%
   mutate(t1 = ymd_hms(paste0(year(date), "-", month(date), "-", day(date),
                              " 00:00:00")),
          t2 = ymd_hms(paste0(year(date), "-", month(date), "-", day(date),
                              " 23:59:00")))
-lb_rest <- 
-  lb_rest |> 
-  select(vid, date, t1, t2, gid, gid_agf, hid_agf, effort, effort_unit, catch_total, n.sids, .sid, lb_base)
 lb <-
-  bind_rows(lb_rest, 
-            lb_t1_t2) |> 
+  bind_rows(lb_t1_t2,
+            lb_rest) |> 
   arrange(vid, t1)
 
 # Save -------------------------------------------------------------------------
