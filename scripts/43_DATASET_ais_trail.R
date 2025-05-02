@@ -1,4 +1,4 @@
-# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-04-25.log &
+# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-05-02.log &
 
 # checkout: https://stackoverflow.com/questions/63821533/find-the-nearest-polygon-for-a-given-point
 # pts <- st_join(pts, p, join = st_nearest_feature)
@@ -23,7 +23,9 @@ conflicts_prefer(dplyr::lead)
 sf::sf_use_s2(use_s2 = FALSE)  # because eusm has invalids, thus st_join 
 #                              #  creates error
 island <- read_sf("data/auxillary/shoreline.gpkg")
-ports <-  read_sf("~/stasi/fishydata/data/auxillary/ports.gpkg")
+ports <-  
+  read_sf("~/stasi/fishydata/data/auxillary/ports.gpkg") |> 
+  select(pid)
 # DO LATER
 if(FALSE) {
   eusm <- 
@@ -75,6 +77,7 @@ for(y in YEARS) {
   stk <-
     STK |> 
     filter(year == y) |> 
+   #filter(vid == 2359) |> 
     # when testing
     #filter(month(time) == 6) |> 
     collect() #|> 
@@ -86,6 +89,7 @@ for(y in YEARS) {
   astd <- 
     ASTD |> 
     filter(year == y) |> 
+    #filter(vid == 2359) |>
     collect() |> 
     # when testing
     # filter(month(time) == 6) |> 
@@ -193,6 +197,8 @@ for(y in YEARS) {
            dd = track_distance(lon, lat)) |> 
     fill(dt, .direction = "up") |> 
     fill(dd, .direction = "up") |> 
+    mutate(ct = cumsum(dt),
+           cd = cumsum(dd)) |> 
     ungroup() |> 
     mutate(year = year(time),
            month = month(time)) |> 
@@ -202,8 +208,17 @@ for(y in YEARS) {
     trail7 |> 
     left_join(lb |> 
                 filter(year(date) == y) |> 
-                select(vid, .sid, lb_base, date, t1, t2, gid, effort, effort_unit, gid_agf = gid_ln_agf, .lid_agf, date_ln_agf),
+                select(vid, .sid, lb_base, date, t1, t2, gid, datel, agf_date, agf_gid, agf_lid),
               by = join_by(vid, between(time, t1, t2)))
+  # flag a trip if it is fishing
+  trail8 <- 
+    trail8 |> 
+    mutate(gid_trip = case_when(!is.na(.sid) ~ agf_gid,
+                                    .default = NA)) |> 
+    group_by(vid, .cid) |> 
+    fill(gid_trip, .direction = "downup") |> 
+    ungroup()
+    
   
   
   trail8 |> 
