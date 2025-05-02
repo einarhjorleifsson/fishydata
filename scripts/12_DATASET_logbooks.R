@@ -82,15 +82,17 @@ match_nearest_date <- function(lb, ln) {
 
 con <- connect_mar()
 
-GEARS <- 
-  omar::gid_orri_plus(con) |> 
-  collect(n = Inf) |> 
-  rename(gclass = gid2,
-         m4 = dcf4,
-         m5 = dcf5b)
-GEARS_trim <-
-  GEARS |> 
-  select(gid, veidarfaeri, gclass, m4, m5)
+if(FALSE) {
+  GEARS <- 
+    omar::gid_orri_plus(con) |> 
+    collect(n = Inf) |> 
+    rename(gclass = gid2,
+           m4 = dcf4,
+           m5 = dcf5b)
+  GEARS_trim <-
+    GEARS |> 
+    select(gid, veidarfaeri, gclass, m4, m5)
+}
 # Only Icelandic vessels
 q_vessels_icelandic <- 
   omar::tbl_mar(con, "vessel.vessel_v") |> 
@@ -100,7 +102,9 @@ q_vessels_icelandic <-
 
 # Read in landings data
 LODS <- open_dataset("~/stasi/fishydata/data/landings/lods_stations.parquet") |> collect()
-AGF <-  open_dataset("~/stasi/fishydata/data/landings/agf_stations.parquet") |> collect()
+AGF <-  
+  open_dataset("~/stasi/fishydata/data/landings/agf_stations.parquet") |> 
+  collect()
 
 # 1 Old logbooks ---------------------------------------------------------------
 
@@ -360,16 +364,19 @@ BASE_new |>
   count(source, whack) |> 
   spread(whack, n)
 ### Any abberrant trend in the number of sets by month? ------------------------
-bind_rows(
-  LGS_old |>   select(gid, date, base),
-  BASE_new  |> select(gid, date, base)) |> 
-  left_join(GEARS_trim |> mutate(gclass = paste(str_pad(gid, 2, pad = "0"), veidarfaeri)) |> select(gid, gclass)) |> 
-  mutate(date = floor_date(date, "month")) |> 
-  count(date, gclass) |> 
-  filter(year(date) %in% 2018:2022) |> 
-  ggplot(aes(date, n)) +
-  geom_point(size = 0.5) +
-  facet_wrap(~ gclass, scales = "free_y")
+if(FALSE) {
+  bind_rows(
+    LGS_old |>   select(gid, date, base),
+    BASE_new  |> select(gid, date, base)) |> 
+    left_join(GEARS_trim |> mutate(gclass = paste(str_pad(gid, 2, pad = "0"), veidarfaeri)) |> select(gid, gclass)) |> 
+    mutate(date = floor_date(date, "month")) |> 
+    count(date, gclass) |> 
+    filter(year(date) %in% 2018:2022) |> 
+    ggplot(aes(date, n)) +
+    geom_point(size = 0.5) +
+    facet_wrap(~ gclass, scales = "free_y")
+}
+
 
 ## Mobile gear -----------------------------------------------------------------
 MOBILE_new <- 
@@ -549,6 +556,12 @@ LGS2 <-
   LGS2 |> 
   match_nearest_date(AGF) |> 
   rename(date_ln = date.ln)
+# add the harbour id
+LGS2 <- 
+  LGS2 |> 
+  left_join(AGF |> select(.lid, hid_ln))
+
+
 LGS <- 
   bind_rows(LGS1, LGS2)
 n_after_nearest_match <- nrow(LGS)
@@ -556,8 +569,9 @@ print(c(n_before_nearest_match, n_after_nearest_match))
 
 LGS <- 
   LGS |> 
-  rename(date_ln_agf = date_ln,
-         gid_ln_agf = gid_ln,
+  rename(date_agf = date_ln,
+         gid_agf = gid_ln,
+         hid_agf = hid_ln,
          .lid_agf = .lid)
 ### Checks ---------------------------------------------------------------------
 LGS |> 
@@ -573,7 +587,7 @@ LGS |>
 
 LGS |> 
   filter(year(date) >= 2008) |> 
-  mutate(dt = as.integer(difftime(datel, date_ln_agf, units = "days")),
+  mutate(dt = as.integer(difftime(datel, date_agf, units = "days")),
          dt = ifelse(dt <= -5, -5, dt),
          dt = ifelse(dt >=  5,  5, dt)) |> 
   count(dt) |> 
@@ -593,8 +607,8 @@ n_after_nearest_match <- nrow(LGS)
 print(c(n_before_nearest_match, n_after_nearest_match))
 LGS <- 
   LGS |> 
-  rename(date_ln_lods = date_ln,
-         gid_ln_lods = gid_ln,
+  rename(date_lods = date_ln,
+         gid_lods = gid_ln,
          .lid_lods = .lid)
 ### Checks ---------------------------------------------------------------------
 LGS |> 
@@ -603,7 +617,7 @@ LGS |>
   mutate(p = n / sum(n)) |> 
   knitr::kable(caption = "Missing landings id")
 LGS |> 
-  mutate(dt = as.integer(difftime(datel, date_ln_lods, units = "days")),
+  mutate(dt = as.integer(difftime(datel, date_lods, units = "days")),
          dt = ifelse(dt <= -5, -5, dt),
          dt = ifelse(dt >=  5,  5, dt)) |> 
   count(dt) |> 
@@ -623,6 +637,20 @@ LGS <-
   left_join(v,
             by = join_by(vid, between(date, mmsi_t1, mmsi_t2)))
 
+# 6A. Corrections --------------------------------------------------------------
+# Known issues:
+#     Ísafjarðardjúp - botnvarpa -> rækjuvarpa
+LGS <- 
+  LGS |> 
+  mutate(gid_agf = case_when(gid_agf == 2 & sid_target == 22 ~ 22,    # þorskfisknet -> grálúðunet
+                             gid_agf == 6 & sid_target == 40 ~ 7,     # botnvarpa -> humarvarpa
+                             gid_agf == 6 & sid_target == 41 ~ 8,     # botnvarpa -> rækjuvarpa
+                             gid_agf == 6 & sid_target == 11 ~ 9,     # botnvarpa -> flotvarpa
+                             gid_agf == 9 & sid_target %in% c(1:9, 21:29) ~ 6,  # flotvarpa -> botnvarpa
+                             .default = gid_agf))
+
+
+
 # 6. Save the stuff ------------------------------------------------------------
 
 LGS   |> arrow::write_parquet("~/stasi/fishydata/data/logbooks/stations.parquet")
@@ -640,11 +668,11 @@ lgs |>
   mutate(dt = difftime(t2, t1, units = "mins"),
          dt = as.numeric(dt)) |>  
   filter(dt > 0) |> 
-  group_by(gid_ln_agf) |> 
+  group_by(gid_agf) |> 
   mutate(dt = ifelse(dt > quantile(dt, 0.99), quantile(dt, 0.99), dt)) |> 
   ggplot(aes(dt / 60)) +
   geom_histogram() +
-  facet_wrap(~ gid_ln_agf, scales = "free")
+  facet_wrap(~ gid_agf, scales = "free")
 
 
 # 8. For ais -------------------------------------------------------------------
@@ -706,7 +734,7 @@ lb_t1_t2 <-
   lb |> 
   filter(!is.na(t1) & !is.na(t2)) |> 
   mutate(n.sids = 1) |> 
-  select(vid, date, t1, t2, gid, gid_ln_agf, effort, effort_unit, catch_total, n.sids, .sid, lb_base)
+  select(vid, date, t1, t2, gid, gid_agf, hid_agf, effort, effort_unit, catch_total, n.sids, .sid, lb_base)
 lb_rest <- 
   lb |> 
   filter(!.sid %in% lb_t1_t2$.sid)
@@ -732,7 +760,7 @@ ca <-
 
 lb_rest <- 
   lb_rest |> 
-  group_by(vid, date, gid, gid_ln_agf, lb_base, effort_unit) %>%
+  group_by(vid, date, gid, gid_agf, hid_agf, lb_base, effort_unit) %>%
   # get here all essential variables that are needed downstream
   summarise(.sid = min(.sid),
             n.sids = n(),
@@ -745,7 +773,7 @@ lb_rest <-
                              " 23:59:00")))
 lb_rest <- 
   lb_rest |> 
-  select(vid, date, t1, t2, gid, gid_ln_agf, effort, effort_unit, catch_total, n.sids, .sid, lb_base)
+  select(vid, date, t1, t2, gid, gid_agf, hid_agf, effort, effort_unit, catch_total, n.sids, .sid, lb_base)
 lb <-
   bind_rows(lb_rest, 
             lb_t1_t2) |> 
