@@ -1,3 +1,11 @@
+# On gears
+#  The primary gear code used in the ais/vms analysis is that reported in the
+#  gafl/landings database.
+#
+# TODO:
+#  * Add criterion for maximum duration
+#  * Add criterion for maximum distance
+
 library(tidyverse)
 library(omar)
 con <- connect_mar()
@@ -26,6 +34,30 @@ met5 <-
   distinct(met5, .keep_all = TRUE) |> 
   arrange(met5) 
 
+
+speed_criterion <- 
+  tribble(~gid_agf, ~s1, ~s2,
+          1, 0, 2.500,
+          2, 0, 1.700,
+          3, 0, 1.700,
+          4, 0, 1.700,
+          5, 0.05, 1.125,
+          6, 2.625, 4.700,
+          7, 2.375, 3.700,
+          8, 1.750, 3.000,
+          9, 2.625, 6.000,
+          10, 0, 1.7,
+          11, 0.250, 2.9,
+          12, 0.375, 2.750,
+          13, 0.375, 2.750,
+          14, 0.025, 1.7,
+          15, 1.2, 2.9,
+          16, 0.1, 2,
+          19, 0.125, 1.25,
+          21, 0.1, 2.2,
+          22, 0.05, 1.4,
+          24, 0, 1.4,
+          25, 2.3, 4) 
 
 gid_agf <- 
   tbl_mar(con, "agf.aflagrunnur_v") |> 
@@ -87,7 +119,8 @@ gid_agf <-
                           gid_agf == 24 ~ "HMS_SWD",  # Sláttuprammi
                           gid_agf == 25 ~ "HMS_SWD",  # Þarapógur
                           .default = NA)) |> 
-  left_join(met5)
+  left_join(met5) |> 
+  left_join(speed_criterion)
 
 
 gid_agf |> nanoparquet::write_parquet("data/gear/gear_mapping.parquet")
