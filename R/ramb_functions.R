@@ -194,3 +194,32 @@ rb_st_remove <- function(x, y) {
   x <- x[i, ]
   return(x)
 }
+
+
+rb_leaflet_raster <- function(g) {
+  r <- 
+    g |> 
+    select(x = lon, y = lat, effort = dt) |> 
+    mutate(effort = cap_value(effort)) |> 
+    raster::rasterFromXYZ()
+  raster::crs(r) <- "epsg:4326"
+  inf <- viridis::inferno(12, alpha = 1, begin = 0, end = 1, direction = -1)
+  pal <- leaflet::colorNumeric(inf, raster::values(r), na.color = "transparent")
+  
+  l <-
+    leaflet::leaflet(options = leaflet::leafletOptions(minZoom = 4, maxZoom = 11)) %>%
+    leaflet::addTiles(urlTemplate = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+             group = "Image",
+             attribution = 'Data source: <a href="https://www.hafogvatn.is">Marine Rearch Institute</a>') %>%
+    leaflet::setView(-18, 65.2, zoom = 6) %>%
+    leaflet::addRasterImage(r, colors = pal, opacity = 1, group = "Humarvarpa",
+                   maxBytes = Inf,
+                   project = TRUE) 
+  return(l)
+}
+
+
+cap_value <- function(x, q = 0.975) {
+  Q <- quantile(x, q)
+  ifelse(x > Q, Q, x)
+}
