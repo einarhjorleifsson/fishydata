@@ -5,12 +5,8 @@
 #  tables.
 #  Inputs:
 #    trail_stk (database) where values are in io
-#    kvoti.stadur (database) containing numerical code for harbours and harbour
-#    names
 #  Outputs:
-#    data/auxillary/ports.gpkg  - to be used to classify points in harbours
-#    data/auxillary/prots.parquet - a lookup to be used in conjunction with
-#                                   logbooks and landings table
+#    data/ports/ports.gpkg  - to be used to classify points in harbours
 #
 # Comments:
 #  
@@ -399,4 +395,4 @@ ports |> st_drop_geometry() |> count(port) |> filter(n > 1) |> knitr::kable(capt
 
 
 ports |>  
-  st_write("data/auxillary/ports.gpkg", append = FALSE)
+  st_write("data/ports/ports.gpkg", append = FALSE)
