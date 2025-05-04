@@ -101,10 +101,18 @@ q_vessels_icelandic <-
   filter(!between(vid, 3700, 4999))
 
 # Read in landings data
-LODS <- open_dataset("~/stasi/fishydata/data/landings/lods_stations.parquet") |> collect()
+LODS <- 
+  open_dataset("~/stasi/fishydata/data/landings/lods_stations.parquet") |> 
+  collect() |> 
+  rename(datel = date,
+         gid_ln = gid,
+         hid_ln = hid)
 AGF <-  
   open_dataset("~/stasi/fishydata/data/landings/agf_stations.parquet") |> 
-  collect()
+  collect() |> 
+  rename(datel = date,
+         gid_ln = gid,
+         hid_ln = hid)
 
 # 1 Old logbooks ---------------------------------------------------------------
 
