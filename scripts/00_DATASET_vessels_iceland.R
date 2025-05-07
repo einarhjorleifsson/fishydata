@@ -30,6 +30,12 @@ str_extract_between_parenthesis <- function(x) {
 options(knitr.kable.NA = '')
 con <- connect_mar()
 
+# mar::tbl_mar(mar::connect_mar(), "vessel.vessel_v") |>  
+#   collect() |> 
+#   write_csv("vessel_tmp.csv")
+
+
+
 # Import vessel registries -----------------------------------------------------
 ## ISL -------------------------------------------------------------------------
 mmsi_ISL <-
@@ -58,17 +64,19 @@ vessel_ISL <-
   mar::tbl_mar(con, "vessel.vessel_v") |> 
   dplyr::select(vid = registration_no,
                 vessel = name,
+                cs = call_sign,
+                uid = region_acronym,
+                uno = region_no,
                 mclass = usage_category_no,   # mclass
                 imo = imo_no,
-                .vid = vessel_id,
+                loa = max_length,
                 kw = power_kw,
-                loa = max_length) |>
-  dplyr::left_join(tbl_mar(con, "vessel.vessel_identification") |>
-                     select(uid = region_acronym,
-                            uno = region_no,
-                            cs = call_sign,
-                            .vid = vessel_id),
-                   by = dplyr::join_by(.vid)) |>
+                n_engines = engines_count,
+                kw_total = engines_total_power,
+                grt = brutto_grt,
+                bwt = brutto_weight_tons,
+                nwt = netto_weight_tons,
+                .id = vessel_id) |>
   collect() |>
   dplyr::mutate(uno_c = case_when(uno > 0 ~ str_pad(uno, 3, pad = "0"),
                                   .default = NA),
@@ -76,16 +84,7 @@ vessel_ISL <-
                                 .default = NA),
                 source = "ISL",
                 flag = "ISL") |>
-  dplyr::select(cs,
-                imo,
-                uid,
-                vessel,
-                flag,
-                vid,
-                loa,
-                kw,
-                source,
-                .id = .vid) |>
+  select(-c(uno, uno_c)) |> 
   filter(!vid %in% c(0))
   
 # Extract the cs for foreign vessels from vessel name
