@@ -53,6 +53,13 @@ database |>
   filter(n > 1) |>
   knitr::kable(caption = "Duplicate MMSI (expect none)")
 
+## Current (2025-05-08) from fjarskiptastofa -----------------------------------
+# Download:
+if(FALSE) {
+  url <- "https://www.fjarskiptastofa.is/library?itemid=7ec1e44c-5464-46e7-a9ec-eb093d0b78ef&type=xlsx"
+  tmpfile <- "~/stasi/fishydata/data-raw/vessels/ISL/mmsi-iceland_fjarskiptastofa_2025-04-10.xlsx"
+  download.file(url, destfile = tmpfile)
+}
 ## Current (2024-10-22) from fjarskiptastofa -----------------------------------
 # The current url (2024-10-22) is here:
 #    https://www.fjarskiptastofa.is/fjarskiptastofa/fjarskiptainnvidir/skipa-og-flugfjarskipti
@@ -83,9 +90,19 @@ current2 <-
          cs = kallm,
          everything()) |>
   rename(note = athugasemdir)
+# more new
+tmpfile3 <- "data-raw/vessels/ISL/mmsi-iceland_fjarskiptastofa_2025-04-10.xlsx"
+current3 <- 
+  readxl::read_excel(tmpfile3) |>
+  janitor::clean_names() |>
+  select(mmsi = mmsi_nr,
+         sknr,
+         cs = kallm,
+         everything()) |>
+  rename(note = athugasemdir)
 # combine the two
 current <- 
-  bind_rows(current2, current) |> 
+  bind_rows(current3, current2, current) |> 
   # because order above, below means we retain the newest
   distinct(mmsi, .keep_all = TRUE)
 current <-
