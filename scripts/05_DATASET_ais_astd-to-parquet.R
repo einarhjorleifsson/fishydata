@@ -8,7 +8,7 @@
 
 # nohup run --------------------------------------------------------------------
 # run this in terminal as:
-#  nohup R < scripts/05_DATASET_ais_astd-to-parquet.R --vanilla > scripts/log/05_DATASET_ais_astd-to-parquet_2025-01-12.log &
+#  nohup R < scripts/05_DATASET_ais_astd-to-parquet.R --vanilla > scripts/log/05_DATASET_ais_astd-to-parquet_2025-05-12.log &
 #
 # Wish list
 #  NOTE: variables that were added later not appearing when open_dataset
@@ -144,6 +144,7 @@ base_date <- c("202311",
 
 #fil <- fil[144:length(fil)]
 #base <- base[144:length(base)]
+fil <- fil[145:147]
 
 for(i in 1:length(fil)) {
   tic()
