@@ -21,7 +21,7 @@ for(y in 2007:2025) {
     mutate(month = as.integer(month)) |> 
     arrange(mid, time) |> 
     arrow::write_dataset("data/ais/stk-raw", format = "parquet",
-                       partitioning = c("year"))
+                         existing_data_behavior = "overwrite",
+                         partitioning = c("year"))
 }
 
-  

@@ -1,4 +1,4 @@
-# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-05-02.log &
+# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-05-12.log &
 
 # checkout: https://stackoverflow.com/questions/63821533/find-the-nearest-polygon-for-a-given-point
 # pts <- st_join(pts, p, join = st_nearest_feature)
@@ -6,7 +6,7 @@ library(tictoc)
 tic()
 lubridate::now() |> print()
 
-YEARS <- 2024:2008
+YEARS <- 2025:2007
 
 library(conflicted)
 library(traipse)
@@ -24,7 +24,7 @@ sf::sf_use_s2(use_s2 = FALSE)  # because eusm has invalids, thus st_join
 #                              #  creates error
 island <- read_sf("data/auxillary/shoreline.gpkg")
 ports <-  
-  read_sf("~/stasi/fishydata/data/auxillary/ports.gpkg") |> 
+  read_sf("~/stasi/fishydata/data/ports/ports.gpkg") |> 
   select(pid)
 # DO LATER
 if(FALSE) {
@@ -40,9 +40,8 @@ if(FALSE) {
 # Logbooks ---------------------------------------------------------------------
 lb <- 
   read_parquet("data/logbooks/station-for-ais.parquet") |> 
-  filter(year(date) %in% YEARS)
-
-
+  filter(year(date) %in% YEARS) |> 
+  filter(!is.na(agf_gid))
 
 # data -------------------------------------------------------------------------
 stk_vid <- 
@@ -69,7 +68,9 @@ ASTD <-
   inner_join(stk_vid |> select(vid, mmsi),
              by = join_by(vid, mmsi)) 
 
-
+gears <-
+  read_parquet("data/gear/gear_mapping.parquet") |> 
+  select(agf_gid = gid_agf, met5, s1, s2)
 # processing - year loop -------------------------------------------------------
 
 for(y in YEARS) {
@@ -219,7 +220,10 @@ for(y in YEARS) {
     fill(gid_trip, .direction = "downup") |> 
     ungroup()
     
-  
+  trail8 <- 
+    trail8 |> 
+    left_join(gears |> rename(gid_trip = agf_gid),
+              by = join_by(gid_trip))
   
   trail8 |> 
     arrow::write_dataset(path = "~/stasi/fishydata/data/ais/trail",

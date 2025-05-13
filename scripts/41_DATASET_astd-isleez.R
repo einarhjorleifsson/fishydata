@@ -4,13 +4,13 @@ library(tictoc)
 tic()
 
 #year_now <- lubridate::today() |> lubridate::year()
-YEARS <- c(2024:2013)
+YEARS <- c(2025)
 
 library(arrow)
 library(tidyverse)
 library(sf)
 
-harbours <- read_sf("data/auxillary/harbours.gpkg")
+ports <- read_sf("data/ports/ports.gpkg")
 mmsi <- 
   open_dataset("data/vessels/mmsi_iceland_archieves.parquet") |> 
   filter(mmsi_cat == "vessel") |> 
@@ -57,7 +57,7 @@ for(y in 1:length(YEARS)) {
     st_as_sf(coords = c("lon", "lat"),
            crs = 4326,
            remove = FALSE) |> 
-    st_join(harbours |> select(hid = hid_std)) |> 
+    st_join(harbours |> select(hid = pid)) |> 
     st_drop_geometry() |> 
     # cruise id (aka tripid), negative values: in harbour
     arrange(mmsi, time) |> 
