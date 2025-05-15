@@ -7,17 +7,15 @@ website:
   # favicon: "image/hafro_logo.png"
   navbar:
     right:
-      - text: Something
+      - text: The concep
         menu:
-          - qmd/links.qmd
           - qmd/datacall.qmd
-      - text: Forritun
+      - text: On coding
         menu:
-          - qmd/links.qmd
-          - qmd/links.qmd
+          - qmd/datacall.qmd
       - ramb-list.qmd # add ramb blog to the navbar
       - icon: github
-        href: https://github.com/einarhjorleifsson/fishvice
+        href: https://github.com/einarhjorleifsson/fishydata
 
 format:
   html:

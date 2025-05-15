@@ -1,65 +1,152 @@
 ---
-title: ""
+title: "Concept"
 ---
 
-```{r, echo = FALSE}
-#| column: screen
-#| out-width: 100%
-#| fig-height: 9
-library(leaflet)
-library(leaflet.extras)
-library(leaflet.extras2)
-library(htmlwidgets)
-source("~/stasi/hafsjor/R/add_groups.R")
-skipaflokkar <- 
-  sf::read_sf("ftp://ftp.hafro.is/pub/data/shapes/skipaflokkar.gpkg") |> 
-  sf::st_cast("LINESTRING")
-m0 <-
-  leaflet() |>
-  setView(-19, 65, zoom = 5) |>
-  hs_add_base() |> 
-  hs_add_veidar() |> 
-  hs_add_lifriki() |> 
-  hs_add_log() |> 
-  addPolygons(data = skipaflokkar,
-              weight = 2,
-              group = "Skipaflokkar",
-              stroke = TRUE, 
-              #smoothFactor = 0.2, 
-              opacity = 1,
-              fillOpacity = 0)
+## Data connect
 
-
-m <-
-  m0 |>
-  leaflet.extras::addGroupedLayersControl(
-    baseGroups = c("Hnöttur", "Botnlag"),
-    overlayGroups = list(
-      "Sókn" = c("Longline", "Net", "Jiggers", "Demersal seine", "Fish trawl", "Shrimp trawl", "Nephrops trawl", "Dredge"),
-      "Lífríki" = c("Botndýr"),
-      "Lög" = c("12 mílur", "EEZ", "Skipaflokkar"),
-      "Reglugerðir" = c("Nothing here yet")
-    ),
-    position = "topright",
-    options = leaflet.extras::groupedLayersControlOptions(
-      exclusiveGroups = NULL, #c("Sókn"),
-      groupCheckboxes = TRUE,
-      collapsed = FALSE,
-      groupsCollapsable = TRUE,
-      sortLayers = FALSE,
-      sortGroups = FALSE,
-      sortBaseLayers = FALSE)) |> 
-  leaflet.extras::addFullscreenControl() |> 
-  leaflet::hideGroup(group = c("Botndýr", "EEZ", "Skipaflokkar", "Nothing here yet"))
-m
+```{r}
+library(tidyverse)
+library(patchwork)
+library(arrow)
+library(duckdb)
+ais <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  # Not in harbour
+  filter(.cid > 0,                           # .cid positive -> not in harbour
+         (whack == FALSE | is.na(whack))) |> # need to fix this
+  # Fishing occurred on date
+  filter(between(year, 2008, 2024)) |> 
+  select(.cid, vid, time, speed, lon, lat, t1, t2, agf_gid, gid_trip, dd, dt) |> 
+  filter(gid_trip == 6)                      # Bottom fish trawl
 ```
 
+## Gridding
 
-https://www.itu.int/mmsapp
+### Using speed alone
 
+```{r}
+#| fig-height: 2.5
 
-https://github.com/cmkonrad/AIS-processing
+dx <- 0.25
+ais |> 
+  mutate(speed = speed %/% dx * dx + dx/2) |> 
+  count(vid, speed) |> 
+  collect() ->
+  s
+s |> 
+  mutate(speed = ifelse(speed > 15, 15, speed)) |> 
+  group_by(speed) |> 
+  reframe(n = sum(n)) |>
+  ggplot(aes(speed, n / 1e6)) +
+  theme_bw() +
+  geom_col() +
+  scale_x_continuous(breaks = seq(0, 20, by = 1)) +
+  labs(x = "Speed [kn]", y = "Number of pings [millions]",
+       caption = "Fish trawl")
+```
 
+So one could e.g try to use an arbitrary cuttoff for speed between 2.6 and 5.5 as an indicator of actual trawl fishing.
 
+```{r, fig.height=4}
+# cap data - just to make for a nicer map
+rb_cap <- function(x, Q = 0.975) {
+  q = quantile(x, Q)
+  ifelse(x > q, q, x)
+}
 
-OGC API For features
+dx <- 0.005
+dy <- dx / 2   # grid resolution approximately 275 x 275 meters
+g <- 
+  ais |> 
+  filter(between(speed, 2.625, 5.500)) |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y) |> 
+  summarise(dt = sum(dt, na.rm = TRUE) / 60,  # effort in minutes
+            .groups = "drop") |> 
+  collect()
+p1 <- 
+  g |> 
+  filter(between(x, -30, -20),
+         between(y, 64.5, 67)) |> 
+  mutate(dt = rb_cap(dt)) |> 
+  ggplot(aes(x, y, fill = dt)) +
+  theme_dark() +
+  geom_tile() +
+  scale_fill_viridis_c(direction = -1, guide = "none") +
+  coord_quickmap(expand = 0) +
+  scale_x_continuous(NULL, NULL) +
+  scale_y_continuous(NULL, NULL) +
+  labs(subtitle = "Speed alone",
+       caption = "Speed cutoff: 2.625-5.500")
+p1
+```
+
+In the above we are getting quite a lot of false positives as can be observed by the implied fishing inside the 12 miles, even within the fjords.
+
+## Using logbook time interval alone
+
+Let's instead filter by start (t1) and end (t2) of haul as registered in the logbooks:
+
+```{r, fig.height=3}
+g <- 
+  ais |> 
+  filter(between(time, t1, t2)) |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y) |> 
+  summarise(dt = sum(dt, na.rm = TRUE) / 60,
+            .groups = "drop") |> 
+  collect()
+p2 <- 
+  g |> 
+  filter(between(x, -30, -20),
+         between(y, 64.5, 67)) |> 
+  mutate(dt = rb_cap(dt)) |> 
+  ggplot(aes(x, y, fill = dt)) +
+  theme_dark() +
+  geom_tile() +
+  scale_fill_viridis_c(direction = -1, guide = "none") +
+  coord_quickmap(expand = 0) +
+  scale_x_continuous(NULL, NULL) +
+  scale_y_continuous(NULL, NULL) +
+  labs(subtitle = "Logbooks start end time")
+p1 + p2
+```
+
+So we are getting bit less of false positives close to shore as expected. But captains are known to forget to report at least the end of tow time, often making a hindsight guess. So let's try a combo of both speed and time filter.
+
+## Both speed and time as filter
+
+```{r, fig.height=2.5}
+g <- 
+  ais |> 
+  filter(between(speed, 2.625, 5.500)) |> 
+  filter(between(time, t1, t2)) |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y) |> 
+  summarise(dt = sum(dt, na.rm = TRUE) / 60,
+            .groups = "drop") |> 
+  collect()
+p3 <- 
+  g |> 
+  filter(between(x, -30, -20),
+         between(y, 64.5, 67)) |> 
+  mutate(dt = rb_cap(dt)) |> 
+  ggplot(aes(x, y, fill = dt)) +
+  theme_dark() +
+  geom_tile() +
+  scale_fill_viridis_c(direction = -1, guide = "none") +
+  coord_quickmap(expand = 0) +
+  scale_x_continuous(NULL, NULL) +
+  scale_y_continuous(NULL, NULL) +
+  labs(subtitle = "Speed and logbooks",
+       caption = "Speed cutoff: 2.625-5.500")
+p1 + p2 + p3
+```
+
+Getting closer where we want to be. Now we do not see much data inside the 12 miles zones or nor the fjords. Except in Ísafjörður, but those splots are wrongly recorded shrimp trawls.
+
+Another thing to note is that the data at this resolution is becoming granular, although we know that each tow track is a continuum. So either one has to grid using a lower resolution, create some spatial smoother, or make some interpolations.
+
