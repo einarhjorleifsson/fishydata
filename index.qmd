@@ -150,3 +150,61 @@ Getting closer where we want to be. Now we do not see much data inside the 12 mi
 
 Another thing to note is that the data at this resolution is becoming granular, although we know that each tow track is a continuum. So either one has to grid using a lower resolution, create some spatial smoother, or make some interpolations.
 
+## Turning things into an raster
+
+```{r}
+library(terra)
+r <- 
+  g |> 
+  filter(dt > 1,              # at least 1 minutes of effort per pixel
+         between(x, -30, -10),
+         between(y, 62, 68.5)) |> 
+  mutate(dt = rb_cap(dt, 0.99)) |> 
+  rast(type = "xyz",
+       crs = "epsg:4326")
+plot(r)
+```
+
+
+## Quick mapping
+
+```{r}
+library(stars)
+library(tmap)
+tmap_mode("view")
+values(r) <- log(values(r))  # just to get some contrast in the map
+s <- r |> st_as_stars()
+tm_shape(s) +
+  tm_raster("dt", palette = "-inferno")
+```
+
+## Let's do the whole thing over all in one go, now for longlineS
+
+```{r}
+open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  # Not in harbour
+  filter(.cid > 0,                           # .cid positive -> not in harbour
+         (whack == FALSE | is.na(whack))) |> # need to fix this
+  # Fishing occurred on date
+  filter(between(year, 2008, 2024)) |> 
+  filter(gid_trip %in% c(12, 13, 21)) |>    # longlines
+  filter(between(speed, s1, s2)) |>    # use what is already in the data
+  filter(between(time, t1, t2)) |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y) |> 
+  summarise(dt = sum(dt, na.rm = TRUE) / 60,
+            .groups = "drop") |> 
+  collect() |> 
+  filter(dt > 1,              # at least 1 minutes of effort per pixel
+         between(x, -30, -10),
+         between(y, 62, 68.5)) |> 
+  mutate(dt = rb_cap(dt, 0.99)) |> 
+  mutate(dt = log(dt)) |> 
+  rast(type = "xyz",
+       crs = "epsg:4326") |> 
+  st_as_stars() |> 
+  tm_shape() +
+  tm_raster("dt", palette = "-inferno")
+```
+
