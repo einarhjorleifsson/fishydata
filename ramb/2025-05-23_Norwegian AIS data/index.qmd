@@ -1,0 +1,65 @@
+---
+title: "Norwegian AIS data"
+author: Einar Hjörleifsson
+description: "When it comes to commerical fisheries data, the Norwegians are quite liberal. Actually extremely liberal. They basically have everything accessible. Here a quick code hash is provided as a case in point, showing the longline fleet individual hauling operation in 2022 to 2024."
+date: "2025-05-23"
+categories: [code]
+echo: true
+message: false
+warning: false
+---
+
+I am not going to provide much mumbo-jumbo text here, just some code and then a result. I may at some later stage write how one can retrieve these open data, here the focus is just on exposing the gold mine. What I did was:
+
+* Get callsign of vessels that registered using hooks [Krokredskap] in 2024 in the captain logbook registry.
+* Use the callsign list to filter out records from the AIS/VMS database for the years 2022-2024.
+* Basically a dataset of vessels time, lon, lat and speed.
+* Further restrict the dataset by adding a speed filter between 0.5-3.0, representing hauling speed.
+* Plot the beauty.
+
+Of course the devil is in the details, like false positives. But those for all practical purposes do not have a big impact on the overall signal.
+
+```{r}
+library(tidyverse)
+library(arrow)
+library(here)
+library(mapdeck)
+
+# Get the call sign for vessel using hooks, used to filter the ais data downstream
+#  here only use 2024 - just because I have only downloaded those data
+CS <- 
+  read_csv2(here("data-raw/fangstdata_2024.csv")) |> 
+  janitor::clean_names() |> 
+  filter(redskap_gruppe == "Krokredskap") |> 
+  select(cs = radiokallesignal_seddel) |> 
+  filter(!is.na(cs)) |> 
+  pull(cs) |> 
+  unique()
+# connect to the full database (110 million records)
+# only years 2022 to 2024, and only vessels (based on callsign) using hooks
+# add a simple speed filter, associated with line hauling
+ais <- 
+  open_dataset(here("data/ais/norway")) |>
+  filter(year %in% 2022:2024) |> 
+  filter(cs %in% CS,
+         between(speed, 0.5, 3.0))
+# map the pings
+ais |>
+  select(cs, time, lon, lat, speed) |>
+  # import data into R
+  collect() |> 
+  drop_na() |> 
+  # some 1.9 million records
+  mapdeck(zoom = 6, location = c(0, 60)) |> 
+  add_scatterplot(fill_colour = "speed",
+                  update_view = FALSE,
+                  legend = FALSE,
+                  radius = 300, layer_id = "points", 
+                  palette = "inferno")
+```
+
+
+Now this is just gleaming the surface of what if feasible. We could, given the data at hand, allocate a kg catch for a specific species to each of these points given the logbook information.
+
+
+Of course in practice we would when summarize the data across vessels and a specified time period (like one year). 

@@ -2,12 +2,13 @@
 #
 # TODO:
 #  * provide another projection (or check geoarrow)
-#  * find a way to add the mmsi
-#
+#  * find a way to add the mmsi - this may not be achievable
+#  * check if year in each zip is incorrect - seems to be the case for 2024
 
 library(arrow)
 library(tidyverse)
 
+# The format of the data is not the same for each year
 read_vms1 <- function(fil) {
   d <-
     read_delim(fil, delim = ";") |>
@@ -45,7 +46,7 @@ read_vms2 <- function(fil) {
            everything())
 }
 
-fil <- dir("data-raw/ais/norway", full.names = TRUE, pattern = "*.zip")
+fil <- dir("data-raw/norway/ais", full.names = TRUE, pattern = "*.zip")
 base <- basename(fil)
 tdir <- tempdir()
 for(i in 1:length(fil)) {
@@ -60,8 +61,9 @@ files <-
 files |> print()
 
 for(i in 1:nrow(files)) {
-  print(files$fil[i])
-  if(i %in% c(1:11, 13)) {
+  print(files[i,])
+  yr <- files$year[i]
+  if(i != 12) {
     d <- read_vms1(files$fil[i])
   } else {
     d <- read_vms2(files$fil[i])
@@ -70,11 +72,14 @@ for(i in 1:nrow(files)) {
   d$time |> year() |> unique() |> print()
   range(d$lon, na.rm = TRUE) |> print()
   range(d$lat, na.rm = TRUE) |> print()
-  d |>
+  d <- 
+    d |>
     filter(!is.na(lat), !is.na(lon)) |>
     filter(between(lon, -180, 180),
            between(lat, -90, 90)) |>
-    mutate(year = year(time)) |>
+    mutate(year = year(time))
+  d |> count(year) |> print()
+  d |>
     group_by(year) |>
-    arrow::write_dataset(files$out[i])
+    arrow::write_dataset(files$out[i], partitioning = "year", existing_data_behavior = "overwrite")
 }

@@ -166,11 +166,12 @@ plot(r)
 ```
 
 
-## Quick mapping
+## Quick mapping - bottom fish trawl
 
 ```{r}
 library(stars)
 library(tmap)
+# library(tmap.mapgl)
 tmap_mode("view")
 values(r) <- log(values(r))  # just to get some contrast in the map
 s <- r |> st_as_stars()
@@ -178,7 +179,7 @@ tm_shape(s) +
   tm_raster("dt", palette = "-inferno")
 ```
 
-## Let's do the whole thing over all in one go, now for longlineS
+## Let's do the whole thing over all in one go, now for longlines
 
 ```{r}
 open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 

@@ -18,5 +18,6 @@ garbage
 docs
 
 *.html
+*.zip
 
 /.quarto/
