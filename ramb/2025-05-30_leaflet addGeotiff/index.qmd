@@ -1,0 +1,94 @@
+---
+title: "leaflet addGeotiff"
+author: Einar Hjörleifsson
+description: "Just a quick note on using geotiff file in leaflet"
+date: "2025-05-30"
+categories: [code, rtip]
+echo: true
+---
+
+* outstanding issue: the rendered pixels are equi-distance lon-lat degrees, bit annoying
+
+```{r}
+library(tidyverse)
+library(arrow)
+library(duckdb)
+library(leaflet)
+library(leafem)
+library(stars)
+library(terra)
+
+# map resolution in degrees
+dx <- 0.005
+dy <- dx / 2   # grid resolution approximately 275 x 275 meters
+
+
+rb_cap <- function(x, Q = 0.975) {
+  q = quantile(x, Q)
+  ifelse(x > q, q, x)
+}
+
+
+ais <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  # Not in harbour
+  filter(.cid > 0,                            # .cid positive -> not in harbour
+         (whack == FALSE | is.na(whack)),   # need to fix this
+         between(lon, -30, -10),
+         between(lat, 62, 68.5),
+         between(year, 2008, 2024),
+         between(speed, 2.625, 5.500),
+         between(time, t1, t2),
+         gid_trip == 6) |>                    # bottom trawl 
+  select(.cid, vid, time, speed, lon, lat, t1, t2, agf_gid, gid_trip, dd, dt, .sid)
+# catch
+catch <- open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
+
+g <- 
+  ais |> 
+  inner_join(catch |> 
+               # If a particular species
+               # filter(sid == 6) |> 
+               # be on the save side, probably not needed
+               group_by(.sid) |> 
+               summarise(catch = sum(catch, na.rm = TRUE))) |>
+  filter(catch > 0) |> 
+  group_by(.sid) |> 
+  # split catch among pings
+  mutate(catch = catch / n()) |> 
+  ungroup() |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y) |> 
+  summarise(n = n(),
+            dt = sum(dt, na.rm = TRUE) / 60,
+            catch = sum(catch, na.rm = TRUE),
+            .groups = "drop") |> 
+  collect() |> 
+  filter(dt > 1) |>               # at least 1 minutes of effort per pixel
+  arrange(catch) |> 
+  mutate(pcatch = catch / sum(catch),
+         ccatch = cumsum(pcatch) * 100)
+s <- 
+  g |> 
+  select(x, y, z = catch) |> 
+  mutate(z = rb_cap(z, 0.95)) |> 
+  # should go directly to stars object
+  rast(type = "xyz",
+       crs = "epsg:4326") |> 
+  st_as_stars()
+
+s |> write_stars("/home/haf/einarhj/stasi/fishydata/ramb/2025-05-30_leaflet addGeotiff/s.tif")
+
+leaflet() %>%
+  addTiles() %>%
+  addGeotiff(
+    file = "/home/haf/einarhj/stasi/fishydata/ramb/2025-05-30_leaflet addGeotiff/s.tif",
+    , opacity = 1
+    , colorOptions = colorOptions(
+      palette = hcl.colors(256, palette = "inferno")
+      , na.color = "transparent"
+    )
+  )
+```
+

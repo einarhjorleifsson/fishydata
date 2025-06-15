@@ -1,0 +1,140 @@
+---
+title: "Fishtrawl footprint - by proportion of total catch"
+author: Einar Hjörleifsson
+description: "One of the characteristics of fish bottom trawling is that the catch is taken in a very limited area of the total trawl footprint. E.g. about 60% of the catch is taken in 10% of the total area. Here we 'look' at this from the other angle and show show the areas were less than 5%, 10%, .. percentage of the total catch is taken. These kind of acrobatics may be a foundation for some intriguing discussions."
+date: "2025-06-10"
+categories: [code, rtip]
+echo: true
+---
+
+```{r}
+library(tidyverse)
+library(arrow)
+library(duckdb)
+library(leaflet)
+library(leafem)
+library(stars)
+library(terra)
+
+# map resolution in degrees
+dx <- 0.02
+dy <- dx / 2   # grid resolution approximately 275 x 275 meters
+rb_cap <- function(x, Q = 0.975) {
+  q = quantile(x, Q)
+  ifelse(x > q, q, x)
+}
+
+
+ais <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  # Not in harbour
+  filter(.cid > 0,                            # .cid positive -> not in harbour
+         (whack == FALSE | is.na(whack)),   # need to fix this
+         between(lon, -30, -10),
+         between(lat, 62, 68.5),
+         between(year, 2008, 2024),
+         between(speed, 2.625, 5.500),
+         between(time, t1, t2),
+         gid_trip == 6) |>                    # bottom trawl 
+  select(.cid, vid, time, speed, lon, lat, t1, t2, agf_gid, gid_trip, dd, dt, .sid)
+# catch
+catch <- open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
+
+# home made grid ----------------------------------------------------------
+g <- 
+  ais |> 
+  inner_join(catch |> 
+               # If a particular species
+               # filter(sid == 6) |> 
+               # be on the save side, probably not needed
+               group_by(.sid) |> 
+               summarise(catch = sum(catch, na.rm = TRUE))) |>
+  filter(catch > 0) |> 
+  group_by(.sid) |> 
+  # split catch among pings
+  mutate(catch = catch / n()) |> 
+  ungroup() |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y) |> 
+  summarise(n = n(),
+            dt = sum(dt, na.rm = TRUE) / 60,
+            catch = sum(catch, na.rm = TRUE),
+            .groups = "drop") |> 
+  collect() |> 
+  filter(dt > 1) |>               # at least 1 minutes of effort per pixel
+  arrange(catch) |> 
+  mutate(pcatch = catch / sum(catch),
+         ccatch = cumsum(pcatch) * 100)
+
+library(terra)
+r <- 
+  g |> 
+  select(x, y, z = ccatch) |> 
+  #mutate(z = santoku::chop_deciles(z)) |> 
+  #select(x, y, z = catch) |> 
+  #mutate(z = rb_cap(z, 0.95)) |> 
+  # should go directly to stars object
+  rast(type = "xyz",
+       crs = "epsg:4326")
+s <- r |> st_as_stars()
+sf <- 
+  s |> 
+  st_as_sf() |> 
+  mutate(z = case_when(z < 5 ~ "000-005",
+                       z < 10 ~ "005-010",
+                       z < 15 ~ "010-015",
+                       z < 20 ~ "015-020",
+                       z < 25 ~ "020-025",
+                       z < 50 ~ "025-050",
+                       z < 75 ~ "050-075",
+                       z <= 100 ~ "075-100",
+                       .default = "something else"))
+sf2 <- 
+  sf |> 
+  group_by(z) |>  
+  summarize(geometry = st_union(geometry))
+area <- 
+  sf2 |> 
+  mutate(area = st_area(geometry) |> as.numeric(),
+         area = area / 1e6) |> 
+  st_drop_geometry() |> 
+  mutate(p = area / sum(area),
+         cp = cumsum(p))
+
+library(leaflet)
+m <- 
+  leaflet() |> 
+  addTiles() |> 
+  addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/haf/050m/{z}/{x}/{-y}.png",
+             group = "050m",
+             options = tileOptions(minZoom = 5, maxZoom = 16)) |>
+    addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/haf/020m/{z}/{x}/{-y}.png",
+             group = "020m",
+             options = tileOptions(minZoom = 5, maxZoom = 16)) |>
+    addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/lhg/{z}/{x}/{-y}.png",
+             group = "lhg",
+             options = tileOptions(minZoom = 0, maxZoom = 16))
+pal <- viridis::inferno(nrow(sf2), direction = -1)
+m2 <- m
+
+
+for(i in 1:nrow(sf2)) {
+  Z <- sf2$z[i]
+  tmp <- sf2 |> filter(z == Z)
+  m2 <- 
+    m2 |> 
+    addPolygons(data = tmp,
+               group = Z,
+               col = pal[i],
+               fillOpacity = 1,
+               opacity = 1,
+               weight = 1)
+}
+m2 |> 
+  addLayersControl(overlayGroups = sf2$z,
+                     options = layersControlOptions(collapsed = FALSE))
+
+
+sf2 |> write_sf("/u3/haf/gisland/data/adhoc/2025-06-10_fishtrawl_proportion_of_catch.gpkg")
+```

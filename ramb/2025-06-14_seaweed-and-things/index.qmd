@@ -1,0 +1,164 @@
+---
+title: "Seaweed, fishing and beautiful creatures"
+author: Einar Hjörleifsson
+description: "I was asked to provide a map of net fishing in shallow waters, sea-weed bed distribution, seal rutting areas and coastal bird distributions. Here is the code behind that delivery."
+date: "2025-06-14"
+categories: [code, rtip]
+echo: true
+---
+
+```{r}
+library(raster)
+library(leaflet)
+library(sf)
+library(viridis)
+library(tidyverse)
+library(arrow)
+# remotes::install_github("einarhjorleifsson/omar")
+library(omar)
+con <- connect_mar()
+depth <- 
+  "/u3/haf/gisland/data/depth/sjomaelingar_dypislinur.gpkg" |> 
+  read_sf() |> 
+  filter(depth %in% c(20, 50))
+latur_landselir <- 
+  "/u3/haf/gisland/data/adhoc/ni_d25v_landselir_1980_2018_selalatur_fl.gpkg" |> 
+  read_sf() |> 
+  select(nafn = nafnFitju:ar2018, area = Shape_Area) |> 
+  st_cast("MULTIPOLYGON") |> 
+  st_transform(crs = 4326)
+latur_landselir_2sjm <-
+  latur_landselir |> 
+  st_transform(crs = 3857) |> 
+  st_buffer(dist = 1852 * 2, nQuadSegs = 100) |> 
+  st_transform(crs = 4326) |> 
+  st_cast("MULTILINESTRING")
+latur_utselir <- 
+  "/u3/haf/gisland/data/adhoc/ni_d25v_utselir_1982_2017_selalatur_fl.gpkg" |> 
+  read_sf() |> 
+  select(nafn = nafnFitju:ar2017, area = Shape_Area) |> 
+  st_cast("MULTIPOLYGON") |> 
+  st_transform(crs = 4326)
+latur_utselir_2sjm <-
+  latur_utselir |> 
+  st_transform(crs = 3857) |> 
+  st_buffer(dist = 1852 * 2, nQuadSegs = 100) |> 
+  st_transform(crs = 4326) |> 
+  st_cast("MULTILINESTRING")
+fuglar <- 
+  "/u3/haf/gisland/data/adhoc/ni_f25v_mikilvaegFuglasvaedi_fl.gpkg" |> 
+  read_sf() |> 
+  st_cast("MULTIPOLYGON") |> 
+  st_make_valid() |> 
+  select(nafn = nafnFitju,
+         flokkur = flokkurSva,
+         area = Shape_Area) |> 
+  st_transform(crs = 4326) |> 
+  drop_na() |> 
+  filter(flokkur %in% c("FG", "SF"))
+
+landings_date_nets <- 
+  ln_agf(con) |>
+  filter(gid %in% c(2, 3, 4)) |> 
+  collect() |> 
+  mutate(date = as_date(date),
+         gid = case_when(gid == 2 ~ "gadoids",
+                         .default = "lumpsucker")) |> 
+  select(vid, date, gid) |> 
+  distinct() |> 
+  arrow::as_arrow_table() |> 
+  to_duckdb()
+thari <- 
+  read_sf("/u3/haf/gisland/data/adhoc/predicted_kelp.gpkg") |> 
+  st_transform(crs = 4326)
+
+dx <- 0.005
+dy <- dx / 2
+g <- 
+  open_dataset("~/stasi/fishydata/data/ais/trail") |>
+  filter(between(speed, 0.1, 2),
+         between(lon, -30, -10),
+         between(lat, 63, 68)) |> 
+  select(vid, date, time, dt, lon, lat, speed) |> 
+  to_duckdb() |> 
+  inner_join(landings_date_nets,
+             by = join_by(vid, date)) |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y, gid) |> 
+  summarise(dt = sum(dt, na.rm = TRUE),
+            n.years = n_distinct(year(date)),
+            .groups = "drop") |> 
+  collect()
+
+lumpsucker <- 
+  g |> 
+  filter(gid == "lumpsucker",
+         !is.na(dt)) |> 
+  mutate(dt = ifelse(dt > quantile(dt, 0.95), quantile(dt, 0.95), dt)) |>  
+  # only grid cells if reported in more than one year
+  filter(n.years > 1) |> 
+  select(x, y, dt) |> 
+  raster::rasterFromXYZ()
+raster::crs(lumpsucker) <- "epsg:4326"
+inf <- inferno(12, alpha = 1, begin = 0, end = 1, direction = -1)
+pal_lumpsucker <- colorNumeric(inf, raster::values(lumpsucker), na.color = "transparent")
+gadoids <- 
+  g |> 
+  filter(gid == "gadoids",
+         !is.na(dt)) |> 
+  mutate(dt = ifelse(dt > quantile(dt, 0.95), quantile(dt, 0.95), dt)) |>  
+  # only grid cells if reported in more than one year
+  filter(n.years > 1) |> 
+  select(x, y, dt) |> 
+  raster::rasterFromXYZ()
+raster::crs(gadoids) <- "epsg:4326"
+pal_gadoids <- colorNumeric(inf, raster::values(gadoids), na.color = "transparent")
+
+
+l <-
+  leaflet(options = leafletOptions(minZoom = 4, maxZoom = 12)) %>%
+  addTiles(urlTemplate = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+           group = "Image",
+           attribution = 'Data source: <a href="https://www.hafogvatn.is">Marine Rearch Institute</a>') %>%
+  setView(-17, 66.3, zoom = 8) %>%
+  addPolygons(data = thari, weight = 1, fillColor = "chartreuse", fillOpacity = 0.75, group = "Þaraskógur") |> 
+  addRasterImage(lumpsucker, colors = pal_lumpsucker, opacity = 1, group = "Grásleppuveiðar",
+                 maxBytes = Inf,
+                 project = TRUE) |> 
+  addRasterImage(gadoids, colors = pal_gadoids, opacity = 1, group = "Þorsknetaveiðar",
+                 maxBytes = Inf,
+                 project = TRUE) |> 
+  addPolygons(data = latur_landselir, weight = 1, fillColor = "cyan", fillOpacity = 1, group = "Landsselslátur") |> 
+  addPolylines(data = depth, weight = 1, opacity = 1, color = "grey", group = "Dýpi [20 & 50 m]") |> 
+  addPolylines(data = latur_landselir_2sjm, weight = 2, color = "cyan", opacity = 1, group = "Landsselslátur 2 sjómílur") |> 
+  addPolygons(data = latur_utselir, weight = 1, fillColor = "red", fillOpacity = 1, group = "Útselslátur") |> 
+  addPolylines(data = latur_utselir_2sjm, weight = 2, color = "red", opacity = 1, group = "Útselslátur 2 sjómílur") |> 
+  addPolylines(data = fuglar |> filter(flokkur == "SF"),
+               weight = 2,
+               color = "pink", opacity = 1, group = "Sjófuglar") |> 
+  addPolylines(data = fuglar |> filter(flokkur == "FG"),
+               weight = 2,
+               color = "orange", opacity = 1, group = "Fjörufuglar") |> 
+  addLayersControl(
+    overlayGroups = c("Grásleppuveiðar", "Þorsknetaveiðar", "Þaraskógur", 
+                      "Dýpi [20 & 50 m]",
+                      "Landsselslátur", "Landsselslátur 2 sjómílur", 
+                      "Útselslátur", "Útselslátur 2 sjómílur",
+                      "Sjófuglar", "Fjörufuglar"),
+    options = layersControlOptions(collapsed = FALSE)) |> 
+  hideGroup(group = c("Landsselslátur", "Landsselslátur 2 sjómílur", 
+                      "Útselslátur", "Útselslátur 2 sjómílur",
+                      "Sjófuglar", "Fjörufuglar"))
+l
+```
+
+
+```{r}
+#| eval: false
+#| echo: false
+l |> 
+  htmlwidgets::saveWidget(file = "/net/hafri.hafro.is/export/home/hafri/einarhj/public_html/fishers-kelp-and-other-beautiful-creatures.html")
+system("chmod -R a+rx /net/hafri.hafro.is/export/home/hafri/einarhj/public_html/fishers-kelp-and-other-beautiful-creatures.html")
+```
+

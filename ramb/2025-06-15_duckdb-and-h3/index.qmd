@@ -1,0 +1,56 @@
+---
+title: "Working with AIS data using {duckdb} and {h3}"
+author: Einar Hjörleifsson
+description: "Must admit that I have not fully grasped the duckdb-concept but what I have explored is magical. The main R-package is {duckdb} but {duckdbfs} provides a nice wrapper for making connection to files easier (similar to the {arrow}) package. On top of it {duckdbfs} has some intriguing spatial function. Here a little exploration of the AIS data is made to put the feature to a test."
+date: "2025-06-15"
+categories: [code, rtip]
+echo: true
+---
+
+The steps:
+
+* Open a duckdb connection to a sweep of AIS parquet files.
+  * Datafiles contain all vessel pings from 2008-2024
+* Filter the data, only pings of demersal fish bottom trawl, limit the extent to fishing in Icelandic waters.
+* Convert coordinates to h3-index at resolution level 9. This means that each hexagonal grid is 0.105	$km^2$ (If this were a circle the diameter would be ~400 meters)
+* Sum effort for each hex-grid for each year
+* Above all done within duckdb, the data only imported into R the last step
+
+This results in ~7.4 million records consisting of three variables (year, hex-grid index and effort), the time the whole processing takes is less 10 seconds!
+
+We then use the 'add_h3' {mapdeck}-function to get a quick overview of the results, here only for year 2024.
+
+```{r}
+library(tidyverse)
+library(duckdbfs)
+library(mapdeck)
+library(tictoc)
+tic()
+zoom <- 9L
+tic()
+d <-
+  open_dataset(here::here("data/ais/trail")) |> 
+  filter(#year == 2024,
+         between(lon, -30, -10),    # Icelandic area
+         between(lat, -62.5, 68),
+         between(speed, s1, s2),    # only towing speed
+         between(time, t1, t2),     # start-end of tow
+         .cid > 0,                  # not in harbour
+         agf_gid == 6) |>           # bottom trawl
+  mutate(h3id = h3_latlng_to_cell_string(lat, lon, zoom)) |> 
+  group_by(year, h3id) |> 
+  summarise(z = sum(dt, na.rm = TRUE),
+            .groups = "drop") |> 
+  filter(!is.na(z)) |> 
+  collect()         
+toc()
+d |> glimpse()
+mapdeck(location = c(-22, 66),
+        zoom = 6,
+        libraries = "h3") |> 
+  add_h3(data = d |> filter(year == 2024) |> mutate(z = ifelse(z > quantile(z, 0.99), quantile(z, 0.99), z)),
+         hexagon = "h3id",
+         fill_colour = "z",
+         palette = "inferno")
+```
+
