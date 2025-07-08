@@ -1,0 +1,10 @@
+---
+title: "Bækats datacall"
+author: Einar Hjörleifsson
+description: ""
+date: "2025-06-30"
+categories: [code, rtip]
+echo: true
+---
+
+

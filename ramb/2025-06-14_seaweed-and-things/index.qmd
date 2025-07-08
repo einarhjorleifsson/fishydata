@@ -162,3 +162,35 @@ l |>
 system("chmod -R a+rx /net/hafri.hafro.is/export/home/hafri/einarhj/public_html/fishers-kelp-and-other-beautiful-creatures.html")
 ```
 
+
+## General vessel traffic and kelp grounds
+
+```{r, echo = FALSE, eval = FALSE}
+library(duckdbfs)
+library(tidyverse)
+zoom <- 10L
+ais <-
+  open_dataset("data/ais/trail") |> 
+  filter(year == 2024) |> 
+  filter(.cid > 0,
+         between(lon, -21.5, -14),    # Icelandic area
+         between(lat, 65, 66.6)) |> 
+  mutate(h3id = h3_latlng_to_cell_string(lat, lon, zoom)) |> 
+  group_by(h3id) |> 
+  summarise(z = sum(dt, na.rm = TRUE),
+            .groups = "drop") |> 
+  filter(!is.na(z)) |> 
+  collect() |> 
+  mutate(z = ifelse(z > quantile(z, 0.99),quantile(z, 0.99), z))
+library(mapdeck)
+mapdeck(location = c(-22, 66.6),
+        zoom = 6,
+        libraries = "h3") |> 
+  add_h3(data = ais |> mutate(z = -z),
+         hexagon = "h3id",
+         fill_colour = "z",
+         palette = "magma") |> 
+  add_polygon(data = thari,
+              fill_colour = "#7fff00")
+```
+

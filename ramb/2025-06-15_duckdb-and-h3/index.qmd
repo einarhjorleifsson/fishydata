@@ -7,18 +7,65 @@ categories: [code, rtip]
 echo: true
 ---
 
-The steps:
+## The steps
 
 * Open a duckdb connection to a sweep of AIS parquet files.
-  * Datafiles contain all vessel pings from 2008-2024
+  * Datafiles contain all Icelandic vessel pings from 2008-2024, total of ~475 million records!
 * Filter the data, only pings of demersal fish bottom trawl, limit the extent to fishing in Icelandic waters.
 * Convert coordinates to h3-index at resolution level 9. This means that each hexagonal grid is 0.105	$km^2$ (If this were a circle the diameter would be ~400 meters)
 * Sum effort for each hex-grid for each year
-* Above all done within duckdb, the data only imported into R the last step
+* Above all done within duckdb, the data only imported into R in the last step
 
 This results in ~7.4 million records consisting of three variables (year, hex-grid index and effort), the time the whole processing takes is less 10 seconds!
 
-We then use the 'add_h3' {mapdeck}-function to get a quick overview of the results, here only for year 2024.
+## The raw data structure
+
+The actual dataset (475 million records) structure om my computer is something like this (each year of data is a separate hive-partioned parquet file):
+
+```
+rail
+├── year=2007
+│   └── part-0.parquet
+├── year=2008
+│   └── part-0.parquet
+├── year=2009
+│   └── part-0.parquet
+├── year=2010
+│   └── part-0.parquet
+├── year=2011
+│   └── part-0.parquet
+├── year=2012
+│   └── part-0.parquet
+├── year=2013
+│   └── part-0.parquet
+├── year=2014
+│   └── part-0.parquet
+├── year=2015
+│   └── part-0.parquet
+├── year=2016
+│   └── part-0.parquet
+├── year=2017
+│   └── part-0.parquet
+├── year=2018
+│   └── part-0.parquet
+├── year=2019
+│   └── part-0.parquet
+├── year=2020
+│   └── part-0.parquet
+├── year=2021
+│   └── part-0.parquet
+├── year=2022
+│   └── part-0.parquet
+├── year=2023
+│   └── part-0.parquet
+├── year=2024
+│   └── part-0.parquet
+└── year=2025
+    └── part-0.parquet
+```
+
+
+## The processing
 
 ```{r}
 library(tidyverse)
@@ -28,27 +75,42 @@ library(tictoc)
 tic()
 zoom <- 9L
 tic()
-d <-
-  open_dataset(here::here("data/ais/trail")) |> 
-  filter(#year == 2024,
-         between(lon, -30, -10),    # Icelandic area
+q <-
+  open_dataset(here::here("data/ais/trail"))
+# peek-a-boo 
+q |> glimpse()
+d <- 
+  q |> 
+  filter(between(lon, -30, -10),        # ~ Icelandic area
          between(lat, -62.5, 68),
-         between(speed, s1, s2),    # only towing speed
-         between(time, t1, t2),     # start-end of tow
-         .cid > 0,                  # not in harbour
-         agf_gid == 6) |>           # bottom trawl
+         between(speed, s1, s2),        # only towing speed
+         between(time, t1, t2),         # start-end of tow
+         .cid > 0,                      # not in harbour
+         agf_gid == 6) |>               # bottom trawl
   mutate(h3id = h3_latlng_to_cell_string(lat, lon, zoom)) |> 
   group_by(year, h3id) |> 
-  summarise(z = sum(dt, na.rm = TRUE),
+  summarise(z = sum(dt, na.rm = TRUE),  # sum the step time
             .groups = "drop") |> 
   filter(!is.na(z)) |> 
+  # only now do we import the data into R
   collect()         
 toc()
 d |> glimpse()
+```
+
+## A little map
+
+We then use the 'add_h3' {mapdeck}-function to get a quick overview of the results, here only for year 2024.
+
+```{r}
 mapdeck(location = c(-22, 66),
         zoom = 6,
         libraries = "h3") |> 
-  add_h3(data = d |> filter(year == 2024) |> mutate(z = ifelse(z > quantile(z, 0.99), quantile(z, 0.99), z)),
+  add_h3(data = 
+           d |> 
+           filter(year == 2024) |> 
+           # trim the extremes
+           mutate(z = ifelse(z > quantile(z, 0.99), quantile(z, 0.99), z)),
          hexagon = "h3id",
          fill_colour = "z",
          palette = "inferno")

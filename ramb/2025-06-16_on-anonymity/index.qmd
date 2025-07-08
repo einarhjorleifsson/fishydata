@@ -1,0 +1,71 @@
+---
+title: "On anonymity"
+author: Einar Hjörleifsson
+description: ""
+date: "2025-06-16"
+categories: [code, rtip]
+echo: true
+---
+
+```{r}
+library(tidyverse)
+library(duckdbfs)
+library(mapdeck)
+library(tictoc)
+library(h3)
+tic()
+tic()
+q <-
+  open_dataset(here::here("data/ais/trail")) |> 
+  filter(.cid > 0,                       # not in harbour
+         (whack == FALSE | is.na(whack)),
+         #gid_trip %in% c(12, 13, 21),    # longlines
+         gid_trip %in% c(6),    # longlines
+         between(lon, -30, -10),         # Icelandic area
+         between(lat, -62.5, 68),
+         between(speed, s1, s2),         # only hauling speed
+         between(time, t1, t2)) |>       # start-end of setting
+  mutate(zoom5 = h3_latlng_to_cell_string(lat, lon, 5L),
+         zoom9 = h3_latlng_to_cell_string(lat, lon, 9L))
+
+zoom9 <- 
+  q |> 
+  group_by(year, zoom9) |> 
+  summarise(n_vessels = n_distinct(vid),
+            .groups = "drop") |> 
+  mutate(n_vessels = case_when(n_vessels >= 3 ~ "3+",
+                               .default = "2-")) |> 
+  collect()
+zoom5 <- 
+  q |> 
+  group_by(year, zoom5) |> 
+  summarise(n_vessels = n_distinct(vid),
+            .groups = "drop") |> 
+  mutate(n_vessels = case_when(n_vessels >= 3 ~ "3+",
+                               .default = "2-")) |> 
+  collect()
+
+m5 <-
+  mapdeck(location = c(-22, 66),
+        zoom = 6,
+        libraries = "h3") |> 
+  add_h3(data = zoom5 |> filter(year == 2024),
+         hexagon = "zoom5",
+         fill_colour = "n_vessels",
+         tooltip = "n_vessels",
+         palette = "inferno",
+         legend = TRUE)
+m9 <- 
+  mapdeck(location = c(-22, 66),
+        zoom = 6,
+        libraries = "h3") |> 
+  add_h3(data = zoom9 |> filter(year == 2024),
+         hexagon = "zoom9",
+         fill_colour = "n_vessels",
+         tooltip = "n_vessels",
+         palette = "inferno",
+         legend = TRUE)
+m5
+m9
+```
+

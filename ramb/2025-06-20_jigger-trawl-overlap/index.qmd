@@ -1,0 +1,73 @@
+---
+title: "Jigger-Fishtrawl overlap"
+author: Einar Hjörleifsson
+description: "Was asked about the overlap between jiggers and fishtrawlers. Here is a quick hash based on data from 2008-2024 with the effort (time) expressed on a log scale."
+date: "2025-06-20"
+categories: [code, rtip]
+echo: true
+code-fold: true
+---
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(arrow)
+library(duckdb)
+library(terra)
+library(stars)
+library(tmap)
+rb_cap <- function(x, Q = 0.975) {
+  q = quantile(x, Q)
+  ifelse(x > q, q, x)
+}
+
+dx <- 0.005
+dy <- dx / 2   # grid resolution approximately 275 x 275 meters
+g <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  # Not in harbour
+  filter(.cid > 0,                           # .cid positive -> not in harbour
+         (whack == FALSE | is.na(whack))) |> # need to fix this
+  # Fishing occurred on date
+  filter(between(year, 2008, 2024)) |> 
+  filter(gid_trip %in% c(6, 14)) |>    # fishtrawl & jiggers
+  filter(between(speed, s1, s2)) |>    # use what is already in the data
+  filter(between(time, t1, t2)) |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(gid_trip, x, y) |> 
+  summarise(dt = sum(dt, na.rm = TRUE) / 60,
+            .groups = "drop") |> 
+  collect() |> 
+  filter(dt > 1,              # at least 1 minutes of effort per pixel
+         between(x, -30, -10),
+         between(y, 62, 68.5)) |> 
+  group_by(gid_trip) |> 
+  mutate(dt = rb_cap(dt, 0.99)) |>
+  ungroup() |> 
+  mutate(dt = log(dt)) 
+Fiskibotnvarpa <-
+  g |> 
+  filter(gid_trip == 6) |>
+  select(x, y, dt) |> 
+  rast(type = "xyz",
+       crs = "epsg:4326") |> 
+  st_as_stars() 
+Krókur <-
+  g |> 
+  filter(gid_trip == 14) |>
+  select(x, y, dt) |> 
+  rast(type = "xyz",
+       crs = "epsg:4326") |> 
+  st_as_stars()
+m <- 
+  tm_shape(Fiskibotnvarpa) +
+  tm_raster("dt", col.scale = tm_scale(values = "-inferno"), col.legend = tm_legend_hide()) +
+  tm_shape(Krókur) +
+  tm_raster("dt", col.scale = tm_scale(values = "-viridis"), col.legend = tm_legend_hide()) +
+  tm_view(control.collapse = FALSE)
+m
+tmap_mode("view")
+m  + tm_basemap("Esri.WorldTopoMap")
+```
+

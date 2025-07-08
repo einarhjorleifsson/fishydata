@@ -1,0 +1,44 @@
+---
+title: "Distribution of seaweed and kelp harvesting"
+author: Einar Hjörleifsson
+description: "I was asked what AIS data can inform us about distribution of seaweed and kelp harvesting. Normally one would filter out information from the logbooks and landings database with respect to vessels and dates of trips and then plot all records that fall within such trips. But since that is lacking here we, for the time being we filter the AIS for some suspeted vessels as a first go. If only to show what is feasable. For now the statistics shows the number of distinct years a hexagon grid was visited by a vessel."
+date: "2025-06-16"
+categories: [code, rtip]
+echo: true
+---
+
+
+```{r}
+library(duckdbfs)
+library(tidyverse)
+library(mapdeck)
+
+# Potential vessels
+ais <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data/ais/trail") |> 
+  filter(.cid > 0,
+         vid %in% c(9846, 9847, 9057, 9848, 9850, 9851, 9852))
+zoom <- 9L
+g <- 
+  ais |> 
+  filter(speed < 1.2) |> 
+  mutate(h3id = h3_latlng_to_cell_string(lat, lon, zoom),
+         year = year(time)) |> 
+  group_by(h3id) |> 
+  summarise(z = sum(dt, na.rm = TRUE),
+            Years = n_distinct(year),
+            .groups = "drop") |> 
+  filter(!is.na(z)) |> 
+  collect()
+mapdeck(location = c(-22.5, 65.5),
+        zoom = 9,
+        libraries = "h3") |> 
+  add_h3(data = g |>  mutate(Years = ifelse(Years > 5, 5, Years),
+                             Years = factor(Years)),
+         hexagon = "h3id",
+         fill_colour = "Years",
+         tooltip = "Years",
+         palette = "inferno",
+         legend = TRUE)
+```
+

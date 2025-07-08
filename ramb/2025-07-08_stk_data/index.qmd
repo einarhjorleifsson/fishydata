@@ -1,0 +1,37 @@
+---
+title: "STK data"
+author: Einar Hjörleifsson
+description: "A short overview of the STK data in MFRI database"
+date: "2025-07-08"
+categories: [code, rtip]
+echo: true
+---
+
+```{r}
+library(mar)
+library(tidyverse)
+con <- connect_mar()
+
+trail <- tbl_mar(con, "stk.trail")
+trail |> glimpse()
+
+mobile <- 
+  tbl_mar(con, "stk.mobile") |> 
+  collect() |> 
+  janitor::remove_empty(which = "cols") |> 
+  janitor::remove_constant()
+
+mobile |> 
+  
+```
+
+
+```{r}
+mobile |> 
+  select(mobileid, contactdate, registration, moddate, recdate) |> 
+  gather(var, date, -mobileid) |> 
+  ggplot(aes(mobileid, date)) +
+  geom_point(size = 0.1) +
+  facet_wrap(~ var)
+```
+
