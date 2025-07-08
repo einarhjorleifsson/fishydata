@@ -45,7 +45,7 @@ tic()
 lubridate::now()
 
 # 1991 generates an error
-YEARS <- c(2025:1992, 1990:1985)
+YEARS <- c(2025:1973)
 
 library(arrow)
 library(data.table)
@@ -115,10 +115,10 @@ AGF <-
          hid_ln = hid)
 
 # 1 Old logbooks ---------------------------------------------------------------
-
+if(FALSE) {
 ## Mobile gear ----------------------------------------------------------------
 MOBILE_old <-
-  omar::lb_mobile(con, correct_gear = FALSE, trim = FALSE) |>
+  omar::lb_mobile(con, trim = FALSE) |>
   filter(year %in% YEARS,
          # only towing gear
          gid %in% c(5, 6, 7, 8, 9, 10, 12, 14, 15, 38, 40)) |> 
@@ -134,7 +134,7 @@ MOBILE_old <-
 
 ## Static gear -----------------------------------------------------------------
 STATIC_old <-
-  omar::lb_static(con, correct_gear = FALSE, trim = TRUE) |> 
+  omar::lb_static(con, trim = TRUE) |> 
   filter(year %in% YEARS,
          gid %in% c(1, 2, 3)) |> 
   # limit to Icelandic vesssels
@@ -148,7 +148,7 @@ STATIC_old <-
 
 ## Traps -----------------------------------------------------------------------
 TRAP_old <- 
-  omar::lb_trap(con, correct_gear = FALSE, trim = TRUE) |> 
+  omar::lb_trap(con, trim = TRUE) |> 
   filter(year %in% YEARS,
          # only towing gear
          gid %in% c(18, 39))  |> 
@@ -163,7 +163,7 @@ TRAP_old <-
 
 ## Pelagic seine ---------------------------------------------------------------
 SEINE_old <-
-  omar::lb_seine(con, correct_gear = FALSE, trim = TRUE) |> 
+  omar::lb_seine(con, trim = TRUE) |> 
   filter(year %in% YEARS,
          # only towing gear
          gid %in% c(10, 12))  |> 
@@ -267,7 +267,12 @@ LGS_old |>
   spread(no_effort, n) |> 
   knitr::kable()
 
-
+LGS_old   |> write_parquet("~/stasi/fishydata/data-raw/logbooks/LGS_old.parquet")
+CATCH_old |> write_parquet("~/stasi/fishydata/data-raw/logbooks/CATCH_old.parquet")
+} else {
+  LGS_old <-   read_parquet("~/stasi/fishydata/data-raw/logbooks/LGS_old.parquet")
+  CATCH_old <- read_parquet("~/stasi/fishydata/data-raw/logbooks/CATCH_old.parquet")
+}
 # 2 New logbooks ---------------------------------------------------------------
 # The new logbooks are in principle a total mess that need to be fixed upstream
 #  Following is thus just an interrim hack. The function call to the new data

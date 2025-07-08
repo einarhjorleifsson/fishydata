@@ -144,7 +144,7 @@ base_date <- c("202311",
 
 #fil <- fil[144:length(fil)]
 #base <- base[144:length(base)]
-fil <- fil[145:147]
+fil <- fil[148:149]
 
 for(i in 1:length(fil)) {
   tic()

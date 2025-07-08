@@ -1,9 +1,13 @@
-# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-05-12.log &
+# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-07-05.log &
 
 # checkout: https://stackoverflow.com/questions/63821533/find-the-nearest-polygon-for-a-given-point
 # pts <- st_join(pts, p, join = st_nearest_feature)
 library(tictoc)
-tic()
+tic.clearlog()
+tic(msg = "seeding")
+time_logging <- list()
+counter <- 0
+
 lubridate::now() |> print()
 
 YEARS <- 2025:2007
@@ -20,22 +24,20 @@ conflicts_prefer(dplyr::lag)
 conflicts_prefer(dplyr::lead)
 
 # auxillary data ---------------------------------------------------------------
-sf::sf_use_s2(use_s2 = FALSE)  # because eusm has invalids, thus st_join 
-#                              #  creates error
+sf::sf_use_s2(use_s2 = FALSE)  # so invalid geometry does not crash, and
+                               # seems to be faster
 island <- read_sf("data/auxillary/shoreline.gpkg")
 ports <-  
   read_sf("~/stasi/fishydata/data/ports/ports.gpkg") |> 
   select(pid)
-# DO LATER
-if(FALSE) {
-  eusm <- 
+eusm <- 
     read_sf("data/auxillary/eusm.gpkg") |> 
     select(.eusm = MSFD_BBHT)
-  gebco <- 
+gebco <- 
     read_sf("data/auxillary/ICES_GEBCO.gpkg")
-  ia <- 
+ia <- 
     read_sf("data/auxillary/ICESareas.gpkg")
-}
+
 
 # Logbooks ---------------------------------------------------------------------
 lb <- 
@@ -67,13 +69,16 @@ ASTD <-
   select(vid, mmsi, time, lon, lat, speed, year) |> 
   inner_join(stk_vid |> select(vid, mmsi),
              by = join_by(vid, mmsi)) 
-
 gears <-
   read_parquet("data/gear/gear_mapping.parquet") |> 
   select(agf_gid = gid_agf, met5, s1, s2)
+
+toc(log = TRUE, quiet = TRUE)
+
 # processing - year loop -------------------------------------------------------
 
 for(y in YEARS) {
+  tic(msg = "step_01")
   print(y)
   stk <-
     STK |> 
@@ -105,8 +110,25 @@ for(y in YEARS) {
              crs = 4326,
              remove = FALSE) |> 
     st_join(ports) |> 
-    st_join(island)
+    st_join(island) |> 
+    st_join(eusm) |> 
+    st_join(gebco)
+  
+  xy_5325 <-
+    trail |> 
+    select(geometry) |> 
+    st_transform(crs = 5325) |> 
+    st_coordinates() |> 
+    as_tibble() |> 
+    rename(x5325 = X, y5325 = Y)
+  
+  trail <- 
+    bind_cols(trail |> st_drop_geometry(), 
+              xy_5325)
+  toc(log = TRUE, quiet = TRUE)
+  
   # drop points on land (and where wrong stk hid?)
+  tic(msg = "step_02")
   trail2 <- 
     trail |> 
     mutate(where = case_when(on_land == TRUE &  is.na(pid) ~ "on_land",
@@ -115,10 +137,14 @@ for(y in YEARS) {
                              is.na(on_land) &   is.na(pid) ~ "at_sea",
                              .default = "bug")) |> 
     filter(where %in% c("in_harbour", "at_sea")) |> 
-    select(-on_land) #|> 
+    select(-on_land) 
   # drop records where stk hid is different than pid
   #filter(!(!is.na(hid) & !is.na(pid) & hid != pid))
   
+  toc(log = TRUE, quiet = TRUE)
+  
+  
+  tic(msg = "step_03")
   trail3 <- 
     trail2 |> 
     # hail mary
@@ -132,23 +158,22 @@ for(y in YEARS) {
     fill(pid_arr, .direction = "updown") |> 
     ungroup()
   
-  
+  toc(log = TRUE, quiet = TRUE)
+  tic(msg = "step_04")
   # drop duplicate time - here order is critical (first record is kept)
   trail4 <- 
     trail3 |> 
     # order matters for the distinct below
     arrange(vid, time, source, pid, io) |> 
-    # have to drop geometry, because it is sticky
-    st_drop_geometry() |> 
     distinct(vid, time, .keep_all = TRUE)
-  
+  toc(log = TRUE, quiet = TRUE)
   # # include first and last point in harbour as part of trip
   # group_by(vid) |> 
   # mutate(.cid = case_when(.cid < 0 & lead(.cid) > 0 ~ lead(.cid),
   #                         .cid < 0 & lag(.cid)  > 0 ~ lag(.cid),
   #                         .default = .cid)) |> 
   # ungroup()
-  
+  tic(msg = "step_05")
   # remove some whackies - the poor man's version
   trail5 <- 
     trail4 |> 
@@ -157,7 +182,9 @@ for(y in YEARS) {
     fill(dd) |> 
     ungroup() |> 
     filter(dd <= 1852 * 20) |> 
-    select(.rid, vid, mmsi, .cid, source, time, lon, lat, speed, heading, pid, pid_dep, pid_arr, hid, io)
+    select(.rid, vid, mmsi, .cid, source, time, lon, lat,  x5325, y5325,
+           speed, heading, pid, pid_dep, pid_arr, hid, io, depth, .eusm)
+  toc(log = TRUE, quiet = TRUE)
   
   if(FALSE) {
     trail5 |> 
@@ -168,6 +195,7 @@ for(y in YEARS) {
   
   
   # can i generate trips
+  
   if(FALSE) {trips <-
     trail5 |> 
     filter(.cid > 0) |> 
@@ -183,14 +211,15 @@ for(y in YEARS) {
               .groups = "drop")
   trips |> filter(is.na(hid1) | is.na(hid2)) |> count(.cid)
   }
-  
+  tic(msg = "step_06")
   trail6 <- 
     trail5 |> 
     group_by(vid, .cid) |> 
     mutate(whack = case_when(.cid > 0 ~ ramb::rb_whacky_speed(lon, lat, time),
-                             .default = NA)) |> 
+                             .default = FALSE)) |> 
     ungroup()
-  
+  toc(log = TRUE, quiet = TRUE)
+  tic(msg = "step_07")
   trail7 <- 
     trail6 |> 
     group_by(vid, .cid) |> 
@@ -203,8 +232,9 @@ for(y in YEARS) {
     ungroup() |> 
     mutate(year = year(time),
            month = month(time)) |> 
-    rename(hid_stk = hid, io_stk = io) 
-  
+    rename(hid_stk = hid, io_stk = io)
+  toc(log = TRUE, quiet = TRUE)
+  tic(msg = "step_08")
   trail8 <- 
     trail7 |> 
     left_join(lb |> 
@@ -219,17 +249,25 @@ for(y in YEARS) {
     group_by(vid, .cid) |> 
     fill(gid_trip, .direction = "downup") |> 
     ungroup()
-    
+  toc(log = TRUE, quiet = TRUE)
+  tic(msg = "step_09")
   trail8 <- 
     trail8 |> 
     left_join(gears |> rename(gid_trip = agf_gid),
               by = join_by(gid_trip))
-  
+  toc(log = TRUE, quiet = TRUE)
   trail8 |> 
     arrow::write_dataset(path = "~/stasi/fishydata/data/ais/trail",
                          format = "parquet",
                          existing_data_behavior = "overwrite",
                          partitioning = c("year"))
+  toc(log = TRUE, quiet = TRUE)
+  counter <- counter + 1
+  time_logging[[counter]] <-
+    tic.log(format = FALSE) |> 
+    map_df(as_tibble) |> 
+    mutate(year = y)
+  time_logging |> write_rds("time_logging.rds") 
   
 }
 

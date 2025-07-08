@@ -11,7 +11,8 @@ q <-
          between(lon, -179.9, 179.9),
          between(lat, -89.9, 89.9))
 
-for(y in 2007:2025) {
+#for(y in 2007:2025) {
+for(y in 2025) {
   YEAR <- y
   print(YEAR)
   q |> 

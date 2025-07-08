@@ -262,8 +262,8 @@ lnd <-
   read_parquet("data/landings/agf_stations.parquet") |> 
   group_by(vid) |> 
   reframe(n = n(),
-          min = min(datel),
-          max = max(datel))
+          min = min(date),
+          max = max(date))
 
 ## stk summary -----------------------------------------------------------------
 STK <- 

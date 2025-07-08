@@ -48,9 +48,8 @@ data(ICESareas)
 ICESareas <- 
   ICESareas |> 
   sf::st_make_valid()  |> 
-  sf::st_transform(4326) |> 
-  sf::st_zm()
-ICESareas |> st_write("data/auxillary/ICESareas.gpkg")
+  sf::st_transform(4326)
+ICESareas |> write_sf("data/auxillary/ICESareas.gpkg")
 
 # EUSM and gebco - from ices vms datacall --------------------------------------
 
