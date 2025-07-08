@@ -1,0 +1,117 @@
+---
+title: "The new logbooks"
+eval: false
+---
+
+## Preamble
+
+This documents notes some peculiarities of the new logbooks.
+
+```{r}
+library(mar)
+library(tidyverse)
+con <- connect_mar()
+```
+
+
+## Trips
+
+```{r}
+trips <- 
+  tbl_mar(con, "adb.trip_v") |> 
+    select(trip_id, 
+           vid = vessel_no,
+           T1 = departure,
+           hid1 = departure_port_no,
+           T2 = landing,
+           hid2 = landing_port_no,
+           source)
+```
+
+### Extreme dates
+
+
+```{r}
+trips |> 
+  filter(!between(year(T1), 2017, 2025)) |> 
+  knitr::kable()
+```
+
+
+
+### Midnight departure or arrivals
+
+```{r}
+trip2 <- 
+  trips |> 
+  arrange(vid, T1, T2) |> 
+  mutate(hour = hour(T1),
+         minute = minute(T1),
+         second = second(T1),
+         midnight_departure = case_when(hour(T1) == 0 & minute(T1) == 0 & second(T1) == 0 ~ "yes",
+                              .default = "no"),
+         midnight_arrival = case_when(hour(T2) == 0 & minute(T2) == 0 & second(T2) == 0 ~ "yes",
+                              .default = "no"),
+         date = floor_date(T1, "month"))
+trip2 |> 
+  count(midnight_departure, midnight_arrival) |> 
+  mutate(p = round(n / sum(n), 3)) |> 
+  knitr::kable(caption = "Trip numbers starting and or ending at midnight")
+trip3 <- 
+  trip2 |> 
+  #filter(midnight_departure == "yes", midnight_arrival == "yes") |> 
+  mutate(what = case_when(midnight_departure == "yes" & midnight_arrival == "yes" ~ "both",
+                          midnight_departure == "yes" & midnight_arrival == "no" ~ "departure",
+                          midnight_departure == "no" & midnight_arrival == "yes" ~ "arrival",
+                          midnight_departure == "no" & midnight_arrival == "no" ~ "neither",
+                          .default = "something else"))
+trip3 |> 
+  filter(between(year(T1), 2017, 2025)) |> 
+  count(date, what) |> 
+  ggplot(aes(date, n, fill = what)) +
+  geom_col()
+trip3 |> 
+  filter(between(year(T1), 2017, 2025),
+         what == "both") |> 
+  count(date, source) |> 
+  ggplot(aes(date, n, fill = source)) +
+  geom_col()
+```
+
+### Departure vs arrival
+
+```{r}
+trips2 <- 
+  trips |> 
+  filter(between(year(T1), 2017, 2025)) |> 
+  arrange(vid, T1, T2) |> 
+  group_by(vid) |> 
+  mutate(what = case_when(T1 == T2 ~ "same",
+                          T2 > T1 ~ "ok",
+                          T1 > T2 ~ "departure before arrival",
+                          .default = "something else")) |> 
+  ungroup()
+trips2 |> 
+  count(what) |> 
+  mutate(p = round(n / sum(n), 4)) |> 
+  knitr::kable(caption = "Departure vs Arrival time")
+trips2 |> 
+  filter(T1 == T2) |> 
+  count(source) |> 
+  knitr::kable(caption = "Data source for trips with same departure and arrival time")
+trips2 |> 
+  filter(T1 > T2) |> 
+  count(source) |> 
+  knitr::kable(caption = "Data source for trips with same departure time greater than arrival time")
+
+trips |> 
+  filter(between(year(T1), 2017, 2025)) |> 
+  arrange(vid, T1, T2) |> 
+  group_by(vid) |> 
+  mutate(what = case_when(T2 > lead(T1) ~ "arrival greater than next departure",
+                          .default = "something else")) |> 
+  ungroup() |> 
+  filter(what == "arrival greater than next departure") |> 
+  count(what, source)
+```
+

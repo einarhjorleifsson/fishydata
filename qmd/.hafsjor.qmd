@@ -1,0 +1,65 @@
+---
+title: ""
+---
+
+```{r, echo = FALSE}
+#| column: screen
+#| out-width: 100%
+#| fig-height: 9
+library(leaflet)
+library(leaflet.extras)
+library(leaflet.extras2)
+library(htmlwidgets)
+source("~/stasi/hafsjor/R/add_groups.R")
+skipaflokkar <- 
+  sf::read_sf("ftp://ftp.hafro.is/pub/data/shapes/skipaflokkar.gpkg") |> 
+  sf::st_cast("LINESTRING")
+m0 <-
+  leaflet() |>
+  setView(-19, 65, zoom = 5) |>
+  hs_add_base() |> 
+  hs_add_veidar() |> 
+  hs_add_lifriki() |> 
+  hs_add_log() |> 
+  addPolygons(data = skipaflokkar,
+              weight = 2,
+              group = "Skipaflokkar",
+              stroke = TRUE, 
+              #smoothFactor = 0.2, 
+              opacity = 1,
+              fillOpacity = 0)
+
+
+m <-
+  m0 |>
+  leaflet.extras::addGroupedLayersControl(
+    baseGroups = c("Hnöttur", "Botnlag"),
+    overlayGroups = list(
+      "Sókn" = c("Longline", "Net", "Jiggers", "Demersal seine", "Fish trawl", "Shrimp trawl", "Nephrops trawl", "Dredge"),
+      "Lífríki" = c("Botndýr"),
+      "Lög" = c("12 mílur", "EEZ", "Skipaflokkar"),
+      "Reglugerðir" = c("Nothing here yet")
+    ),
+    position = "topright",
+    options = leaflet.extras::groupedLayersControlOptions(
+      exclusiveGroups = NULL, #c("Sókn"),
+      groupCheckboxes = TRUE,
+      collapsed = FALSE,
+      groupsCollapsable = TRUE,
+      sortLayers = FALSE,
+      sortGroups = FALSE,
+      sortBaseLayers = FALSE)) |> 
+  leaflet.extras::addFullscreenControl() |> 
+  leaflet::hideGroup(group = c("Botndýr", "EEZ", "Skipaflokkar", "Nothing here yet"))
+m
+```
+
+
+https://www.itu.int/mmsapp
+
+
+https://github.com/cmkonrad/AIS-processing
+
+
+
+OGC API For features

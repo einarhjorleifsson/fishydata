@@ -1,0 +1,211 @@
+---
+title: "On Anon"
+---
+
+### Longline
+
+
+Summary:
+
+  * Only longlines in year 2018
+  * Spatial grids tried: 250, 500, 1000, 2000, 3000, 4000, 5000 meters
+  * Counted number of distinct vessels per grid and then proportion of area per number of distinct vessels
+
+```{r}
+library(tidyverse)
+library(arrow)
+library(sf)
+library(patchwork)
+island <- 
+  geo::island |> 
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326) |> 
+  st_transform(crs = 3857) |>
+  summarise(do_union = FALSE) |> 
+  st_cast("LINESTRING") |> 
+  st_cast("POLYGON")
+
+sc_arrow <-
+  tribble(~gid,  ~s1,  ~s2,
+          -199, 1.000, 3.000,
+          1,    0.375, 2.750,
+          2,    0.125, 2.500,
+          3,    0.025, 2.000,
+          5,    0.250, 3.250,
+          6,    2.625, 5.500,
+          7,    2.625, 6.000,
+          9,    2.375, 4.000,
+          12,    0.050, 2.250,
+          14,    1.750, 3.250,
+          15,    0.500, 5.500,
+          38,    0.250, 4.750,
+          40,    0.250, 6.000) |> 
+  mutate(gid = as.integer(gid)) |> 
+  arrow::as_arrow_table()
+ais <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata_2024-11-09/data/ais_2024-05-01") |> 
+  left_join(sc_arrow) |> 
+  filter(!is.na(.sid),
+         year(time) == 2018,
+         gid == 1,
+         speed >= s1, speed <= s2,
+         lon >= -33, lon <= -10,
+         lat >=  62, lat <= 68.5)
+dx <- c(seq(5000, 1000, by = -1000), 500, 250)
+res <- list()
+for(g in 1:length(dx)) {
+  res[[g]] <-
+    ais |> 
+    mutate(x = x %/% dx[g] * dx[g] + dx[g]/2,
+           y = y %/% dx[g] * dx[g] + dx[g]/2) |> 
+    group_by(x, y) |> 
+    summarise(n_vid = n_distinct(vid),
+              .groups = "drop") |> 
+    collect()
+}
+names(res) <- dx
+d <- 
+  bind_rows(res, .id = "grid") |> 
+  mutate(grid = as.integer(grid))
+
+
+d |> 
+  group_by(grid, n_vid) |> 
+  summarise(n = n()) |> 
+  group_by(grid) |> 
+  mutate(p = round(n / sum(n) * 100, 1)) |> 
+  select(grid, n_vid, p) |> 
+  spread(grid, p) |> 
+  knitr::kable(caption = "Longline: Percent of total grid area per number of distinct vessels", digits = 1)
+```
+
+```{r}
+p5000 <-
+  d |> 
+  filter(grid == 5000) |> 
+  mutate(n_vid = case_when(n_vid >= 3 ~ "3+",
+                           .default = as.character(n_vid))) |> 
+  ggplot() +
+  theme_void() +
+  geom_tile(aes(x, y, fill = n_vid)) +
+  geom_sf(data = island, fill = "grey") +
+  scale_fill_viridis_d(direction = 1) +
+  coord_sf() +
+  labs(fill = "Distinct\nvessels")
+```
+
+```{r}
+#| fig-cap: "Longline - distinct vessels: 5000x5000 vs 1000 x 1000 meter grid"
+p1000 <-
+  d |> 
+  filter(grid == 1000) |> 
+  mutate(n_vid = case_when(n_vid >= 3 ~ "3+",
+                           .default = as.character(n_vid))) |> 
+  ggplot() +
+  theme_void() +
+  geom_tile(aes(x, y, fill = n_vid)) +
+  geom_sf(data = island, fill = "grey") +
+  scale_fill_viridis_d(direction = 1) +
+  coord_sf() +
+  labs(fill = "Distinct\nvessels")
+
+p5000 + p1000 + plot_layout(guides = "collect")
+#write_rds(p5000, "p5000.rds")
+#write_rds(p1000, "p1000.rds")
+```
+
+### Bottom trawl
+
+Summary:
+
+  * Only fish trawls in year 2018
+  * Spatial grids tried: 250, 500, 1000, 2000, 3000, 4000, 5000 meters
+  * Counted number of distinct vessels per grid and then proportion of area per number of distinct vessels
+
+```{r}
+library(tidyverse)
+library(arrow)
+sc_arrow <-
+  tribble(~gid,  ~s1,  ~s2,
+          -199, 1.000, 3.000,
+          1,    0.375, 2.750,
+          2,    0.125, 2.500,
+          3,    0.025, 2.000,
+          5,    0.250, 3.250,
+          6,    2.625, 5.500,
+          7,    2.625, 6.000,
+          9,    2.375, 4.000,
+          12,    0.050, 2.250,
+          14,    1.750, 3.250,
+          15,    0.500, 5.500,
+          38,    0.250, 4.750,
+          40,    0.250, 6.000) |> 
+  mutate(gid = as.integer(gid)) |> 
+  arrow::as_arrow_table()
+ais <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata_2024-11-09/data/ais_2024-05-01") |> 
+  left_join(sc_arrow) |> 
+  filter(!is.na(.sid),
+         year(time) == 2018,
+         gid == 6,
+         speed >= s1, speed <= s2,
+         lon >= -33, lon <= -10,
+         lat >=  62, lat <= 68.5)
+dx <- c(seq(5000, 1000, by = -1000), 500, 250)
+res <- list()
+for(g in 1:length(dx)) {
+  res[[g]] <-
+    ais |> 
+    mutate(x = x %/% dx[g] * dx[g] + dx[g]/2,
+           y = y %/% dx[g] * dx[g] + dx[g]/2) |> 
+    group_by(x, y) |> 
+    summarise(n_vid = n_distinct(vid),
+              .groups = "drop") |> 
+    collect()
+}
+names(res) <- dx
+d <- 
+  bind_rows(res, .id = "grid") |> 
+  mutate(grid = as.integer(grid))
+
+
+d |> 
+  group_by(grid, n_vid) |> 
+  summarise(n = n()) |> 
+  group_by(grid) |> 
+  mutate(p = round(n / sum(n) * 100, 1)) |> 
+  select(grid, n_vid, p) |> 
+  spread(grid, p) |> 
+  knitr::kable(caption = "Bottom trawl: Percent of total grid area per number of distinct vessels", digits = 1)
+```
+
+```{r}
+#| fig-cap: "Bottom fish trawl: 5000 x 5000 meter grid"
+d |> 
+  filter(grid == 5000) |> 
+   mutate(n_vid = case_when(n_vid >= 3 ~ "3+",
+                           .default = as.character(n_vid))) |> 
+  ggplot() +
+  theme_void() +
+  geom_tile(aes(x, y, fill = n_vid)) +
+  geom_sf(data = island, fill = "grey") +
+  scale_fill_viridis_d(direction = 1) +
+  coord_sf() +
+  labs(fill = "Distinct\nvessels")
+```
+
+```{r}
+#| fig-cap: "Bottom fish trawl: 1000 x 1000 meter grid"
+d |> 
+  filter(grid == 1000) |> 
+  mutate(n_vid = case_when(n_vid >= 3 ~ "3+",
+                           .default = as.character(n_vid))) |> 
+  ggplot() +
+  theme_void() +
+  geom_tile(aes(x, y, fill = n_vid)) +
+  geom_sf(data = island, fill = "grey") +
+  scale_fill_viridis_d(direction = 1) +
+  coord_sf() +
+  labs(fill = "Distinct\nvessels")
+```
+

@@ -1,0 +1,109 @@
+---
+title: "gfw"
+---
+
+```{r}
+library(tidyverse)
+library(arrow)
+# need annual effort per mmsi
+vessels <- 
+  open_dataset("~/stasi/fishydata/data/vessels/vessels_iceland.parquet") |> 
+  to_duckdb()
+gears <- 
+  open_dataset("~/stasi/fishydata/data/gear/gear_mapping.parquet") |> 
+  to_duckdb() |> 
+  select(agf_gid = gid_agf, s1, s2, metier = met5)
+ais <- 
+  open_dataset("~/stasi/fishydata/data/ais/trail") |> 
+  to_duckdb() |> 
+  filter(year %in% 2009:2024,
+         (whack == FALSE | is.na(whack)),
+         .cid > 0,                      # out of harbour
+         !is.na(gid_trip)) |>           # a fishing trip
+  select(vid, mmsi, lon, lat, time, speed, .cid, dt, dd, year, month, gid_trip)
+lb <- 
+  open_dataset("~/stasi/fishydata/data/logbooks/station-for-ais.parquet") |>
+  to_duckdb() |> 
+  filter(year(date) %in% 2009:2024) |> 
+  filter(!is.na(agf_gid)) |> 
+  select(vid, t1, t2, agf_gid, .sid, catch_total)
+# missing kw -------------------------------------------------------------------
+vessels <- 
+  ais |> 
+  group_by(vid) |> 
+  summarise(n = n(),
+            .groups = "drop") |> 
+  left_join(vessels |> select(vid, loa, kw) |> mutate(in_registry = "yes"))  |> 
+  collect() |> 
+  mutate(in_registry = replace_na(in_registry, "no"))
+vessels |> filter(in_registry == "no") |> knitr::kable(caption = "expect none")
+vessels |> filter(loa == 0) |> knitr::kable(caption = "This needs to be checked")
+vessels |> filter(is.na(kw)) |> knitr::kable(caption = "Fixed in next step")
+vessels <-
+  vessels |> 
+  mutate(loar = round(loa)) |> 
+  group_by(loar) |> 
+  mutate(median = median(kw, na.rm = TRUE)) |> 
+  ungroup() |> 
+  mutate(kw = case_when(is.na(kw) ~ median,
+                        .default = kw)) |> 
+  select(vid, kw)
+vessels |>  filter(is.na(kw)) |> knitr::kable(captoin = "expect none")
+vessels <- vessels |> to_duckdb()
+# analysis ---------------------------------------------------------------------
+d <-
+  ais |> 
+  left_join(lb,
+            by = join_by(vid, between(time, t1, t2))) |> 
+  left_join(gears |> rename(gid_trip = agf_gid),
+            by = join_by(gid_trip)) |> 
+  left_join(vessels,
+            by = join_by(vid)) |> 
+  filter(speed >= s1,
+         speed <= s2) |> 
+  filter(!is.na(.sid)) |> 
+  group_by(vid, mmsi, year, .cid, .sid) |> 
+  mutate(N = n()) |>    # to split the catch
+  ungroup()
+
+d |> 
+  group_by(vid, mmsi, year) |> 
+  summarise(dt = sum(dt, na.rm = TRUE) / 3600,
+            .groups = "drop") |> 
+  mutate(mmsi = as.numeric(mmsi)) |> 
+  collect() ->
+  d2
+gfw <- 
+  read_csv("~/stasi/fishydata/data-raw/gfw/version3/fishing-vessels-v3.csv") |>
+  filter(flag_gfw == "ISL") |> 
+  select(mmsi, year, effort = fishing_hours, class = vessel_class_gfw) |> 
+  filter(effort > 0) |> 
+  mutate(gfw = "yes")
+
+full_join(d2, gfw) |> 
+  mutate(gfw = replace_na(gfw, "no")) |> 
+  filter(dt < 7500) |> 
+  filter(dt > 24) |> 
+  filter(year >= 2023) |> 
+  ggplot(aes(dt, effort)) +
+  geom_abline() +
+  geom_point(size = 0.3) +
+  geom_smooth(method = "lm") +
+  facet_wrap(~ class,
+             scales = "free") +
+  scale_x_log10() +
+  scale_y_log10()
+
+full_join(d2, gfw) |> 
+  filter(dt < 7500) |> 
+  select(year, stk = dt, gfw = effort) |> 
+  gather(source, effort, stk:gfw) |> 
+  group_by(year, source) |> 
+  reframe(effort = sum(effort, na.rm = TRUE)) |> 
+  filter(effort > 0) |> 
+  ggplot(aes(year, effort / 1e3, colour = source)) +
+  geom_point() +
+  #expand_limits(y = 0) +
+  scale_colour_brewer(palette = "Set1")
+```
+

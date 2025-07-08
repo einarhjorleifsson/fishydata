@@ -1,0 +1,33 @@
+---
+title: "Logbooks"
+---
+
+## Preamble
+
+In principle there is no difference between scample from catch, logbooks and scientific surveys. They could hence for all practical purposes be all stored within the same schema and table structure.
+
+What they all have in common is:
+
+* Trip (cruise) table
+* Station table
+* Sample table
+* Detail (biological) table
+
+## The logbook data
+
+The Fiskistofa logbook schema structure is a total mess.
+
+### The new data
+
+```{r, eval = FALSE}
+tbl_mar(con, "adb.trip_v") |> 
+    select(trip_id, 
+           vid = vessel_no,
+           T1 = departure,
+           hid1 = departure_port_no,
+           T2 = landing,
+           hid2 = landing_port_no,
+           source,
+           everything())
+```
+
