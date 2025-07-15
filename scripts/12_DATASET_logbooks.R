@@ -116,159 +116,159 @@ AGF <-
 
 # 1 Old logbooks ---------------------------------------------------------------
 if(FALSE) {
-## Mobile gear ----------------------------------------------------------------
-MOBILE_old <-
-  omar::lb_mobile(con, trim = FALSE) |>
-  filter(year %in% YEARS,
-         # only towing gear
-         gid %in% c(5, 6, 7, 8, 9, 10, 12, 14, 15, 38, 40)) |> 
-  # limit to Icelandic vesssels
-  inner_join(q_vessels_icelandic %>% select(vid),
-             by = join_by(vid)) |> 
-  select(visir, vid, gid, date, t1, t2, lon, lat, lon2, lat2, z1, z2, datel, effort, effort_unit,
-         sweeps, plow_width) |> 
-  collect(n = Inf) |> 
-  mutate(table = "mobile",
-         date = as_date(date),
-         datel = as_date(datel))
-
-## Static gear -----------------------------------------------------------------
-STATIC_old <-
-  omar::lb_static(con, trim = TRUE) |> 
-  filter(year %in% YEARS,
-         gid %in% c(1, 2, 3)) |> 
-  # limit to Icelandic vesssels
-  inner_join(q_vessels_icelandic %>% select(vid),
-             by = join_by(vid)) |> 
-  select(visir, vid, gid, date, t0, t1, t2, lon, lat, lon2, lat2, z1, z2, datel, effort, effort_unit) |> 
-  collect(n = Inf) |> 
-  mutate(table = "static",
-         date = as_date(date),
-         datel = as_date(datel))
-
-## Traps -----------------------------------------------------------------------
-TRAP_old <- 
-  omar::lb_trap(con, trim = TRUE) |> 
-  filter(year %in% YEARS,
-         # only towing gear
-         gid %in% c(18, 39))  |> 
-  # limit to Icelandic vesssels
-  inner_join(q_vessels_icelandic %>% select(vid),
-             by = join_by(vid)) |> 
-  select(visir, vid, gid, date, lon, lat, lon2, lat2, datel, effort, effort_unit) |> 
-  collect(n = Inf) |> 
-  mutate(table = "trap",
-         date = as_date(date),
-         datel = as_date(datel))
-
-## Pelagic seine ---------------------------------------------------------------
-SEINE_old <-
-  omar::lb_seine(con, trim = TRUE) |> 
-  filter(year %in% YEARS,
-         # only towing gear
-         gid %in% c(10, 12))  |> 
-  # limit to Icelandic vesssels
-  inner_join(q_vessels_icelandic %>% select(vid),
-             by = join_by(vid)) |> 
-  select(visir, vid, gid, date, t1, lon, lat, datel, effort, effort_unit) |> 
-  collect(n = Inf) |> 
-  mutate(table = "seine",
-         date = as_date(date),
-         datel = as_date(datel))
-
-## Lumpfish --------------------------------------------------------------------
-# 1980 -> 2016
-# JK: "from 2013-2016 coverage was low with logbooks available for, in some years, less than half the fleet."
-GRASL <-
-  tbl_mar(con,'afli.grasl_sokn') |> 
-  dplyr::left_join(tbl_mar(con,'afli.grasl_stofn'),
-                   by = c("skipnr", "vear"))  |> 
-  dplyr::mutate(sr = round(reitur / 10, 0),
-                uppruni_grasl = 'grasl_sokn') |> 
-  dplyr::select(-vear) |> 
-  collect (n = Inf) |> 
-  mutate(vedags = as_date(vedags),
-         roe = case_when(teg_verkunar == "1" ~ kg_hrogn,
-                         teg_verkunar == "2" ~ kg_hrogn/0.936,
-                         teg_verkunar == "3" ~ kg_hrogn/0.772,
-                         teg_verkunar == "4" ~ kg_hrogn/0.813,
-                         TRUE ~ NA)) %>% 
-  #calculate whole fish weight from roe, if roe weight is missing, whole fish from number caught
-  mutate(bio = case_when(!is.na(roe) ~ roe * 3.28,
-                         TRUE ~ fj_grasl * 3.02)) |> 
-  filter(year(vedags) >= 2001) |> 
-  mutate(lon = geo::sr2d(sr)$lon,
-         lat = geo::sr2d(sr)$lat) |> 
-  arrange(vedags)
-GRASL <- 
-  GRASL |> 
-  mutate(dregin = ifelse(is.na(dregin), median(dregin, na.rm = TRUE), dregin),
-         naetur = ifelse(is.na(naetur), median(naetur, na.rm = TRUE), naetur)) |> 
-  mutate(visir = 1:n(),  # check
-         gid = 25,
-         effort = dregin * naetur,
-         effort_unit = "netnights",
-         table = "grasl",
-         datel = vedags) |>    # check
-  select(visir,
-         vid = skipnr,
-         gid,
-         date = vedags,
-         lon,
-         lat,
-         z1 = dypi, # in fathoms?
-         datel,  # really need this
-         effort,
-         effort_unit,
-         table,
-         catch = bio)
-GRASL     
-
-# Need to split grasleppa into stofn and catch - issue is that visir is not
-#  a true thing, may create problems downstream
-
-
-## Combine the logbooks --------------------------------------------------------
-LGS_old <-
-  bind_rows(MOBILE_old,
-            STATIC_old,
-            SEINE_old,
-            TRAP_old) |> 
-  mutate(base = "old") |> 
-  rename(.sid = visir)
-LGS_old <- 
+  ## Mobile gear ----------------------------------------------------------------
+  MOBILE_old <-
+    omar::lb_mobile(con, trim = FALSE) |>
+    filter(year %in% YEARS,
+           # only towing gear
+           gid %in% c(5, 6, 7, 8, 9, 10, 12, 14, 15, 38, 40)) |> 
+    # limit to Icelandic vesssels
+    inner_join(q_vessels_icelandic %>% select(vid),
+               by = join_by(vid)) |> 
+    select(visir, vid, gid, date, t1, t2, lon, lat, lon2, lat2, z1, z2, datel, effort, effort_unit,
+           sweeps, plow_width) |> 
+    collect(n = Inf) |> 
+    mutate(table = "mobile",
+           date = as_date(date),
+           datel = as_date(datel))
+  
+  ## Static gear -----------------------------------------------------------------
+  STATIC_old <-
+    omar::lb_static(con, trim = TRUE) |> 
+    filter(year %in% YEARS,
+           gid %in% c(1, 2, 3)) |> 
+    # limit to Icelandic vesssels
+    inner_join(q_vessels_icelandic %>% select(vid),
+               by = join_by(vid)) |> 
+    select(visir, vid, gid, date, t0, t1, t2, lon, lat, lon2, lat2, z1, z2, datel, effort, effort_unit) |> 
+    collect(n = Inf) |> 
+    mutate(table = "static",
+           date = as_date(date),
+           datel = as_date(datel))
+  
+  ## Traps -----------------------------------------------------------------------
+  TRAP_old <- 
+    omar::lb_trap(con, trim = TRUE) |> 
+    filter(year %in% YEARS,
+           # only towing gear
+           gid %in% c(18, 39))  |> 
+    # limit to Icelandic vesssels
+    inner_join(q_vessels_icelandic %>% select(vid),
+               by = join_by(vid)) |> 
+    select(visir, vid, gid, date, lon, lat, lon2, lat2, datel, effort, effort_unit) |> 
+    collect(n = Inf) |> 
+    mutate(table = "trap",
+           date = as_date(date),
+           datel = as_date(datel))
+  
+  ## Pelagic seine ---------------------------------------------------------------
+  SEINE_old <-
+    omar::lb_seine(con, trim = TRUE) |> 
+    filter(year %in% YEARS,
+           # only towing gear
+           gid %in% c(10, 12))  |> 
+    # limit to Icelandic vesssels
+    inner_join(q_vessels_icelandic %>% select(vid),
+               by = join_by(vid)) |> 
+    select(visir, vid, gid, date, t1, lon, lat, datel, effort, effort_unit) |> 
+    collect(n = Inf) |> 
+    mutate(table = "seine",
+           date = as_date(date),
+           datel = as_date(datel))
+  
+  ## Lumpfish --------------------------------------------------------------------
+  # 1980 -> 2016
+  # JK: "from 2013-2016 coverage was low with logbooks available for, in some years, less than half the fleet."
+  GRASL <-
+    tbl_mar(con,'afli.grasl_sokn') |> 
+    dplyr::left_join(tbl_mar(con,'afli.grasl_stofn'),
+                     by = c("skipnr", "vear"))  |> 
+    dplyr::mutate(sr = round(reitur / 10, 0),
+                  uppruni_grasl = 'grasl_sokn') |> 
+    dplyr::select(-vear) |> 
+    collect (n = Inf) |> 
+    mutate(vedags = as_date(vedags),
+           roe = case_when(teg_verkunar == "1" ~ kg_hrogn,
+                           teg_verkunar == "2" ~ kg_hrogn/0.936,
+                           teg_verkunar == "3" ~ kg_hrogn/0.772,
+                           teg_verkunar == "4" ~ kg_hrogn/0.813,
+                           TRUE ~ NA)) %>% 
+    #calculate whole fish weight from roe, if roe weight is missing, whole fish from number caught
+    mutate(bio = case_when(!is.na(roe) ~ roe * 3.28,
+                           TRUE ~ fj_grasl * 3.02)) |> 
+    filter(year(vedags) >= 2001) |> 
+    mutate(lon = geo::sr2d(sr)$lon,
+           lat = geo::sr2d(sr)$lat) |> 
+    arrange(vedags)
+  GRASL <- 
+    GRASL |> 
+    mutate(dregin = ifelse(is.na(dregin), median(dregin, na.rm = TRUE), dregin),
+           naetur = ifelse(is.na(naetur), median(naetur, na.rm = TRUE), naetur)) |> 
+    mutate(visir = 1:n(),  # check
+           gid = 25,
+           effort = dregin * naetur,
+           effort_unit = "netnights",
+           table = "grasl",
+           datel = vedags) |>    # check
+    select(visir,
+           vid = skipnr,
+           gid,
+           date = vedags,
+           lon,
+           lat,
+           z1 = dypi, # in fathoms?
+           datel,  # really need this
+           effort,
+           effort_unit,
+           table,
+           catch = bio)
+  GRASL     
+  
+  # Need to split grasleppa into stofn and catch - issue is that visir is not
+  #  a true thing, may create problems downstream
+  
+  
+  ## Combine the logbooks --------------------------------------------------------
+  LGS_old <-
+    bind_rows(MOBILE_old,
+              STATIC_old,
+              SEINE_old,
+              TRAP_old) |> 
+    mutate(base = "old") |> 
+    rename(.sid = visir)
+  LGS_old <- 
+    LGS_old |> 
+    select(.sid, vid, gid, date, t1, t2, lon, lat, lon2, lat2, z1, z2,
+           datel, effort, effort_unit, sweeps, plow_width, base, t0)
+  
+  ## The catch -------------------------------------------------------------------
+  CATCH_old <-
+    lb_catch(con) |> 
+    collect(n = Inf) |> 
+    rename(.sid = visir) |> 
+    filter(.sid %in% LGS_old$.sid)
+  
+  ## Checks ----------------------------------------------------------------------
+  ### Data loss ------------------------------------------------------------------
+  n0 <- 
+    lb_base(con) |> 
+    filter(year %in% YEARS) |> 
+    count() |> 
+    collect() |> 
+    pull(n)
+  n1 <- nrow(LGS_old)
+  print(paste0("Original settings: ", n0, " Settings retained: ", n1))
+  print(paste0("Records lossed: ", n0-n1, " Proportion retained: ", n1/n0))
+  
+  ### Missingness ----------------------------------------------------------------
   LGS_old |> 
-  select(.sid, vid, gid, date, t1, t2, lon, lat, lon2, lat2, z1, z2,
-         datel, effort, effort_unit, sweeps, plow_width, base, t0)
-
-## The catch -------------------------------------------------------------------
-CATCH_old <-
-  lb_catch(con) |> 
-  collect(n = Inf) |> 
-  rename(.sid = visir) |> 
-  filter(.sid %in% LGS_old$.sid)
-
-## Checks ----------------------------------------------------------------------
-### Data loss ------------------------------------------------------------------
-n0 <- 
-  lb_base(con) |> 
-  filter(year %in% YEARS) |> 
-  count() |> 
-  collect() |> 
-  pull(n)
-n1 <- nrow(LGS_old)
-print(paste0("Original settings: ", n0, " Settings retained: ", n1))
-print(paste0("Records lossed: ", n0-n1, " Proportion retained: ", n1/n0))
-
-### Missingness ----------------------------------------------------------------
-LGS_old |> 
-  mutate(no_effort = is.na(effort)) |> 
-  count(gid, no_effort) |> 
-  spread(no_effort, n) |> 
-  knitr::kable()
-
-LGS_old   |> write_parquet("~/stasi/fishydata/data-raw/logbooks/LGS_old.parquet")
-CATCH_old |> write_parquet("~/stasi/fishydata/data-raw/logbooks/CATCH_old.parquet")
+    mutate(no_effort = is.na(effort)) |> 
+    count(gid, no_effort) |> 
+    spread(no_effort, n) |> 
+    knitr::kable()
+  
+  LGS_old   |> write_parquet("~/stasi/fishydata/data-raw/logbooks/LGS_old.parquet")
+  CATCH_old |> write_parquet("~/stasi/fishydata/data-raw/logbooks/CATCH_old.parquet")
 } else {
   LGS_old <-   read_parquet("~/stasi/fishydata/data-raw/logbooks/LGS_old.parquet")
   CATCH_old <- read_parquet("~/stasi/fishydata/data-raw/logbooks/CATCH_old.parquet")
@@ -661,8 +661,44 @@ LGS <-
                              gid_agf == 6 & sid_target == 11 ~ 9,     # botnvarpa -> flotvarpa
                              gid_agf == 9 & sid_target %in% c(1:9, 21:29) ~ 6,  # flotvarpa -> botnvarpa
                              .default = gid_agf))
-
-
+# Cap sweeps -------------------------------------------------------------------
+LGS <- 
+  LGS |> 
+  mutate(sweeps = case_when(gid_agf %in% c(1:5, 10:14, 16:23) ~ NA,
+                            gid_agf == 6 & sweeps > 250 ~ 250,
+                            gid_agf == 7 & sweeps > 100 ~ 100,
+                            gid_agf == 8 & sweeps > 100 ~ 100,
+                            gid_agf == 9 & sweeps > 250 ~ 250,
+                            gid_agf == 15 & sweeps > 10 ~ 10,
+                            .default = sweeps))
+# What to do with missing sweeps
+LGS |> 
+  filter(gid_agf %in% c(6:9, 15)) |> 
+  mutate(has.sweeps = !is.na(sweeps)) |> 
+  count(gid_agf, has.sweeps) |> 
+  group_by(gid_agf) |> 
+  mutate(p = round(n / sum(n) * 100, 2)) |> 
+  knitr::kable(caption = "Missing sweeps")
+LGS |> 
+  filter(gid_agf %in% c(6:9, 15)) |> 
+  filter(between(year(date), 2009, 2024)) |> 
+  group_by(gid_agf) |> 
+  summarise(median = median(sweeps, na.rm = TRUE)) |> 
+  ungroup()
+LGS <- 
+  LGS |> 
+  mutate(sweeps = case_when(gid_agf == 6 & is.na(sweeps) ~ 100,
+                            gid_agf == 7 & is.na(sweeps) ~  45,
+                            gid_agf == 8 & is.na(sweeps) ~  28,
+                            gid_agf == 9 & is.na(sweeps) ~  80,
+                            gid_agf == 15 & is.na(sweeps) ~  1,
+                            .default = sweeps)) |> 
+  mutate(sweeps = case_when(gid_agf == 6 & sweeps < 40 ~ 40,
+                            gid_agf == 7 & sweeps < 25 ~ 25,
+                            gid_agf == 8 & sweeps < 10 ~ 10,
+                            gid_agf == 9 & sweeps < 50 ~ 50,
+                            gid_agf == 15 & sweeps < 1 ~ 1,
+                            .default = sweeps))
 
 # 6. Save the stuff ------------------------------------------------------------
 
