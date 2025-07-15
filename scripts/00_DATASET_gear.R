@@ -122,6 +122,35 @@ gid_agf <-
   left_join(met5) |> 
   left_join(speed_criterion)
 
+gid_agf <- 
+  gid_agf |> 
+  mutate(met6 = case_when(gid_agf == 1 ~ "GNS_DEF_>0_0_0",
+                          gid_agf == 2 ~ "GNS_DEF_>0_0_0",
+                          gid_agf == 3 ~ "GNS_DEF_>0_0_0",
+                          gid_agf == 4 ~ "GNS_DEF_>0_0_0",
+                          gid_agf == 5 ~ "GNS_DEF_>0_0_0",
+                          gid_agf == 6 ~ "OTB_DEF_>=120_0_0",
+                          gid_agf == 7 ~ "OTB_DEF_>=40_0_0",    # Humarvarpa - should really be >=80
+                          gid_agf == 8 ~ "OTB_DEF_>=40_0_0",
+                          gid_agf == 9 ~ "OTM_SPF_>0_0_0",
+                          gid_agf == 10 ~ "PS_SPF_>0_0_0",
+                          gid_agf == 11 ~ "SDN_DEF_>=120_0_0",
+                          gid_agf == 12 ~ "LLS_DEF_0_0_0",  # Lína
+                          gid_agf == 13 ~ "LLS_DEF_0_0_0",  # Landbeitt lína
+                          gid_agf == 14 ~ "LHM_DEF_0_0_0",  # Handfæri
+                          gid_agf == 15 ~ "DRB_DES_>0_0_0",  # Plógur
+                          gid_agf == 16 ~ "FPO_DEF_>0_0_0",  # Gildra - CHECK main species
+                          gid_agf == 17 ~ "MIS_DWF_0_0_0",  # Annað
+                          gid_agf == 18 ~ NA,         # Eldiskví
+                          gid_agf == 19 ~ "LHP_FIF_0_0_0",  # Sjóstöng
+                          gid_agf == 20 ~ NA,         # Kræklingalína
+                          gid_agf == 21 ~ "LLS_DEF_0_0_0",  # Línutrekt
+                          gid_agf == 22 ~ "GNS_DWS_>0_0_0",  # Grálúðunet
+                          gid_agf == 23 ~ "DIV_DES_0_0_0",  # Kafari
+                          gid_agf == 24 ~ "HMS_SWD_0_0_0",  # Sláttuprammi
+                          gid_agf == 25 ~ "HMS_SWD_0_0_0",  # Þarapógur
+                          .default = NA))
+
 
 gid_agf |> nanoparquet::write_parquet("data/gear/gear_mapping.parquet")
 
