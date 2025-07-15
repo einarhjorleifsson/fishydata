@@ -1,4 +1,4 @@
-# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-07-05.log &
+# nohup R < scripts/43_DATASET_ais_trail.R --vanilla > scripts/log/43_DATASET_ais_trail_2025-07-14.log &
 
 # checkout: https://stackoverflow.com/questions/63821533/find-the-nearest-polygon-for-a-given-point
 # pts <- st_join(pts, p, join = st_nearest_feature)
@@ -16,7 +16,7 @@ library(conflicted)
 library(traipse)
 library(sf)
 library(ramb)
-library(arrow)
+library(duckdbfs)
 library(tidyverse)
 
 conflicts_prefer(dplyr::filter)
@@ -25,36 +25,42 @@ conflicts_prefer(dplyr::lead)
 
 # auxillary data ---------------------------------------------------------------
 sf::sf_use_s2(use_s2 = FALSE)  # so invalid geometry does not crash, and
-                               # seems to be faster
-island <- read_sf("data/auxillary/shoreline.gpkg")
+# seems to be faster
+island <- 
+  read_sf("data/auxillary/shoreline.gpkg") |> 
+  rename(.iceland = on_land)
 ports <-  
   read_sf("~/stasi/fishydata/data/ports/ports.gpkg") |> 
-  select(pid)
+  select(.pid = pid)
 eusm <- 
-    read_sf("data/auxillary/eusm.gpkg") |> 
-    select(.eusm = MSFD_BBHT)
+  read_sf("data/auxillary/eusm.gpkg") |> 
+  select(.msfd_bbht = MSFD_BBHT)
 gebco <- 
-    read_sf("data/auxillary/ICES_GEBCO.gpkg")
-ia <- 
-    read_sf("data/auxillary/ICESareas.gpkg")
+  read_sf("data/auxillary/ICES_GEBCO.gpkg") |>
+  select(.depth = depth)
+ices <- 
+  read_sf("data/auxillary/ICESareas.gpkg") |> 
+  select(.ices = Area_Full)
+# data includes land
+fao <- 
+  read_sf("/u3/haf/gisland/data/area/fao.gpkg") |> 
+  select(.fao = fao)
 
 
 # Logbooks ---------------------------------------------------------------------
 lb <- 
-  read_parquet("data/logbooks/station-for-ais.parquet") |> 
+  nanoparquet::read_parquet("data/logbooks/station-for-ais.parquet") |> 
   filter(year(date) %in% YEARS) |> 
   filter(!is.na(agf_gid))
 
 # data -------------------------------------------------------------------------
 stk_vid <- 
   open_dataset("data/vessels/stk_vessel_match.parquet") |> 
-  to_duckdb() |> 
   select(mid, d1, d2, vid, mmsi) |> 
   filter(vid > 0) |> 
   filter(!vid %in% 3700:4999)
 STK <- 
   open_dataset("data/ais/stk-raw") |> 
-  to_duckdb() |> 
   filter(between(lon, -35, 30),
          between(lat, 50, 79)) |> 
   select(mid, time, lon, lat, speed, heading, hid, io, year) |> 
@@ -63,57 +69,100 @@ STK <-
   select(-c(d1, d2))
 ASTD <- 
   open_dataset("data/ais/astd_isleez") |> 
-  to_duckdb() |> 
   filter(between(lon, -35, 30),
          between(lat, 50, 79)) |> 
   select(vid, mmsi, time, lon, lat, speed, year) |> 
   inner_join(stk_vid |> select(vid, mmsi),
-             by = join_by(vid, mmsi)) 
+             by = join_by(vid, mmsi))
+# Table contains agf_gid and metier5
 gears <-
-  read_parquet("data/gear/gear_mapping.parquet") |> 
+  nanoparquet::read_parquet("data/gear/gear_mapping.parquet") |> 
   select(agf_gid = gid_agf, met5, s1, s2)
 
-toc(log = TRUE, quiet = TRUE)
+toc(log = TRUE, quiet = FALSE)
 
 # processing - year loop -------------------------------------------------------
 
 for(y in YEARS) {
+  
+  print(paste0(y, "  ----------------------------------------"))
   tic(msg = "step_01")
-  print(y)
   stk <-
     STK |> 
     filter(year == y) |> 
-   #filter(vid == 2359) |> 
-    # when testing
-    #filter(month(time) == 6) |> 
-    collect() #|> 
-  # Replace stk harbour with standardized harbour name 
-  #left_join(harbours.standards,
-  #          by = join_by(hid)) |> 
-  #select(-c(hid)) |> 
-  #rename(hid = pid)
+    collect()
   astd <- 
     ASTD |> 
     filter(year == y) |> 
-    #filter(vid == 2359) |>
     collect() |> 
-    # when testing
-    # filter(month(time) == 6) |> 
     distinct(vid, time, .keep_all = TRUE)
+  toc(log = TRUE, quiet = FALSE)
   
+  tic(msg = "step_01_bind_rows")
   trail <- 
     bind_rows(astd |> mutate(source = "astd", mmsi = as.character(mmsi)),
               stk |> mutate(source = "stk")) |> 
     arrange(vid, time, source) |> 
-    mutate(.rid = 1:n(), .before = vid) |> 
+    mutate(.rid = 1:n(), .before = vid)
+  toc(log = TRUE, quiet = FALSE)
+  
+  tic(msg = "step_01_st_as_sf")
+  trail <- 
+    trail |> 
     st_as_sf(coords = c("lon", "lat"),
              crs = 4326,
-             remove = FALSE) |> 
-    st_join(ports) |> 
-    st_join(island) |> 
-    st_join(eusm) |> 
-    st_join(gebco)
+             remove = FALSE)
+  toc(log = TRUE, quiet = FALSE)
   
+  tic(msg = "step_01_join_ports")
+  trail <- 
+    suppressMessages({
+      trail |> 
+        st_join(ports)
+    })
+  toc(log = TRUE, quiet = FALSE)
+  
+  tic(msg = "step_01_join_island")
+  trail <- 
+    suppressMessages({
+      trail |> 
+        st_join(island)
+    })
+  toc(log = TRUE, quiet = FALSE)
+  
+  tic(msg = "step_01_join_eusm")
+  trail <-
+    suppressMessages({
+      trail |> 
+        st_join(eusm)
+    })
+  toc(log = TRUE, quiet = FALSE)
+  
+  tic(msg = "step_01_join_depth")
+  trail <-
+    suppressMessages({
+      trail |> 
+        st_join(gebco)
+    })
+  toc(log = TRUE, quiet = FALSE)
+  
+  tic(msg = "step_01_join_ices")
+  trail <-
+    suppressMessages({
+      trail |> 
+        st_join(ices)
+    })
+  toc(log = TRUE, quiet = FALSE)
+  
+  tic(msg = "step_01_join_fao")
+  trail <-
+    suppressMessages({
+      trail |> 
+        st_join(fao)
+    })
+  toc(log = TRUE, quiet = FALSE)
+
+  tic(msg = "step_01_st_tranform_5325")
   xy_5325 <-
     trail |> 
     select(geometry) |> 
@@ -121,28 +170,27 @@ for(y in YEARS) {
     st_coordinates() |> 
     as_tibble() |> 
     rename(x5325 = X, y5325 = Y)
-  
   trail <- 
     bind_cols(trail |> st_drop_geometry(), 
               xy_5325)
-  toc(log = TRUE, quiet = TRUE)
+  toc(log = TRUE, quiet = FALSE)
+  
+  # End of spatial acrobatics - could possibly stop here, save things as
+  #  parquet and run the rest from within duckdb
+  #   Except possibly whacky speed checks
   
   # drop points on land (and where wrong stk hid?)
   tic(msg = "step_02")
   trail2 <- 
     trail |> 
-    mutate(where = case_when(on_land == TRUE &  is.na(pid) ~ "on_land",
-                             on_land == TRUE & !is.na(pid) ~ "in_harbour",
-                             is.na(on_land) &  !is.na(pid) ~ "in_harbour",
-                             is.na(on_land) &   is.na(pid) ~ "at_sea",
+    mutate(where = case_when(.iceland == TRUE &  is.na(.pid) ~ "on_land",
+                             .iceland == TRUE & !is.na(.pid) ~ "in_harbour",
+                             is.na(.iceland) &  !is.na(.pid) ~ "in_harbour",
+                             is.na(.iceland) &   is.na(.pid) ~ "at_sea",
                              .default = "bug")) |> 
     filter(where %in% c("in_harbour", "at_sea")) |> 
-    select(-on_land) 
-  # drop records where stk hid is different than pid
-  #filter(!(!is.na(hid) & !is.na(pid) & hid != pid))
-  
-  toc(log = TRUE, quiet = TRUE)
-  
+    select(-.iceland) 
+  toc(log = TRUE, quiet = FALSE)
   
   tic(msg = "step_03")
   trail3 <- 
@@ -150,29 +198,24 @@ for(y in YEARS) {
     # hail mary
     #filter(is.na(io)) |> 
     group_by(vid) |> 
-    mutate(.cid = ramb::rb_trip(!is.na(pid))) |> 
+    mutate(.cid = ramb::rb_trip(!is.na(.pid))) |> 
     # may want to do this after filtering whacky
-    mutate(pid_dep = pid,
-           pid_arr = pid) |> 
+    mutate(pid_dep = .pid,
+           pid_arr = .pid) |> 
     fill(pid_dep, .direction = "downup") |> 
     fill(pid_arr, .direction = "updown") |> 
     ungroup()
+  toc(log = TRUE, quiet = FALSE)
   
-  toc(log = TRUE, quiet = TRUE)
   tic(msg = "step_04")
   # drop duplicate time - here order is critical (first record is kept)
   trail4 <- 
     trail3 |> 
     # order matters for the distinct below
-    arrange(vid, time, source, pid, io) |> 
+    arrange(vid, time, source, .pid, io) |> 
     distinct(vid, time, .keep_all = TRUE)
-  toc(log = TRUE, quiet = TRUE)
-  # # include first and last point in harbour as part of trip
-  # group_by(vid) |> 
-  # mutate(.cid = case_when(.cid < 0 & lead(.cid) > 0 ~ lead(.cid),
-  #                         .cid < 0 & lag(.cid)  > 0 ~ lag(.cid),
-  #                         .default = .cid)) |> 
-  # ungroup()
+  toc(log = TRUE, quiet = FALSE)
+  
   tic(msg = "step_05")
   # remove some whackies - the poor man's version
   trail5 <- 
@@ -183,8 +226,8 @@ for(y in YEARS) {
     ungroup() |> 
     filter(dd <= 1852 * 20) |> 
     select(.rid, vid, mmsi, .cid, source, time, lon, lat,  x5325, y5325,
-           speed, heading, pid, pid_dep, pid_arr, hid, io, depth, .eusm)
-  toc(log = TRUE, quiet = TRUE)
+           speed, heading, .pid, pid_dep, pid_arr, hid, io, .depth, .msfd_bbht, .ices, .fao)
+  toc(log = TRUE, quiet = FALSE)
   
   if(FALSE) {
     trail5 |> 
@@ -192,10 +235,6 @@ for(y in YEARS) {
       group_by(vid) |> 
       ramb::rb_mapdeck(no_lines = FALSE, col = "source", radius = 100)
   }
-  
-  
-  # can i generate trips
-  
   if(FALSE) {trips <-
     trail5 |> 
     filter(.cid > 0) |> 
@@ -211,17 +250,20 @@ for(y in YEARS) {
               .groups = "drop")
   trips |> filter(is.na(hid1) | is.na(hid2)) |> count(.cid)
   }
-  tic(msg = "step_06")
+  
+  tic(msg = "step_06_whacky-speed")
   trail6 <- 
     trail5 |> 
     group_by(vid, .cid) |> 
     mutate(whack = case_when(.cid > 0 ~ ramb::rb_whacky_speed(lon, lat, time),
                              .default = FALSE)) |> 
     ungroup()
-  toc(log = TRUE, quiet = TRUE)
+  toc(log = TRUE, quiet = FALSE)
+  
   tic(msg = "step_07")
   trail7 <- 
     trail6 |> 
+    # SHOULD ONE GROUP BY whack?????????????????????????????????????????????????
     group_by(vid, .cid) |> 
     mutate(dt = track_time(time),
            dd = track_distance(lon, lat)) |> 
@@ -233,8 +275,9 @@ for(y in YEARS) {
     mutate(year = year(time),
            month = month(time)) |> 
     rename(hid_stk = hid, io_stk = io)
-  toc(log = TRUE, quiet = TRUE)
-  tic(msg = "step_08")
+  toc(log = TRUE, quiet = FALSE)
+  
+  tic(msg = "step_08_logbook-join")
   trail8 <- 
     trail7 |> 
     left_join(lb |> 
@@ -245,33 +288,33 @@ for(y in YEARS) {
   trail8 <- 
     trail8 |> 
     mutate(gid_trip = case_when(!is.na(.sid) ~ agf_gid,
-                                    .default = NA)) |> 
+                                .default = NA)) |> 
     group_by(vid, .cid) |> 
     fill(gid_trip, .direction = "downup") |> 
     ungroup()
-  toc(log = TRUE, quiet = TRUE)
-  tic(msg = "step_09")
+  toc(log = TRUE, quiet = FALSE)
+  
+  tic(msg = "step_09_gear-join")
   trail8 <- 
     trail8 |> 
     left_join(gears |> rename(gid_trip = agf_gid),
               by = join_by(gid_trip))
-  toc(log = TRUE, quiet = TRUE)
+  toc(log = TRUE, quiet = FALSE)
   trail8 |> 
     arrow::write_dataset(path = "~/stasi/fishydata/data/ais/trail",
                          format = "parquet",
                          existing_data_behavior = "overwrite",
                          partitioning = c("year"))
-  toc(log = TRUE, quiet = TRUE)
+  toc(log = TRUE, quiet = FALSE)
   counter <- counter + 1
   time_logging[[counter]] <-
     tic.log(format = FALSE) |> 
     map_df(as_tibble) |> 
     mutate(year = y)
-  time_logging |> write_rds("time_logging.rds") 
-  
+  tic.clearlog()
 }
 
-toc()
+time_logging |> write_rds("time_logging.rds")
 lubridate::now() |> print()
 devtools::session_info()
 
