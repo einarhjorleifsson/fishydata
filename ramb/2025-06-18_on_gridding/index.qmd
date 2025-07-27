@@ -9,6 +9,8 @@ echo: true
 
 ### Some synthetic data
 
+We first generate some synthetic data, deliberately located in the vicinity of the equator and the prime meridian. Each point is then allocated to a grid point, using the `%/% dx * dx + dx/2` and csquare approach.
+
 ```{r}
 library(tidyverse)
 library(duckdbfs)
@@ -26,6 +28,11 @@ g <-
   bind_cols(g, vmstools::CSquare2LonLat(g$cs, dx)) |> 
   rename(lon2 = SI_LONG, lat2 = SI_LATI)
 g |> glimpse()
+```
+
+Let's create a graphical representation of the two gridding approaches:
+
+```{r}
 p <- 
   g |> 
   filter(between(lon, -0.125, 0.125),
@@ -56,9 +63,10 @@ p3 <-
   geom_point(aes(x, y), colour = "red", size = 4, shape = 1) +
   geom_point(aes(lon2, lat2), colour = "blue", size = 4, shape = 1) +
   labs(subtitle = "Both")
-p1 + p2
-p3
+p1 + p2 + p3
 ```
+
+One observes that the two gridding approaches are the same ...
 
 #### Some counts
 
