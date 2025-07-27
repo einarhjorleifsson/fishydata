@@ -7,150 +7,66 @@
 #  * Add criterion for maximum distance
 
 library(tidyverse)
-library(omar)
-con <- connect_mar()
 
-m4_ices <- 
-  icesVocab::getCodeList("GearType") |> 
-  as_tibble() |> 
-  janitor::clean_names()
-m5_ices <- 
-  icesVocab::getCodeList("TargetAssemblage") |> 
-  as_tibble() |> 
-  janitor::clean_names()
-m6_ices <- 
-  icesVocab::getCodeList("Metier6_FishingActivity") |> 
-  as_tibble() |> 
-  janitor::clean_names()
+# create table -----------------------------------------------------------------
 
-met5 <- 
-  m6_ices |> 
-  select(key, description) |> 
-  mutate(description = str_remove(description, ", see the code reg. mesh size and selectivity device")) |> 
-  mutate(met5 = case_when(str_sub(key, 8, 8) == "_" ~ str_sub(key, 1, 7),
-                           str_sub(key, 7, 7) == "_" ~ str_sub(key, 1, 6),
-                           .default = "should not be here")) |> 
-  select(met5, description) |> 
-  distinct(met5, .keep_all = TRUE) |> 
-  arrange(met5) 
+gear_mapping <- 
+  tribble(~agf_gid, ~veiðarfæri, ~gear, ~target, ~met5,   ~met6,                 ~s1,  ~s2,   ~orri,
+           1,   "Skötuselsnet",  "GNS", "DEF", "GNS_DEF", "GNS_DEF_>0_0_0",    0.000, 2.500,     91,
+           2,   "Þorskfisknet",  "GNS", "DEF", "GNS_DEF", "GNS_DEF_>0_0_0",    0.000, 1.700,      2,
+           3,   "Grásleppunet",  "GNS", "DEF", "GNS_DEF", "GNS_DEF_>0_0_0",    0.000, 1.700,     25,
+           4,    "Rauðmaganet",  "GNS", "DEF", "GNS_DEF", "GNS_DEF_>0_0_0",    0.000, 1.700,     29,
+           5,         "Reknet",  "GND", "SPF", "GND_SPF", "GND_SPF_>0_0_0",    0.050, 1.125,     11,
+           6,      "Botnvarpa",  "OTB", "DEF", "OTB_DEF", "OTB_DEF_>=120_0_0", 2.625, 4.700,      6,
+           7,     "Humarvarpa",  "OTB", "DEF", "OTB_DEF", "OTB_DEF_>=40_0_0",  2.375, 3.700,      9,
+           8,     "Rækjuvarpa",  "OTB", "DEF", "OTB_DEF", "OTB_DEF_>=40_0_0",  1.750, 3.000,     14,
+           9,      "Flotvarpa",  "OTM", "SPF", "OTM_SPF", "OTM_SPF_>0_0_0",    2.625, 6.000,      7,
+          10,            "Nót",   "PS", "SPF",  "PS_SPF", "PS_SPF_>0_0_0",     0.000, 1.700,     10,
+          11,        "Dragnót",  "SDN", "DEF", "SDN_DEF", "SDN_DEF_>=120_0_0", 0.250, 2.900,      5,
+          12,           "Lína",  "LLS", "DEF", "LLS_DEF", "LLS_DEF_0_0_0",     0.375, 2.750,      1,
+          13, "Landbeitt lína",  "LLS", "DEF", "LLS_DEF", "LLS_DEF_0_0_0",     0.375, 2.750,     72,
+          14,       "Handfæri",  "LHM", "DEF", "LHM_DEF", "LHM_DEF_0_0_0",     0.025, 1.700,      3,
+          15,         "Plógur",  "DRB", "DES", "DRB_DES", "DRB_DES_>0_0_0",    1.200, 2.900,     15,
+          16,         "Gildra",  "FPO", "DEF", "FPO_DEF", "FPO_DEF_>0_0_0",    0.100, 2.000,     16,
+          17,   "Annað - Hvað",  "MIS", "DWF", "MIS_DWF", "MIS_DWF_0_0_0",        NA,    NA,     99,
+          18,       "Eldiskví",     NA,    NA,        NA,              NA,        NA,    NA,     NA,
+          19,       "Sjóstöng",  "LHP", "FIF", "LHP_FIF", "LHP_FIF_0_0_0",     0.125, 1.250,     43,
+          20,  "Kræklingalína",     NA,    NA,        NA,              NA,        NA,    NA,     42,
+          21,      "Línutrekt",  "LLS", "DEF", "LLS_DEF", "LLS_DEF_0_0_0",     0.100, 2.200,      1,
+          22,     "Grálúðunet",  "GNS", "DEF", "GNS_DEF", "GNS_DEF_>0_0_0",    0.050, 1.400,     92,
+          23,         "Kafari",  "DIV", "DES", "DIV_DES", "DIV_DES_0_0_0",        NA,    NA,     41,
+          24,   "Sláttuprammi",  "HMS", "SWD", "HMS_SWD", "HMS_SWD_0_0_0",     0.000, 1.400,     NA,
+          25,     "Þaraplógur",  "HMS", "SWD", "HMS_SWD", "HMS_SWD_0_0_0",     2.300, 4.000,     NA) |> 
+  mutate(agf_gid = as.integer(agf_gid),
+         orri = as.integer(orri))
 
+# check validity ---------------------------------------------------------------
+library(ramb)
+gear_mapping |> 
+  filter(!is.na(met6)) |> 
+  mutate(gear2 = rb_gear_from_metier(met6),
+         target2 = rb_target_from_metier(met6),
+         met52 = rb_met5_from6(met6)) |> 
+  filter(gear != gear2 | target != target2 | met5 != met52) |> 
+  knitr::kable(caption = "Expect none")
+gear_mapping |> 
+  filter(!is.na(gear)) |> 
+  mutate(
+    v_gear = 
+      case_when(gear %in% icesVocab::getCodeList("GearType")$Key ~ TRUE,
+                .default = FALSE),
+    v_target = 
+      case_when(target %in% icesVocab::getCodeList("TargetAssemblage")$Key ~ TRUE,
+                .default = FALSE),
+    v_met5 = 
+      case_when(met5 %in% icesVocab::getCodeList("Metier5_FishingActivity")$Key ~ TRUE,
+                .default = FALSE),
+    v_met6 = 
+      case_when(met6 %in% icesVocab::getCodeList("Metier6_FishingActivity")$Key ~ TRUE,
+                .default = FALSE)
+  ) |> 
+  filter(!v_gear | !v_target | !v_met5 | !v_met6) |> 
+  knitr::kable(caption = "Problems with gear and target not in ICES vocabulary, but met5 and met6 considered valid.")
 
-speed_criterion <- 
-  tribble(~gid_agf, ~s1, ~s2,
-          1, 0, 2.500,
-          2, 0, 1.700,
-          3, 0, 1.700,
-          4, 0, 1.700,
-          5, 0.05, 1.125,
-          6, 2.625, 4.700,
-          7, 2.375, 3.700,
-          8, 1.750, 3.000,
-          9, 2.625, 6.000,
-          10, 0, 1.7,
-          11, 0.250, 2.9,
-          12, 0.375, 2.750,
-          13, 0.375, 2.750,
-          14, 0.025, 1.7,
-          15, 1.2, 2.9,
-          16, 0.1, 2,
-          19, 0.125, 1.25,
-          21, 0.1, 2.2,
-          22, 0.05, 1.4,
-          24, 0, 1.4,
-          25, 2.3, 4) 
-
-gid_agf <- 
-  tbl_mar(con, "agf.aflagrunnur_v") |> 
-  select(starts_with("veidar")) |> 
-  distinct() |> 
-  select(gid_agf = veidarfaeri, veiðarfæri_agf = veidarfaeri_heiti) |> 
-  collect() |> 
-  arrange(gid_agf) |> 
-  mutate(gid_orri = 
-           case_when(gid_agf == 1 ~ 91,
-                     gid_agf == 2 ~  2,
-                     gid_agf == 3 ~ 25,
-                     gid_agf == 4 ~ 29,
-                     gid_agf == 5 ~ 11,
-                     gid_agf == 6 ~ 6,
-                     gid_agf == 7 ~ 9,
-                     gid_agf == 8 ~ 14,
-                     gid_agf == 9 ~ 7,
-                     gid_agf == 10 ~ 10,   # Multiple choices
-                     gid_agf == 11 ~ 5,    # Multiple choices, here lowest value
-                     gid_agf == 12 ~ 1,
-                     gid_agf == 13 ~ 71,
-                     gid_agf == 14 ~ 3,
-                     gid_agf == 15 ~ 15,   # Multiple choices
-                     gid_agf == 16 ~ 16,   # Multiple choices
-                     gid_agf == 17 ~ 99,   # Óskráð veiðarfæri
-                     gid_agf == 18 ~ NA,   # Eldiskví
-                     gid_agf == 19 ~ 43,   # Veiðistöng
-                     gid_agf == 20 ~ 42,
-                     gid_agf == 21 ~ 1,    # Línutrekt - think the old system did not have that
-                     gid_agf == 22 ~ 92,
-                     gid_agf == 23 ~ 41,   # Ígulkerakafari in the old system
-                     gid_agf == 24 ~ NA,   # Sláttuprammi
-                     gid_agf == 25 ~ NA,   # Þaraplógur
-                     .default = NA)) |> 
-  mutate(met5 = case_when(gid_agf ==  1 ~ "GNS_DEF",  # Skötuselsnet
-                          gid_agf ==  2 ~ "GNS_DEF",  # Þorskfisknet
-                          gid_agf ==  3 ~ "GNS_DEF",  # Grásleppunet
-                          gid_agf ==  4 ~ "GNS_DEF",  # Rauðmaganet
-                          gid_agf ==  5 ~ "GND_SPF",  # Reknet - check if small pelagics
-                          gid_agf ==  6 ~ "OTB_DEF",  # Botnvarpa
-                          gid_agf ==  7 ~ "OTB_MCD",  # Humarvarpa
-                          gid_agf ==  8 ~ "OTB_MCD",  # Rækjuvarpa
-                          gid_agf ==  9 ~ "OTM_SPF",  # Flotvarpa
-                          gid_agf == 10 ~ "PS_SPF",   # Nót
-                          gid_agf == 11 ~ "SDN_DEF",  # Dragnót - CHECK
-                          gid_agf == 12 ~ "LLS_DEF",  # Lína
-                          gid_agf == 13 ~ "LLS_DEF",  # Landbeitt lína
-                          gid_agf == 14 ~ "LHM_DEF",  # Handfæri
-                          gid_agf == 15 ~ "DRB_DES",  # Plógur
-                          gid_agf == 16 ~ "FPO_DEF",  # Gildra - CHECK main species
-                          gid_agf == 17 ~ "MIS_DWF",  # Annað
-                          gid_agf == 18 ~ NA,         # Eldiskví
-                          gid_agf == 19 ~ "LHP_FIF",  # Sjóstöng
-                          gid_agf == 20 ~ NA,         # Kræklingalína
-                          gid_agf == 21 ~ "LLS_DEF",  # Línutrekt
-                          gid_agf == 22 ~ "GNS_DWS",  # Grálúðunet
-                          gid_agf == 23 ~ "DIV_DES",  # Kafari
-                          gid_agf == 24 ~ "HMS_SWD",  # Sláttuprammi
-                          gid_agf == 25 ~ "HMS_SWD",  # Þarapógur
-                          .default = NA)) |> 
-  left_join(met5) |> 
-  left_join(speed_criterion)
-
-gid_agf <- 
-  gid_agf |> 
-  mutate(met6 = case_when(gid_agf == 1 ~ "GNS_DEF_>0_0_0",
-                          gid_agf == 2 ~ "GNS_DEF_>0_0_0",
-                          gid_agf == 3 ~ "GNS_DEF_>0_0_0",
-                          gid_agf == 4 ~ "GNS_DEF_>0_0_0",
-                          gid_agf == 5 ~ "GNS_DEF_>0_0_0",
-                          gid_agf == 6 ~ "OTB_DEF_>=120_0_0",
-                          gid_agf == 7 ~ "OTB_DEF_>=40_0_0",    # Humarvarpa - should really be >=80
-                          gid_agf == 8 ~ "OTB_DEF_>=40_0_0",
-                          gid_agf == 9 ~ "OTM_SPF_>0_0_0",
-                          gid_agf == 10 ~ "PS_SPF_>0_0_0",
-                          gid_agf == 11 ~ "SDN_DEF_>=120_0_0",
-                          gid_agf == 12 ~ "LLS_DEF_0_0_0",  # Lína
-                          gid_agf == 13 ~ "LLS_DEF_0_0_0",  # Landbeitt lína
-                          gid_agf == 14 ~ "LHM_DEF_0_0_0",  # Handfæri
-                          gid_agf == 15 ~ "DRB_DES_>0_0_0",  # Plógur
-                          gid_agf == 16 ~ "FPO_DEF_>0_0_0",  # Gildra - CHECK main species
-                          gid_agf == 17 ~ "MIS_DWF_0_0_0",  # Annað
-                          gid_agf == 18 ~ NA,         # Eldiskví
-                          gid_agf == 19 ~ "LHP_FIF_0_0_0",  # Sjóstöng
-                          gid_agf == 20 ~ NA,         # Kræklingalína
-                          gid_agf == 21 ~ "LLS_DEF_0_0_0",  # Línutrekt
-                          gid_agf == 22 ~ "GNS_DWS_>0_0_0",  # Grálúðunet
-                          gid_agf == 23 ~ "DIV_DES_0_0_0",  # Kafari
-                          gid_agf == 24 ~ "HMS_SWD_0_0_0",  # Sláttuprammi
-                          gid_agf == 25 ~ "HMS_SWD_0_0_0",  # Þarapógur
-                          .default = NA))
-
-
-gid_agf |> nanoparquet::write_parquet("data/gear/gear_mapping.parquet")
-
+gear_mapping |> 
+  nanoparquet::write_parquet("data/gear/gear_mapping.parquet")
