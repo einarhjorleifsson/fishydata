@@ -1,0 +1,147 @@
+---
+title: "Metiers and things"
+author: Einar Hjörleifsson
+description: "In my ignorance I assumed that the metiers, targets and gears in the ICES vocabulary were hierarchical. In the sense that if one has a **valid** metier level 6, one could derive **valid** metier level 5, target and gear from that. Here a little script is provided that shows that this is not quite the case."
+date: "2025-07-17"
+categories: [code, rtip]
+echo: true
+---
+
+## First some convenience wrappers
+
+Not really needed here, but I use these functions elsewhere:
+
+```{r}
+library(tidyverse)
+#' Derive gear from metier 5 or 6
+#' 
+#' Obtain gear type (sometimes wrongly called metier 4?) from metier5 or  6
+#'
+#' @param x A character vector
+#'
+#' @return A vector
+#' @export
+#'
+rb_gear_from_metier <- function(x) {
+  x |> stringr::str_split("_") |> purrr::map_chr(1)
+}
+#' Derive target from metier 5 or 6
+#'
+#' Not to be confused with metier 5
+#' 
+#' @param x A character vector
+#'
+#' @return A vector
+#' @export
+#'
+rb_target_from_metier <- function(x) {
+  x |> stringr::str_split("_") |> purrr::map_chr(2)
+}
+#' Derive metier 5 from metier 6
+#'
+#' Not to be confused with target assemblage
+#' 
+#' @param x A character vector
+#'
+#' @return A vector
+#' @export
+#'
+rb_met5_from6 <- function(x) {
+  sapply(strsplit(x, "_"), function(x) paste(x[1:2], collapse = "_"))
+}
+```
+
+## The test
+
+Steps:
+
+* Get all the metier level 6 from ICES
+* Derive metier level5, target and gear from metier level 6
+* Test if derived values are available (valid) using ICES vocabulary
+
+```{r}
+m6 <- 
+  icesVocab::getCodeList("Metier6_FishingActivity") |> 
+  as_tibble() |> 
+  select(key = Key, desc = Description, dep = Deprecated) |> 
+  # get rid of some mess
+  mutate(desc = stringr::str_remove(desc, ", see.*device")) |> 
+  mutate(gear = rb_gear_from_metier(key),
+         target = rb_target_from_metier(key),
+         met5 = rb_met5_from6(key)) |>  
+  mutate(
+    v_gear = 
+      case_when(gear %in% icesVocab::getCodeList("GearType")$Key ~ TRUE,
+                .default = FALSE),
+    v_target = 
+      case_when(target %in% icesVocab::getCodeList("TargetAssemblage")$Key ~ TRUE,
+                .default = FALSE),
+    v_met5 = 
+      case_when(met5 %in% icesVocab::getCodeList("Metier5_FishingActivity")$Key ~ TRUE,
+                .default = FALSE)
+  )
+m6 |> count(v_gear, v_target, v_met5)
+m6 |> 
+  filter(!v_gear | !v_target | !v_met5) |> 
+  select(key, dep, ends_with("gear"), ends_with("target"), ends_with("met5")) |> 
+  knitr::kable(caption = "Something wrotten in the State of Denmark")
+```
+
+
+## Check going from metier level 5
+
+Steps:
+
+* Get all the metier level 5 from ICES
+* Derive target and gear from metier level 5
+* Test if derived values are available (valid) using ICES vocabulary
+
+```{r}
+m5 <- 
+  icesVocab::getCodeList("Metier5_FishingActivity") |> 
+  as_tibble() |> 
+  select(key = Key, desc = Description, dep = Deprecated) |> 
+  mutate(gear = rb_gear_from_metier(key),
+         target = rb_target_from_metier(key)) |>  
+  mutate(v_gear = case_when(gear %in% icesVocab::getCodeList("GearType")$Key ~ TRUE,
+                            .default = FALSE),
+         v_target = case_when(target %in% icesVocab::getCodeList("TargetAssemblage")$Key ~ TRUE,
+                              .default = FALSE))
+m5 |> count(v_gear, v_target)
+m5 |> 
+  filter(!v_gear | !v_target) |> 
+  select(key, dep, ends_with("gear"), ends_with("target"), ends_with("met5")) |> 
+  knitr::kable(caption = "Something wrotten in the State of Denmark")
+```
+
+## The Icelandic gear table
+
+```{r}
+gear_mapping <- nanoparquet::read_parquet(here::here("data/gear/gear_mapping.parquet"))
+gear_mapping |> knitr::kable(caption = "Icelandic gear mapping")
+```
+
+So which gears do not pass the test:
+
+```{r}
+gear_mapping |> 
+  filter(!is.na(gear)) |> 
+  mutate(
+    v_gear = 
+      case_when(gear %in% icesVocab::getCodeList("GearType")$Key ~ TRUE,
+                .default = FALSE),
+    v_target = 
+      case_when(target %in% icesVocab::getCodeList("TargetAssemblage")$Key ~ TRUE,
+                .default = FALSE),
+    v_met5 = 
+      case_when(met5 %in% icesVocab::getCodeList("Metier5_FishingActivity")$Key ~ TRUE,
+                .default = FALSE),
+    v_met6 = 
+      case_when(met6 %in% icesVocab::getCodeList("Metier6_FishingActivity")$Key ~ TRUE,
+                .default = FALSE)
+  ) |> 
+  filter(!v_gear | !v_target | !v_met5 | !v_met6) |> 
+  knitr::kable(caption = "Icelandic gears that pass metier level 5 and 6, but not gear and target")
+```
+
+So here we have a bit of a catch22, metier 5 and 6 valid but not gear (except DRB) and target.

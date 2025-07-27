@@ -1,0 +1,49 @@
+---
+title: "on_door_spread"
+author: Einar Hjörleifsson
+description: ""
+date: "2025-07-15"
+categories: [code, rtip]
+echo: true
+---
+
+## Sweeps - statistical summary
+
+```{r}
+library(tidyverse)
+library(duckdbfs)
+gear <- 
+  nanoparquet::read_parquet(here::here("data/gear/gear_mapping.parquet")) |> 
+  select(gid_agf, veiðarfæri = veiðarfæri_agf) |> 
+  mutate(veiðarfæri = paste(str_pad(gid_agf, width = 2, pad = "0"), veiðarfæri))
+lb <- 
+  nanoparquet::read_parquet(here::here("data/logbooks/stations.parquet")) |> 
+  filter(between(year(date), 2009, 2024),
+         !is.na(sweeps))
+lb |> 
+  filter(gid_agf %in% c(6:9, 15)) |> 
+  left_join(gear) |> 
+  ggplot(aes(sweeps)) +
+  geom_histogram() +
+  facet_wrap(~ veiðarfæri,
+             scales = "free")
+lb |> 
+  filter(gid_agf %in% c(6:9, 15)) |> 
+  select(lon, lat, gid_agf, sweeps) |> 
+  drop_na() |> 
+  mutate(lon = gisland::grade(lon, 0.05),
+         lat = gisland::grade(lat, 0.05/2)) |> 
+  group_by(gid_agf, lon, lat) |> 
+  summarise(sweeps = mean(sweeps),
+            .groups = "drop") |> 
+  filter(between(lon, -30, -10),
+         between(lat, 62, 68)) |>  
+  #filter(gid_agf == 6) |> 
+  ggplot(aes(lon, lat, fill = sweeps)) +
+  geom_tile() +
+  facet_wrap(~ gid_agf) +
+  scale_fill_viridis_c(option = "inferno")
+```
+
+
+
