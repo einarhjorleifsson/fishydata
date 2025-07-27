@@ -700,6 +700,21 @@ LGS <-
                             gid_agf == 15 & sweeps < 1 ~ 1,
                             .default = sweeps))
 
+# turn NaN to NA and then sweeps or ... to gear_width
+LGS <- 
+  LGS |> 
+  mutate(sweeps = case_when(is.nan(sweeps) ~ NA,
+                            .default = sweeps),
+         plow_width = case_when(is.nan(plow_width) ~ NA,
+                                .default = plow_width)) |> 
+  mutate(width = case_when(!is.na(sweeps) ~ sweeps,
+                           !is.na(plow_width) ~ plow_width,
+                           .default = NA)) |> 
+  select(-c(sweeps, plow_width))
+         
+
+
+
 # 6. Save the stuff ------------------------------------------------------------
 
 LGS   |> arrow::write_parquet("~/stasi/fishydata/data/logbooks/stations.parquet")
@@ -782,7 +797,7 @@ lb |>
 lb <- 
   lb |> 
   select(.sid, lb_base, vid, gid, date, t1, t2, datel, effort, effort_unit,
-         sweeps, plow_width, catch_total,
+         width, catch_total,
          agf_date = date_agf,
          agf_gid = gid_agf,
          agf_lid = .lid_agf,
@@ -827,8 +842,7 @@ lb_rest <-
             n.sids = n(),
             effort = sum(effort, na.rm = TRUE),
             catch_total = sum(catch_total, na.rm = TRUE),
-            sweeps = mean(sweeps, na.rm = TRUE),
-            plow_width = mean(plow_width, na.rm = TRUE),
+            width = mean(width, na.rm = TRUE),
             .groups = "drop") %>%
   mutate(t1 = ymd_hms(paste0(year(date), "-", month(date), "-", day(date),
                              " 00:00:00")),
@@ -838,6 +852,15 @@ lb <-
   bind_rows(lb_t1_t2,
             lb_rest) |> 
   arrange(vid, t1)
+
+# thought I got rid of this:
+lb <- 
+  lb |> 
+  mutate(width = case_when(is.nan(width) ~ NA,
+                           .default = width)) |> 
+  # just to get rid of some invalids
+  mutate(width = case_when(gid %in% c(1:5, 10, 11:14, 16:22) ~ NA,
+                           .default = width))
 
 # Save -------------------------------------------------------------------------
 
