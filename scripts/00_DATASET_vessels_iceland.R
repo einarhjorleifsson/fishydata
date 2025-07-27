@@ -129,7 +129,7 @@ vessel_ISL |> filter(vid %in% 3700:4999 & flag == "ISL")
 vessel_ISL |> filter(!vid %in% 3700:4999) |> count(flag)
 vessel_ISL |>
   filter(vid %in% 3700:4999) |>
-  filter(is.na(flag))
+  filter(flag == "UNK")
 
 vessel_ISL <-
   vessel_ISL |>
