@@ -37,7 +37,7 @@ library(nanoparquet)
 library(arrow)
 options(knitr.kable.NA = '')
 library(mar)
-source("R/ramb_functions.R")
+
 con <- connect_mar()
 
 # a stk summary helper function
