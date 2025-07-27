@@ -12,13 +12,13 @@ format:
 
 This document is trying to emulate the process behind the (2024) datacall. Some deviations in the code flow, in particular if less terse approach can easily be implemented.
 
-### libraries
+### libraries and functions
 
 ```{r}
 library(vmstools)
 library(sf)
 library(tidyverse)
-source("~/stasi/ices/ICES-VMS-and-Logbook-Data-Call/0_global_functions.R")
+source("~/stasi/ices/ICES-VMS-and-Logbook-Data-Call_2025-04-09/0_global-functions.R")
 library(conflicted)
 conflicts_prefer(dplyr::filter, dplyr::lag)
 rb_st_keep <- function(x, y) {
@@ -85,16 +85,6 @@ harbours <-
                crs = 4326) |> 
   sf::st_buffer(dist = 3000) |>  # radius
   dplyr::select(harbour)
-#sf_use_s2(FALSE)
-# may use
-dictionary <- 
-  tribble(~iso, ~vt,
-          "dttm", "SI_DATIM",
-          "date", "SI_DATE",
-          "time", "SI_TIME",
-          "vid", "VE_REF",
-          "D1", "FT_DDAT",
-          "D2", "FT_LDAT")
 ```
 
 ### Uses vmstools dataset

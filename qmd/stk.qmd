@@ -1,0 +1,284 @@
+---
+title: "STK data - short overview"
+author: Einar Hjörleifsson
+echo: true
+format:
+  html:
+    code-fold: true
+---
+
+```{r}
+library(mar)
+library(tidyverse)
+library(duckdbfs)
+source(here::here("R/ramb_functions.R"))
+con <- connect_mar()
+trail <- tbl_mar(con, "stk.trail")
+mobile <- 
+  tbl_mar(con, "stk.mobile") |> 
+  collect() |> 
+  janitor::remove_empty(which = "cols") |> 
+  janitor::remove_constant()
+```
+
+
+### The trail (main) table
+
+A quick spatial view:
+
+```{r}
+dx <- 0.05
+dy <- dx / 2
+open_dataset(here::here("data/ais/stk-raw")) |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y) |> 
+  summarise(n = sqrt(n())) |> 
+  collect() ->
+  g
+g |> 
+  filter(between(x, -40, 20),
+         between(y,  50, 70)) |> 
+  mutate(n = ifelse(n > 50, 50, n)) |> 
+  ggplot(aes(x, y, fill = n)) +
+  theme_bw() +
+  geom_tile() +
+  scale_fill_viridis_c(option = "inferno", direction = +1) +
+  coord_quickmap() +
+  labs(x = NULL, y = NULL)
+```
+
+Basically we get:
+
+* All Icelandic vessels
+* All foreign vessels within a specified area (at minimum the Icelandic EEZ)
+
+The variables in the trail table:
+
+```{r}
+trail |> glimpse()
+```
+
+The following variables are constant or empty:
+
+* comsystemid
+* msgtype
+* altitude
+* status
+
+The number of records and distinct mobileid by year is as follows:
+
+```{r}
+trail |> 
+  mutate(year = year(posdate)) |> 
+  filter(between(year, 2007, 2025)) |> 
+  group_by(year) |> 
+  summarise(pings_millions = n() / 1e6,
+            n_mobileid = n_distinct(mobileid),
+            .groups = "drop") |> 
+  collect() |> 
+  gather(var, val, -year) |> 
+  ggplot(aes(year, val)) +
+  geom_point() +
+  facet_wrap(~ var, scales = "free_y") +
+  labs(x = NULL, y = NULL)
+```
+
+```{r}
+trail |> 
+  group_by(mobileid) |> 
+  summarise(n = n(),
+            .groups = "drop") |> 
+  collect() |> 
+  arrange(n) ->
+  d
+
+d |> 
+  mutate(chop = santoku::chop(n, breaks = 2^(0:floor(log(20000, 2))))) |> 
+  count(chop) |> 
+  mutate(Proportion = n / sum(n),
+         Cumulative = cumsum(Proportion)) |> 
+  select(chop, Proportion, Cumulative) |> 
+  gather(var, val, -chop) |> 
+  ggplot(aes(val, chop, colour = var)) +
+  geom_point() +
+  labs(x = "Proportion", y = "Number of pings", colour = "Statistics",
+       caption = "Lowest cumulative same as proportion") +
+  expand_limits(x = 0) +
+  scale_colour_brewer(palette = "Set1")
+```
+
+### Whats this mobile?
+
+Here we will explore the mobile-table:
+
+```{r}
+mobile |> glimpse()
+```
+
+So we basically have:
+
+* ~31000 records
+* The mobileid consitutes a unique combination of localid-globalid
+* 4 datetime variables!
+
+Plotting the 4 datetimes against the sequential numerical value of mobileid we get: 
+
+```{r}
+mobile |> 
+  select(mobileid, contactdate, registration, moddate, recdate) |> 
+  gather(var, date, -mobileid) |> 
+  ggplot(aes(mobileid, date)) +
+  geom_point(size = 0.1) +
+  facet_wrap(~ var)
+```
+
+So essentially the mobileid seems to be a sequential numerical that gets incremented each time a new localid-globalid record "enters the system".
+
+Doing similar checks things using the detail (trail) table:
+
+```{r}
+# Note: moddate is always the same as recdate 
+# trail |> filter(moddate != recdate)
+trail |> mutate(diff = case_when(recdate == moddate ~ "same",
+                                 recdate > moddate ~ "bigger",
+                                 recdate < moddate ~ "smaller",
+                                 .default = "something else")) |> 
+  count(diff)
+trail |> 
+  group_by(mobileid) |>
+  summarise(recdate = min(recdate),
+            moddate = min(moddate),
+            .groups = "drop") |> 
+  collect() |> 
+  gather(var, date, -mobileid) |> 
+  ggplot(aes(mobileid, date)) +
+  geom_point(size = 0.1) +
+  facet_wrap(~ var, scales = "free_y")
+```
+
+
+## What type of values does globalid have?
+
+```{r}
+MID <-
+  nanoparquet::read_parquet(here::here("data/auxillary/maritime_identification_digits.parquet")) |>
+  # used for classifying likely incomplete mmsi-signals
+  mutate(MID_child = paste0("98", MID),
+         MID_aid = paste0("99", MID))
+## Call sign prefix - flag state
+cs.prefix <-
+  nanoparquet::read_parquet(here::here("data/auxillary/callsign_prefix.parquet")) |>
+  # critical, lot of mess with TF in stk localid and globalid
+  filter(cs_prefix != "TF")
+fixed <-
+  c("Surtseyja", "Straumnes", "Steinanes", "Haganes_K", "Bakkafjar",
+    "Laugardal", "BorgfjE P", "Gemlufall", "Straumduf", "Eyrarhlid",
+    "Hvalnes", "Straumm?l", "V_Blafj P", "Isafj.dju", "Rey?arfjo",
+    "VidarfjAI", "KLIF AIS",  "VadlahAIS", "Hafell_AI", "TIND_AIS",  "Storhof?i",
+    "Helguv", "Laugarb.f", "Grimseyja", "G.skagi",   "Grindavik", "Hornafjar",
+    "Flateyjar", "Kogurdufl", "Blakkur.d", "Bakkafjor", "Hvalbakur", "SUGANDI_A",
+    "TJALDANES",  "Snaefj1",
+    "Snaefj2", "Lande", "Sjomsk", "TJALD.NES", "illvid_p", "BLAKKSNES", "V_Sfell B",
+    "HOF", "Illvi?rah", "Miðfegg P", "BASE11", "Borgarfj ",
+    "V_Hofsos", "V_Hofsos ", "Arnarfjor", "Trackw", "SUGANDAFJ",
+    "BORGARÍS", "BORGARIS", "BORGARIS0", "BORGARIS1",
+    "ThverfAIS",
+    "TEST",
+    "Hvannadal", "Tjaldanes", "BorglAIS", "HvalnAIS", "Midf_AIS",
+    "Hellish A", "GreyAIS", "Berufjor?",
+    "Baeir", "Frodarh_A", "Onundarfj", "HusavikAI", "Haukadals",
+    "Drangsnes", "Hofdahusa", "Djupiv-AI", "Dyrafjor?", "Faskru?sf",
+    "Fossfjor?", "Hvestudal", "Hringsdal", "Bakkafj-d", "Mulagong",
+    "Grnipa P", "Haenuvk P", "Bolafj P", "Ennish P", "Grimsey P",
+    "Frodarh P", "Haoxl B", "Hafell P", "Vidarfj P", "Djupiv P",
+    "Blafj P", "Sigmundar", "Tjnes P", "Sfell P", "Hellish P",
+    "Gvkurfj P", "Klif P", "Thverfj B", "Klif B", "Grimsey B",
+    "Frodarh B", "Hvalnes P", "Haoxl P", "Grnipa B", "Illvidh P",
+    "FLATEYRI_", "Hellish B", "Husavik B", "Hofsos P", "Faskra?sf",
+    "Husavik P", "Tjornes P", "Thorbj B", "Borgarh-P", "Baeir B",
+    "VadlahP", "Thverfj P", "Dalvik P", "Godat-P", "HafellAIS",
+    "Bjolfur P", "Ennish B", "Thorbj P", "Hraunh P", "Gufusk P",
+    "Lambhgi P", "Fri?rik A", "Baeir P", "Flatey du", "Fellsgg1P",
+    "Fellsgg2P", "Akurtr B", "Midfell-P", "Horgargru", "Borgarl P",
+    "Haenuvk B", "Gagnhdi P", "Hvalnes B", "HVestudal", "Gildruh B",
+    "Sfell B", "Gagnhdi B", "BorgfjE B", "Spolur-P", "Klakkur P",
+    "KOLBEINSE", "Stykkh P", "Tjnes B", "Kvigindis", "Dufl_GRV_",
+    "Fell P", "Steinny-P", "Stokksn P", "Tjorn P", "Kopasker",
+    "Akreyri P", "Grima P", "Dalatgi B", "ThverfjP", "Rifssker_",
+    "Dalatgi P", "Tjorn B", "Kolmuli_K", "Vattarnes", "Thorbjorn",
+    "Husavik", "Hafranes_", "Drangaj_P", "Hrisey", "Hofsos",
+    "Midfegg P", "Midf P", "Gufunes P", "Mi?fegg P", "Dalvík P",
+    "Dalvik", "Borgfj E", "Straumn-A", "Talknaf P",
+    "Steinny", "TILK", "ThverfjP1", "Heidar-P", "Vadlaheid",
+    "Talknaf B", "BLAKK_AIS", "Mork-P", "VPN_Bauja",
+    "PF7567", "Daltat", "AEDEY AIS", "Borgfj E",
+    # should really use the mobile id here, at least it is easier
+    #  because that is how things are checked iteratively
+    "2515036", "2311200", "2311400", "2573900", "2311500",
+    "2515071", "25150051", "2314000",
+    "251510120",    # Skipstjóraskólinn
+    "231140005",
+    "231140003",
+    "251999898",
+    "231140004",
+    "231140006",
+    "231140001",
+    "231140002",
+    "251513130",
+    "xxx5",
+    "103984",
+    "Borgfj E",
+    "Borgfj E ",
+    "BLAKK_OLD",
+    "Gufunes B",
+    "Blondos P",
+    "Mork P",
+    "Va?lahei?"
+  )
+kvi <-
+  c("Eyri_Kvi_", "Kvi_Skotu", "Kvi_Baeja", "Bjarg_Kvi", "Sjokvi-4", "Sjokvi-3",
+    "Kvi-0 Hri", "Sjokvi-2", "Kvi_Sande", "Kvi_Fenri", "Sjokvi",
+    "Y.Kofrady")
+hafro <-
+  c("Hafro_Str", "Hafro_O2_", "Hafro_CO2", "Hafro_H11", "Hafro_H20", "Hafro_Hva",
+    "Hafro_duf", "AfmHafro_", "Afm_Hafro", "Hafro_W.V", "Hafro_W.V ", "afm_Hafro",
+    "Rannsokn_")
+v_drop_na <- function(x) {
+  x[!is.na(x)]
+}
+v <- 
+  nanoparquet::read_parquet(here::here("data/vessels/vessels_iceland.parquet"))
+mobile |> 
+  left_join(trail |> count(mobileid, name = "pings") |> collect()) |> 
+  rename(g = globalid) |> 
+  filter(!is.na(g)) |> 
+  mutate(
+    type =
+      case_when(is.na(pings) ~ "no trail",
+                g %in% fixed ~ "fixed",
+                g %in% kvi ~ "kvi",
+                g %in% hafro ~ "hafro",
+                g %in% v_drop_na(v$cs) ~ "cs_isl",
+                g %in% v_drop_na(v$mmsi) ~ "mmsi_isl",
+                g %in% v_drop_na(v$uid) ~ "uid_isl",
+                str_sub(g, 1, 2) %in% cs.prefix$cs_prefix &
+                  !numbers_only(str_trim(g)) &
+                  !str_starts(g, "MOB_")  ~ "cs", 
+                numbers_only(g) & str_sub(g, 1, 5) %in% MID$MID_child ~ "mmsi_child",
+             numbers_only(g) & str_sub(g, 1, 5) %in% MID$MID_aid ~ "mmsi_aid",
+             numbers_only(g) & nchar(g) == 9 ~ "mmsi",
+             g == localid & g %in% as.character(v_drop_na(v$vid)) ~ "vid-vid",
+             tolower(localid) %in% c("unkown", "unknown") & g %in% as.character(v_drop_na(v$vid)) ~ "unknown-vid",
+             str_sub(g, 1, 4) %in% v_drop_na(v$cs) & str_detect(toupper(g), "NET") ~ "cs_NET",
+             str_sub(g, 1, 4) %in% v_drop_na(v$cs) & str_ends(g, "2") ~ "cs_2",
+             str_sub(g, 1, 4) %in% as.character(v$vid) & str_detect(toupper(g), "NET") ~ "vid_NET",
+             str_sub(g, 1, 2) %in% cs.prefix$cs_prefix ~ "cs_prefix",
+             
+                .default = "something else")) |> 
+  count(type) |> 
+  arrange(-n) |> 
+  knitr::kable(caption = "Non-exhaustive classification of globalid - number of observations")
+```
+
+

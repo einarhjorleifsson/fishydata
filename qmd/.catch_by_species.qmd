@@ -1,0 +1,281 @@
+---
+title: "Af fótspori fiskibotnvörpu"
+---
+
+## Techinicalities
+
+* This document show only limited maps
+* Makes links to more detail maps
+* Unless one solves linking shiny into document
+
+## Fororð
+
+Fiskibotnvörpuveiðar hafa lengi verið umdeildar og hefur sú ... magnast með tíma.
+Stjórnvöld hafa á síðari tímum ... egosystem based approach to fisherise
+...
+
+Hér er gerð tilraun til að skoða umfang fiskibotnvörpuveið í Íslenskri lögsögu síðustu xxx ár
+
+## Gögnin
+
+Í þessum stúf er fótspor fiskibotnvörpu á Íslandsmiðum skoðuð. Gögnin sem eru notuð eru eftirfarandi:
+
+* Sjálvirk tilkynningaskylda skipa
+* Gögn frá Vegagerðinni frá árunum 2008 til 2024 sem innihalda tíma, staðsetningu (lengd og breiddargráðu), hraða og stefnu allra skipa innan Íslenskrar lögsögu
+* Gögn frá PAME frá árunum YYYYY til 2024 sem innihalda tíma og staðsetningu 
+
+## Annmarkar
+
+* ... consider this a 1st go, the devil in the detail can be sorted out later
+
+## Núverandi svæði þar sem fiskibotnvarpa er bönnuð allt árið
+
+* Landhelgin og skipaflokkalögin
+* OECM
+* Kórall
+* Annað
+* ...
+
+Setja í samhengi við heildarlögsögu og svo dýpissvið
+
+## Núverandi fótspor
+
+* Flatarmál per ár
+* Flatarmál yfir allt tímabilið
+* Flatarmál í samaburði við EEZ og dýptarsvið
+* ...
+
+## Hugleiðingar um takmarkanir á veiðisvæðum
+
+### Út frá heildarafla
+
+### Að teknu tilliti til tegunda
+
+### Að teknu tillit til einstakra skipa
+
+### Að teknu tilliti til ársfjórðunga
+
+...
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(arrow)
+library(duckdb)
+ais <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  # Not in harbour
+  filter(.cid > 0,                           # .cid positive -> not in harbour
+         (whack == FALSE | is.na(whack))) |> # need to fix this
+  # Fishing occurred on date
+  filter(between(year, 2008, 2024)) |> 
+  select(.cid, vid, time, speed, lon, lat, t1, t2, agf_gid, gid_trip, dd, dt, .sid) |> 
+  filter(gid_trip == 6)                      # Bottom fish trawl
+# catch
+catch <- open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
+
+rb_cap <- function(x, Q = 0.975) {
+  q = quantile(x, Q)
+  ifelse(x > q, q, x)
+}
+
+dx <- 0.005
+dy <- dx / 2   # grid resolution approximately 275 x 275 meters
+g <- 
+  ais |> 
+  filter(between(speed, 2.625, 5.500)) |> 
+  filter(between(time, t1, t2)) |> 
+  #inner_join(catch |> filter(sid == 5),
+  #           by = join_by(.sid)) |> 
+  inner_join(catch |> 
+               #filter(sid == 6) |> 
+               group_by(.sid) |> 
+               summarise(catch = sum(catch, na.rm = TRUE)) |> 
+               mutate(catch = rb_cap(catch, 0.90))) |> 
+  group_by(.sid) |> 
+  mutate(catch = catch / n()) |> 
+  ungroup() |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y) |> 
+  summarise(n = n(),
+            dt = sum(dt, na.rm = TRUE) / 60,
+            catch = sum(catch, na.rm = TRUE),
+            .groups = "drop") |> 
+  collect() |> 
+  arrange(catch) |> 
+  mutate(pcatch = catch / sum(catch),
+         ccatch = cumsum(pcatch) * 100)
+library(terra)
+r <- 
+  g |> 
+  mutate(ccatch = ifelse(ccatch <= 0, NA, ccatch)) |> 
+  filter(dt > 1,              # at least 1 minutes of effort per pixel
+         catch > 0,
+         between(x, -30, -10),
+         between(y, 62, 68.5)) |> 
+  mutate(dt = rb_cap(dt, 0.99),
+         catch = rb_cap(catch, 0.975)) |> 
+  select(x, y, z = ccatch) |>
+  rast(type = "xyz",
+       crs = "epsg:4326")
+library(stars)
+library(tmap)
+# library(tmap.mapgl)
+tmap_mode("view")
+#values(r) <- log(values(r))  # just to get some contrast in the map
+s <- r |> st_as_stars()
+t <- 
+  tm_shape(s) +
+  tm_raster("z", palette = "-inferno")
+t
+
+m <- 
+  t |> 
+  tmap_leaflet()
+class(m)
+```
+
+
+```{r}
+# area calculation
+calc_area <- function(xyz) {
+  xyz |> 
+    rast(type = "xyz",
+         crs = "epsg:4326") |> 
+    st_as_sf() |> 
+    mutate(area = st_area(geometry),
+           area = as.numeric(area)) |> 
+    st_drop_geometry() |> 
+    summarise(area = sum(area) / 1e6)
+}
+
+
+dx <- 0.001
+dy <- dx / 2   # grid resolution approximately 275 x 275 meters
+g <- 
+  ais |> 
+  filter(between(speed, 2.625, 5.500)) |> 
+  filter(between(time, t1, t2)) |> 
+  #inner_join(catch |> filter(sid == 5),
+  #           by = join_by(.sid)) |> 
+  inner_join(catch |> 
+               #filter(sid == 6) |> 
+               group_by(.sid) |> 
+               summarise(catch = sum(catch, na.rm = TRUE))) |>
+  filter(catch > 0) |> 
+  filter(between(lon, -30, -10),
+         between(lat, 62, 68.5)) |> 
+  group_by(.sid) |> 
+  mutate(catch = catch / n()) |> 
+  ungroup() |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(x, y) |> 
+  summarise(n = n(),
+            dt = sum(dt, na.rm = TRUE) / 60,
+            catch = sum(catch, na.rm = TRUE),
+            .groups = "drop") |> 
+  collect() |> 
+  filter(dt > 1) |>               # at least 1 minutes of effort per pixel
+  arrange(catch) |> 
+  mutate(pcatch = catch / sum(catch),
+         ccatch = cumsum(pcatch) * 100)
+library(stars)
+library(terra)
+s <- 
+  g |> 
+  select(x, y, z = catch) |> 
+  mutate(z = rb_cap(z, 0.95)) |> 
+  rast(type = "xyz",
+         crs = "epsg:4326") |> 
+  st_as_stars()
+plot(s)
+s |> write_stars("s.tif")
+
+res <- list()
+counter <- 0
+for(i in c(2.5, seq(5, 95, by = 5), 99)) {
+  print(i)
+  counter <- counter + 1
+  res[[counter]] <- 
+    g |> 
+    filter(ccatch >= i) |> 
+    select(x, y, z = ccatch) |>
+    rast(type = "xyz",
+         crs = "epsg:4326") |> 
+    st_as_stars() |> 
+    st_as_sf() |> 
+    mutate(area = st_area(geometry),
+           area = as.numeric(area)) |> 
+    st_drop_geometry() |> 
+    summarise(area = sum(area) / 1e6) |> 
+    mutate(cut = i)
+}
+bind_rows(res) |> 
+  mutate(area = area / max(area) * 100) |> 
+  ggplot(aes(area, 100 - cut)) +
+  #geom_point() +
+  geom_line() +
+  expand_limits(x = 0, y = 0) +
+  scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+  scale_y_continuous(breaks = seq(0, 100, by = 10)) +
+  coord_equal()
+```
+
+```{r}
+# visualize above
+library(leaflet)
+leafbase <- 
+  leaflet::leaflet() %>% 
+  setView(lng = -18,
+          lat =  65,
+          zoom = 5) |> 
+  #leaflet::addTiles() %>%
+  #leaflet::addPolylines(data = z400, opacity = 1, fillOpacity = 1, weight = 1) |> 
+  # leaflet::addPolylines(data = z300, opacity = 1, fillOpacity = 1, weight = 1) |> 
+  # leaflet::addPolylines(data = z200, opacity = 1, fillOpacity = 1, weight = 1) |>
+  #leaflet::addPolylines(data = z150, opacity = 1, fillOpacity = 1, weight = 1) |>
+  #leaflet::addPolylines(data = z100, opacity = 1, fillOpacity = 1, weight = 1) |>
+  #leaflet::addPolylines(data = z075, opacity = 1, fillOpacity = 1, weight = 1) |>
+  addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/haf/050m/{z}/{x}/{-y}.png",
+           group = "050m",
+           options = tileOptions(minZoom = 5, maxZoom = 16)) |>
+  addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/haf/020m/{z}/{x}/{-y}.png",
+           group = "020m",
+           options = tileOptions(minZoom = 5, maxZoom = 16)) |>
+  addTiles(urlTemplate = "https://heima.hafro.is/~einarhj/tiles/lhg/{z}/{x}/{-y}.png",
+           group = "lhg",
+           options = tileOptions(minZoom = 0, maxZoom = 16))
+leafbase |> 
+  addRasterImage(r, group = "Catch", project = FALSE) |> 
+  addLayersControl(overlayGroups = c("Catch"),
+                   options = layersControlOptions(collapsed = FALSE))
+```
+
+```{r}
+# A better way would be to rank each tow in terms of cumulative weight
+r <- 
+  g |> 
+  mutate(ccatch = ifelse(ccatch <= 60, NA, ccatch)) |> 
+  filter(dt > 1,              # at least 1 minutes of effort per pixel
+         catch > 0,
+         between(x, -30, -10),
+         between(y, 62, 68.5)) |> 
+  mutate(dt = rb_cap(dt, 0.99),
+         catch = rb_cap(catch, 0.975)) |> 
+  select(x, y, z = ccatch) |>
+  rast(type = "xyz",
+       crs = "epsg:4326")
+#values(r) <- santoku::chop(values(r), breaks = seq(0, 100, by = 10))
+#pal <- color(
+#  palette = "YlGnBu",
+#  domain = countries$gdp_md_est
+#)
+leafbase |> 
+  addRasterImage(r, group = "Catch", project = FALSE) |> 
+  addLayersControl(overlayGroups = c("Catch"),
+                   options = layersControlOptions(collapsed = FALSE)) |> 
+  addLegend()
+```
+

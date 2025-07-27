@@ -1,0 +1,11 @@
+---
+title: "update_trails"
+---
+
+
+* scripts/05_DATASET_ais_stk-to-parquet.R
+  * Just dumps the stk data to parquet
+  * Something that could be done e.g. once per week or day
+* scripts/01_DATASET_vessel_stk-vid-match.R
+  * 
+* 
