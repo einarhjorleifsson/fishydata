@@ -121,7 +121,7 @@ if(FALSE) {
     omar::lb_mobile(con, trim = FALSE) |>
     filter(year %in% YEARS,
            # only towing gear
-           gid %in% c(5, 6, 7, 8, 9, 10, 12, 14, 15, 38, 40)) |> 
+           gid %in% c(5, 6, 7, 8, 9, 14, 15, 38, 40)) |> 
     # limit to Icelandic vesssels
     inner_join(q_vessels_icelandic %>% select(vid),
                by = join_by(vid)) |> 
@@ -711,8 +711,15 @@ LGS <-
                            !is.na(plow_width) ~ plow_width,
                            .default = NA)) |> 
   select(-c(sweeps, plow_width))
-         
 
+# One more sanity stuff         
+CATCH <- 
+  CATCH |> 
+  group_by(.sid, lb_base, sid) |> 
+  reframe(catch = sum(catch, na.rm = TRUE)) |> 
+  filter(!is.na(catch)) |> 
+  filter(catch > 0) |> 
+  ungroup()
 
 
 # 6. Save the stuff ------------------------------------------------------------
