@@ -803,7 +803,9 @@ lb |>
 
 lb <- 
   lb |> 
-  select(.sid, lb_base, vid, gid, date, t1, t2, datel, effort, effort_unit,
+  select(.sid, lb_base, vid, gid, date, t1, t2, datel, 
+         lon, lat,
+         effort, effort_unit,
          width, catch_total,
          agf_date = date_agf,
          agf_gid = gid_agf,
@@ -855,6 +857,13 @@ lb_rest <-
                              " 00:00:00")),
          t2 = ymd_hms(paste0(year(date), "-", month(date), "-", day(date),
                              " 23:59:00")))
+# get back the lon-lat for the first .sid
+lb_rest <-
+  lb_rest |> 
+  left_join(lb |> select(.sid, lb_base, lon, lat),
+            by = join_by(.sid, lb_base))
+
+
 lb <-
   bind_rows(lb_t1_t2,
             lb_rest) |> 
@@ -871,8 +880,15 @@ lb <-
 
 # Save -------------------------------------------------------------------------
 
-lb |> write_parquet("~/stasi/fishydata/data/logbooks/station-for-ais.parquet")
-ca |> write_parquet("~/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
+lb <- 
+  lb |> 
+  filter(!is.na(lon)) |> 
+  filter(!is.na(lat)) 
+lb |> 
+  write_parquet("~/stasi/fishydata/data/logbooks/station-for-ais.parquet")
+ca |> 
+  inner_join(lb |> select(.sid, lb_base)) |> 
+  write_parquet("~/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
 
 
 # 8. Info ----------------------------------------------------------------------
