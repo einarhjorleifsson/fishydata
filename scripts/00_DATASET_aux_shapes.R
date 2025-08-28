@@ -81,3 +81,27 @@ eusm <- read_rds("data/auxillary/eusm.rds")
 eusm |> st_write("data/auxillary/eusm.gpkg")
 system("rm data/auxillary/eusm.rds")
 
+# ASTD area --------------------------------------------------------------------
+# https://pame.is/ourwork/arctic-shipping/current-shipping-projects/astd
+#  Got the following in a mail from hjalti@pame.is
+a <- 
+  "data-raw/ASTD_Cut/ASTD_EEZ_SAR_merged_and_cut_08032021.shp" |> 
+  read_sf() |> 
+  st_transform(crs = 3575)
+a |> 
+  mutate(name = "astd") |> 
+  select(name) |> 
+  st_write("data/auxillary/ASTD_area.gpkg", append = FALSE)
+
+
+# ICES rectangles - from ices.dk -----------------------------------------------
+tmpdir <- tempdir()
+unzip("data-raw/ices_spatial/ICES_StatRec_mapto_ICES_Areas.zip", exdir = tmpdir)
+fil <- dir(tmpdir)
+fil <- fil[str_detect(fil, ".shp")]
+fil <- paste0(tmpdir, "/", fil)
+ICESrectangles <- 
+  fil |> 
+  sf::st_read() |> 
+  janitor::clean_names()
+ICESrectangles |> sf::write_sf("data/auxillary/ICESrectangles.gpkg")

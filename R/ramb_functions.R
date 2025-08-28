@@ -219,7 +219,8 @@ rb_leaflet_raster <- function(g) {
 }
 
 
-cap_value <- function(x, q = 0.975) {
+rb_cap_value <- function(x, q = 0.975) {
   Q <- quantile(x, q)
   ifelse(x > Q, Q, x)
 }
+

@@ -3,7 +3,14 @@
 .RData
 .Ruserdata
 
+scripts/older
+
 data
+data-raw/depth
+data-raw/gear
+data-raw/gfw
+data-raw/logbooks
+data-raw/norway
 data-raw/harbours
 data-raw/older
 data-raw/vessels
