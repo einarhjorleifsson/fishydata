@@ -1,0 +1,2390 @@
+---
+title: "ICES VMS datacall quality check report"
+subtitle: "Country: `r params$country`<br>VE Session ID: `r params$ve_id`<br>LE Session ID: `r params$le_id`"
+date: "`r lubridate::now()`"
+params:
+  country: NULL
+  ve_id: NULL
+  le_id: NULL
+  data_dir: NULL
+output: 
+  html_document: 
+    fig_width: 9
+    fig_height: 4
+    toc: yes
+    toc_float: true
+---
+<!-- QCTEMPLATE: header -->
+
+
+```{r setup, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      comment = NA)
+```
+
+```{r setup2}
+library(tidyverse)
+library(knitr)
+library(icesVocab)
+library(DT)
+library(maps)
+library(kableExtra)
+library(cowplot)
+library(tidyr)
+library(jsonlite)
+options(digits = 4)
+
+# Get parameters from YAML header
+country <- as.character(params$country)
+ve_id <- as.character(params$ve_id)  
+le_id <- as.character(params$le_id)
+
+# Load config to get data directory (since R sessions are isolated)
+config <- read_json("QC/config.json", simplifyVector = TRUE)
+
+# Construct file paths - use absolute paths to avoid working directory issues
+veDataPath <- file.path(getwd(), config$data_dir, paste0("ICES_VE_", country, ".csv"))
+leDataPath <- file.path(getwd(), config$data_dir, paste0("ICES_LE_", country, ".csv"))
+
+
+# Functions --------------------------------------------------------------------
+grade <-function (x, dx) {
+  if (dx > 1) 
+    warning("Not tested for grids larger than one")
+  brks <- seq(floor(min(x)), ceiling(max(x)), dx)
+  ints <- findInterval(x, brks, all.inside = TRUE)
+  x <- (brks[ints] + brks[ints + 1])/2
+  return(x)
+}
+
+`an` <-
+function(x){return(as.numeric(x))}
+
+csq2pos <- function(d, dx = 0.05) {
+  bind_cols(d,
+            CSquare2LonLat(d$csq, degrees = dx) %>% 
+              select(lon = SI_LONG,
+                     lat = SI_LATI)) %>% 
+    as_tibble()
+}
+
+
+# borrowed from the geo-package
+d2ir <- function (lon, lat = NULL, useI = FALSE) {
+  
+  # if lon is a dataframe
+  if (is.null(lat)) {
+    lon <- lat$lon
+    lat <- lat$lat
+  }
+  lat <- lat + 1e-06
+  lon <- lon + 1e-06
+  outside <- lat < 36 | lat >= 85.5 | lon <= -44 | lon > 68.5
+  if (any(outside)) 
+    warning("Positions outside of ICES statistical area")
+  lat <- floor(lat * 2) - 71
+  lat <- ifelse(lat < 10, paste("0", lat, sep = ""), lat)
+  if (useI) 
+    lettersUsed <- LETTERS[1:12]
+  else lettersUsed <- LETTERS[c(1:8, 10:13)]
+  lon1 <- lettersUsed[(lon + 60)%/%10]
+  lon2 <- ifelse(lon1 == "A", floor(lon%%4), floor(lon%%10))
+  ir <- paste(lat, lon1, lon2, sep = "")
+  ir[outside] <- NA
+  ir
+}
+ir2d <- function (ir, useI = FALSE) {
+  lat <- substring(ir, 1, 2)
+  lat <- as.numeric(lat)
+  lat <- (lat + 71)/2 + 0.25
+  lon1 <- substring(ir, 3, 3)
+  lon1 <- toupper(lon1)
+  lon1 <- match(lon1, LETTERS)
+  if (!useI) 
+    lon1 <- ifelse(lon1 > 8, lon1 - 1, lon1)
+  lon1 <- lon1 - 2
+  lon2 <- substring(ir, 4)
+  lon2 <- as.numeric(lon2)
+  lon <- ifelse(lon1 < 0, -44 + lon2 + 0.5, -40 + 10 * lon1 + 
+                  lon2 + 0.5)
+  data.frame(lat = lat, lon = lon)
+}
+
+CSquare2LonLat <- function(csqr,degrees){
+
+  ra          <- 1e-6 #Artificial number to add for rounding of 5'ves (round(0.5) = 0, but in Excel (where onversion comes from, it is 1)onversion comes from, it is 1)  
+  chars       <- an(nchar(csqr))
+  tensqd      <- an(substr(csqr,1,1))+ra;      gqlat     <- (round(abs(tensqd-4)*2/10)*10/5)-1
+  tenslatd    <- an(substr(csqr,2,2))+ra;      gqlon     <- (2*round(tensqd/10)-1)*-1
+  tenslond    <- an(substr(csqr,3,4))+ra
+  unitsqd     <- an(substr(csqr,6,6))+ra;      iqulat    <- round(unitsqd*2/10)
+  unitslatd   <- an(substr(csqr,7,7))+ra;      iqulon    <- (round((unitsqd-1)/2,1) - floor((unitsqd-1)/2))*2
+  unitslond   <- an(substr(csqr,8,8))+ra
+  tenthsqd    <- an(substr(csqr,10,10))+ra;    iqtlat    <- round(tenthsqd*2/10)
+  tenthslatd  <- an(substr(csqr,11,11))+ra;    iqtlon    <- (round((tenthsqd-1)/2,1) - floor((tenthsqd-1)/2))*2
+  tenthslond  <- an(substr(csqr,12,12))+ra
+  hundqd      <- an(substr(csqr,14,14))+ra;    iqhlat    <- round(hundqd*2/10)
+  hundlatd    <- an(substr(csqr,15,15))+ra;    iqhlon    <- (round((hundqd-1)/2,1) - floor((hundqd-1)/2))*2
+  hundlond    <- an(substr(csqr,16,16))+ra
+  reso        <- 10^(1-floor((chars-4)/4))-((round((chars-4)/4,1)-floor((chars-4)/4))*10^(1-floor((chars-4)/4)))
+
+  if(degrees < reso[1]) stop("Returning degrees is smaller than format of C-square")
+  if(degrees == 10){   
+    lat <- ((tenslatd*10)+5)*gqlat-ra                              
+    lon <- ((tenslond*10)+5)*gqlon-ra              
+  }
+  if(degrees == 5){    
+    lat <- ((tenslatd*10)+(iqulat*5)+2.5)*gqlat-ra
+    lon <- ((tenslond*10)+(iqulon*5)+2.5)*gqlon-ra 
+  }
+  if(degrees == 1){    
+    lat <- ((tenslatd*10)+ unitslatd+0.5)*gqlat-ra
+    lon <- ((tenslond*10)+ unitslond+0.5)*gqlon-ra 
+  }
+  if(degrees == 0.5){  
+    lat <- ((tenslatd*10)+ unitslatd + (iqtlat*0.5)+0.25)*gqlat-ra
+    lon <- ((tenslond*10)+ unitslond + (iqtlon*0.5)+0.25)*gqlon-ra
+  }         
+  if(degrees == 0.1){  
+    lat <- ((tenslatd*10)+ unitslatd + (tenthslatd*0.1)+0.05)*gqlat-ra
+    lon <- ((tenslond*10)+ unitslond + (tenthslond*0.1)+0.05)*gqlon-ra
+  }
+  if(degrees == 0.05){ 
+    lat <- ((tenslatd*10)+ unitslatd + (tenthslatd*0.1)+(iqhlat*0.05)+0.025)*gqlat-ra
+    lon <- ((tenslond*10)+ unitslond + (tenthslond*0.1)+(iqhlon*0.05)+0.025)*gqlon-ra
+  }
+  if(degrees == 0.01){ 
+    lat <- ((tenslatd*10)+ unitslatd + (tenthslatd*0.1)+(hundlatd*0.01)+0.005)*gqlat-ra
+    lon <- ((tenslond*10)+ unitslond + (tenthslond*0.1)+(hundlond*0.01)+0.005)*gqlon-ra
+}
+return(data.frame(SI_LATI=lat,SI_LONG=lon))}
+
+
+read_le <- function(file) {
+  data <- read.csv(file,
+                   stringsAsFactors = FALSE,
+                   header = FALSE,  # LE files don't have headers
+                   na.strings = "NULL") %>% 
+    tidyr::as_tibble()
+  
+  names(data) <- c("RecordType", "CountryCode", "Year", "Month", "NoDistinctVessels", 
+                   "AnonymizedVesselID", "ICESrectangle", "MetierL4", "MetierL5", 
+                   "MetierL6", "VesselLengthRange", "VMSEnabled", "FishingDays", 
+                   "kWFishingDays", "TotWeight", "TotValue")
+
+  # Add computed fields
+  data <- data %>%
+    mutate(
+      value = as.numeric(TotValue),
+      lon = ir2d(ICESrectangle)$lon,
+      lat = ir2d(ICESrectangle)$lat
+    )
+  
+  return(data)
+}
+
+read_ve <- function(file.loc) {  
+  data <- read.csv(file.loc, 
+                   stringsAsFactors = FALSE,
+                   header = TRUE,  # VE files have headers
+                   na.strings = "NULL")
+
+  # Convert to tibble
+  data <- tidyr::as_tibble(data)
+  
+  # Handle the C-square column name (R converts "C-square" to "C.square")
+  if ("C.square" %in% names(data)) {
+    data <- data %>% rename(Csquare = C.square)
+  }
+  
+  # Convert numeric columns to proper types
+  data <- data %>%
+    mutate(
+      Year = as.integer(Year),
+      Month = as.integer(Month),
+      NoDistinctVessels = as.integer(NoDistinctVessels),
+      AverageFishingSpeed = as.numeric(AverageFishingSpeed),
+      FishingHour = as.numeric(FishingHour),
+      AverageInterval = as.numeric(AverageInterval),
+      AverageVesselLength = as.numeric(AverageVesselLength),
+      AveragekW = as.numeric(AveragekW),
+      kWFishingHour = as.numeric(kWFishingHour),
+      TotWeight = as.numeric(TotWeight),
+      TotValue = as.numeric(TotValue),
+      AverageGearWidth = as.numeric(AverageGearWidth)
+    )
+  
+  # Handle the new fields that may or may not be present
+  if ("NumberOfRecords" %in% names(data)) {
+    data$NumberOfRecords <- as.integer(data$NumberOfRecords)
+  }
+  if ("SweptArea" %in% names(data)) {
+    data$SweptArea <- as.numeric(data$SweptArea)
+  }
+    if ("HabitatType" %in% names(data)) {
+    data <- data %>% rename(Habitat = HabitatType)
+  }
+  
+  return(as.data.frame(data))
+}
+# support tables ---------------------------------------------------------------
+lclass <- 
+  tribble(~lclass, ~length_class,
+          "A", "<8",
+          "B", "08-10",
+          "C", "10-12",
+          "D", "12-15",
+          "E", ">= 15")
+```
+
+```{r get-data}
+# Get data ---------------------------------------------------------------------
+ve <- read_ve(veDataPath)
+ve <- bind_cols(ve,
+            CSquare2LonLat(ve$Csquare, degrees = 0.05) %>% 
+              select(lon = SI_LONG,
+                     lat = SI_LATI)) %>% 
+    as_tibble()
+
+ve <- ve %>% 
+  filter(!is.na(lon)) %>% 
+  mutate(isq = d2ir(lat, lon))
+
+le <- read_le(leDataPath)
+
+#file <- veDataPath 
+# some bounds ------------------------------------------------------------------
+country <- unique(ve$CountryCode)
+spatBound <- list(xrange = range(ve$lon, na.rm = TRUE),
+                  yrange = range(ve$lat, na.rm = TRUE))
+spatCore  <- list(xrange = quantile(ve$lon, c(0.025, 0.975)),
+                  yrange = quantile(ve$lat, c(0.025, 0.975)))
+tempBound <- range(ve$Year, na.rm = TRUE)
+# some maps --------------------------------------------------------------------
+m <- map_data("world", xlim = spatBound$xrange, ylim = spatBound$yrange)
+map0 <- 
+  ggplot() +
+  theme_void() +
+  geom_polygon(data = m, aes(x = long, y = lat, group = group),
+               fill = "lightgray")
+map1 <- 
+  map0 +
+  coord_quickmap(xlim = spatBound$xrange, ylim = spatBound$yrange)
+map2 <- 
+  map0 +
+  coord_quickmap(xlim = spatCore$xrange, ylim = spatCore$yrange)
+```
+
+<!--------------------------
+Checks for vms/ais data
+------------------------ -->
+
+```{r logbook-checks}
+spatBoundLog <- list(xrange = range(le$lon, na.rm = TRUE),
+                     yrange = range(le$lat, na.rm = TRUE))
+tempBoundLog <- range(le$Year, na.rm = TRUE)
+```
+
+# VMS
+## Unit and scale checks
+
+```{r vms-validation-table}
+library(kableExtra)
+# Define expected ranges
+validation_ranges <- data.frame(
+  Parameter = c("AverageFishingSpeed", "AverageInterval", "AverageVesselLength", 
+                "AveragekW", "SweptArea", "AverageGearWidth"),
+  Min_Expected = c(1, 0.1666, 6, 0.001, 0, 0.008),
+  Max_Expected = c(6, 2.0, 148, 10000, NA, 11.5),
+  stringsAsFactors = FALSE
+)
+
+# Calculate summary statistics for VMS data
+vms_summary <- ve %>%
+  summarise(
+    AverageFishingSpeed_mean = round(mean(AverageFishingSpeed, na.rm = TRUE), 3),
+    AverageFishingSpeed_min = round(min(AverageFishingSpeed, na.rm = TRUE), 3),
+    AverageFishingSpeed_max = round(max(AverageFishingSpeed, na.rm = TRUE), 3),
+    
+    AverageInterval_mean = round(mean(AverageInterval, na.rm = TRUE), 3),
+    AverageInterval_min = round(min(AverageInterval, na.rm = TRUE), 3),
+    AverageInterval_max = round(max(AverageInterval, na.rm = TRUE), 3),
+    
+    AverageVesselLength_mean = round(mean(AverageVesselLength, na.rm = TRUE), 1),
+    AverageVesselLength_min = round(min(AverageVesselLength, na.rm = TRUE), 1),
+    AverageVesselLength_max = round(max(AverageVesselLength, na.rm = TRUE), 1),
+    
+    AveragekW_mean = round(mean(AveragekW, na.rm = TRUE), 0),
+    AveragekW_min = round(min(AveragekW, na.rm = TRUE), 0),
+    AveragekW_max = round(max(AveragekW, na.rm = TRUE), 0),
+    
+    SweptArea_mean = round(mean(SweptArea, na.rm = TRUE), 3),
+    SweptArea_min = round(min(SweptArea, na.rm = TRUE), 3),
+    SweptArea_max = round(max(SweptArea, na.rm = TRUE), 3),
+    
+    AverageGearWidth_mean = round(mean(AverageGearWidth, na.rm = TRUE), 3),
+    AverageGearWidth_min = round(min(AverageGearWidth, na.rm = TRUE), 3),
+    AverageGearWidth_max = round(max(AverageGearWidth, na.rm = TRUE), 3)
+  )
+
+# Reshape to long format for table creation
+validation_table <- data.frame(
+  Parameter = validation_ranges$Parameter,
+  Mean = c(vms_summary$AverageFishingSpeed_mean,
+           vms_summary$AverageInterval_mean,
+           vms_summary$AverageVesselLength_mean,
+           vms_summary$AveragekW_mean,
+           vms_summary$SweptArea_mean,
+           vms_summary$AverageGearWidth_mean),
+  Min = c(vms_summary$AverageFishingSpeed_min,
+          vms_summary$AverageInterval_min,
+          vms_summary$AverageVesselLength_min,
+          vms_summary$AveragekW_min,
+          vms_summary$SweptArea_min,
+          vms_summary$AverageGearWidth_min),
+  Max = c(vms_summary$AverageFishingSpeed_max,
+          vms_summary$AverageInterval_max,
+          vms_summary$AverageVesselLength_max,
+          vms_summary$AveragekW_max,
+          vms_summary$SweptArea_max,
+          vms_summary$AverageGearWidth_max),
+  Expected_Range = c("1-6 knots", "0.167-2.0 hours", "6-148 metres", 
+                     ">0, <10,000 kW", "≥0", "0.008-11.5 km"),
+  stringsAsFactors = FALSE
+)
+
+# Create flags for out-of-range values
+validation_table$mean_flag <- FALSE
+validation_table$min_flag <- FALSE
+validation_table$max_flag <- FALSE
+
+# Check each parameter
+for(i in 1:nrow(validation_table)) {
+  param <- validation_table$Parameter[i]
+  mean_val <- validation_table$Mean[i]
+  min_val <- validation_table$Min[i]
+  max_val <- validation_table$Max[i]
+  
+  min_expected <- validation_ranges$Min_Expected[validation_ranges$Parameter == param]
+  max_expected <- validation_ranges$Max_Expected[validation_ranges$Parameter == param]
+  
+  # Check mean (skip for SweptArea which has no range check)
+  if(param != "SweptArea") {
+    if(!is.na(min_expected) && !is.na(max_expected)) {
+      if(mean_val < min_expected || mean_val > max_expected) {
+        validation_table$mean_flag[i] <- TRUE
+      }
+    } else if(!is.na(max_expected)) {  # For kW (upper limit only)
+      if(mean_val >= max_expected) {
+        validation_table$mean_flag[i] <- TRUE
+      }
+    }
+  }
+  
+  # Check min values (including SweptArea for negative values)
+  if(!is.na(min_expected)) {
+    if(min_val < min_expected) {
+      validation_table$min_flag[i] <- TRUE
+    }
+  }
+  
+  # Check max values
+  if(!is.na(max_expected)) {
+    if(max_val > max_expected) {
+      validation_table$max_flag[i] <- TRUE
+    }
+  }
+}
+
+# Create the styled table
+validation_table %>%
+  select(Parameter, Mean, Min, Max, Expected_Range) %>%
+  kable(caption = "VMS Data Validation Summary - Flagged values may indicate unit conversion errors",
+        col.names = c("Parameter", "Mean", "Min", "Max", "Expected Range")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+  column_spec(2, background = ifelse(validation_table$mean_flag, "#ffcccc", "white")) %>%
+  column_spec(3, background = ifelse(validation_table$min_flag, "#ff9999", "white")) %>%
+  column_spec(4, background = ifelse(validation_table$max_flag, "#ff9999", "white"))
+```
+
+
+## Overall checks (fishing hours) {.tabset}
+
+
+### By month
+
+
+```{r by_month}
+ve %>% 
+  group_by(Year, Month) %>% 
+  summarise(FH = round(sum(FishingHour), 0),
+            .groups = "drop") %>% 
+  spread(Year, FH) %>% 
+  kable(caption = "Effort(fishing hours)")
+
+ve %>% 
+  group_by(Year, Month) %>% 
+  summarise(FH = sum(FishingHour),
+            .groups = "drop") %>% 
+  ggplot(aes(x = Year, y = FH, fill = factor(Month))) +
+  geom_col() +
+  scale_fill_viridis_d(name = "Month", option = "turbo") +
+  labs(x = NULL, y = "Fishing hours",
+       title = "Effort (fishing hours) by year and month") +
+  theme_minimal()
+```
+
+
+```{r pings-by-month}
+ve %>% 
+  group_by(Year, Month) %>% 
+  summarise(FH=sum(FishingHour)) %>%
+  ggplot(aes(Year, FH)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ Month) +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = NULL, title = "Fishing hours by year & month")
+
+#  complete(year, month, fill = list(n = 0)) %>% 
+
+```
+
+### By length class
+
+```{r by_lclass}
+
+ve %>% 
+  group_by(Year, VesselLengthRange ) %>% 
+  summarise(FH = round(sum(FishingHour), 0),
+            .groups = "drop") %>% 
+  spread(Year, FH) %>% 
+  kable(caption = "Effort(fishing hours) by length class and year")
+
+ve %>% 
+  group_by(Year, VesselLengthRange ) %>% 
+  summarise(FH=sum(FishingHour)) %>%
+#  left_join(lclass) %>% 
+#  unite(lclass, length_class, col = "lclass", sep = ": ") %>% 
+  ggplot(aes(Year, FH)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ VesselLengthRange) +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = NULL, title = "Fishing hours by year & length class")
+
+#complete(year, lclass, fill = list(n = 0)) %>% 
+```
+
+### By DCF4 
+```{r by_dcf4, fig.width = 12, fig.height = 8}
+ve %>% 
+  group_by(Year) %>% 
+  summarise(dcf4 = n_distinct(MetierL4)) %>% 
+  spread(Year, dcf4) %>% 
+  kable(caption = "Number of unique vms DCF Metier Level 4 by year")
+ve %>% 
+  count(Year, MetierL4) %>% 
+  spread(Year, n) %>% 
+  kable(caption = "Number of vms records by DCF4")
+ve %>% 
+  count(Year, MetierL4) %>% 
+  ggplot(aes(Year, n)) +
+  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+  geom_point(colour = "#3498db", size = 2.5, alpha = 0.9) +
+  facet_wrap(~ MetierL4, scales = "fixed", ncol = 4) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x),
+                minor_breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  expand_limits(y = 1) +
+  labs(x = "Year", 
+       y = "Number of records (log scale)", 
+       title = "VMS Records by DCF Level 4",
+       subtitle = "Log scale allows comparison across all gear types") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+    axis.text = element_text(colour = "#34495e", size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+  )
+```
+
+### By DCF5
+```{r by_dcf5, fig.width = 12, fig.height = 8}
+ve %>% 
+  group_by(Year) %>% 
+  summarise(dcf5 = n_distinct(MetierL5)) %>% 
+  spread(Year, dcf5) %>% 
+  kable(caption = "Number of unique vms Metier Level 5 by year")
+ve %>% 
+  count(Year, MetierL5) %>% 
+  spread(Year, n) %>% 
+  kable(caption = "Number of vms records by DCF5")
+
+ve %>% 
+  count(Year, MetierL5) %>% 
+  ggplot(aes(Year, n)) +
+  geom_line(colour = "#27ae60", size = 1.2, alpha = 0.8) +
+  geom_point(colour = "#2ecc71", size = 2.5, alpha = 0.9) +
+  facet_wrap(~ MetierL5, scales = "fixed", ncol = 3) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x),
+                minor_breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  expand_limits(y = 1) +
+  labs(x = "Year", 
+       y = "Number of records (log scale)", 
+       title = "VMS Records by DCF Level 5",
+       subtitle = "Target assemblage breakdown") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+    axis.text = element_text(colour = "#34495e", size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+  )
+```
+
+
+
+## Distribution {.tabset}
+### VMS Intervals
+
+```{r table-fishing-hours-vms-intervals, results='asis'}
+kable(do.call(rbind, tapply(ve$AverageInterval, ve$Year, summary)), booktabs = TRUE,
+      caption = "Summary statistics of average ping interval")
+```
+
+
+```{r ping-interval, fig.height = 6}
+#d <- 
+#  ve %>% 
+#  group_by(year) %>% 
+#  summarise(effort = max(effort))
+ggplot(ve, aes(x = AverageInterval)) +
+  geom_histogram() +
+  scale_x_log10() +
+  #geom_vline(data = d, aes(xintercept = effort)) +
+  labs(x = "Average ping interval", y = "Count") +
+  facet_wrap( ~ Year, ncol = 4)
+```
+
+
+### Vessel length
+
+```{r by_length, , fig.height = 6}
+kable(do.call(rbind, tapply(ve$AverageVesselLength, ve$Year, summary)),
+      caption = "Quantile distribution of mean vessel length")
+ggplot(ve, aes(x = AverageVesselLength))+
+  geom_histogram() +
+  labs(x = NULL, y = NULL,
+       title = "Distribution of average vessel length") +
+  facet_wrap( ~ Year, ncol = 4)
+```
+
+### kW
+
+```{r average_kW, fig.height = 6}
+kable(do.call(rbind, tapply(ve$AveragekW, ve$Year, summary)),
+      caption = "Quantile distribution of average kW")
+
+ggplot(ve, aes(x = AveragekW))+
+  geom_histogram() +
+  xlab("Average kW") + ylab ("Count") +
+  facet_wrap( ~ Year, ncol = 4)
+```
+
+### kW-hours
+
+```{r kwh, fig.height = 6}
+kable(do.call(rbind, tapply(ve$kWFishingHour , ve$Year, summary)),
+      caption = "Quantile distribution of average kW")
+ggplot(ve, aes(x = kWFishingHour ))+
+  geom_histogram() +
+  labs(x = NULL, y = "Count",
+       title = "Average kw-hours") +
+  facet_wrap(~ Year) +
+  scale_x_log10()
+```
+
+### Fishing hours
+
+```{r table-fishing-hours, results='asis'}
+kable(do.call(rbind, tapply(ve$FishingHour, ve$Year, summary)), booktabs = TRUE,
+      caption = "Summary statistics of average fishing hours")
+```
+
+```{r fishing-hours, fig.height = 6}
+
+ggplot(ve, aes(x = FishingHour)) +
+  geom_histogram() +
+  scale_x_log10() +
+  labs(x = "Average fishing hours", y = "Count") +
+  facet_wrap( ~ Year, ncol = 4)
+```
+
+# VMS Data Visualisations {.tabset .tabset-fade .tabset-pills}
+## Fishing speed
+
+```{r table-average-fishing-speed-overall, results='asis'}
+kable(do.call(rbind, tapply(ve$AverageFishingSpeed, ve$Year, summary)), 
+      booktabs = TRUE, 
+      caption = "Overall Average Fishing Speed Summary by Year")
+```
+
+## Average Fishing Speed by Metier L4 and Year {.tabset}
+
+```{r generate_tables, results='asis', echo=FALSE}
+years <- sort(unique(ve$Year))
+
+for(year in years) {
+  cat("\n\n### ", year, "\n")
+  
+  # Create summary table for this year
+  year_data <- ve %>% filter(Year == year)
+  
+  if(nrow(year_data) > 0) {
+    # Create summary statistics by MetierL4
+    speed_summary <- year_data %>%
+      group_by(MetierL4) %>%
+      summarise(
+        Min = round(min(AverageFishingSpeed, na.rm = TRUE), 2),
+        Q1 = round(quantile(AverageFishingSpeed, 0.25, na.rm = TRUE), 2),
+        Median = round(median(AverageFishingSpeed, na.rm = TRUE), 2),
+        Mean = round(mean(AverageFishingSpeed, na.rm = TRUE), 2),
+        Q3 = round(quantile(AverageFishingSpeed, 0.75, na.rm = TRUE), 2),
+        Max = round(max(AverageFishingSpeed, na.rm = TRUE), 2),
+        Records = n(),
+        .groups = "drop"
+      ) %>%
+      arrange(MetierL4)
+    
+    print(kable(speed_summary, 
+                caption = paste("Average Fishing Speed Summary by Metier L4 for", year),
+                booktabs = TRUE))
+    
+    cat("\n\n")
+    
+    # Add the existing plot below the table
+    plot <- year_data %>%
+      ggplot(aes(x = MetierL4, y = AverageFishingSpeed, fill = MetierL4)) +
+      geom_violin() +
+      geom_boxplot(width = 0.1, fill = "white") +
+      scale_fill_viridis_d() +
+      theme_minimal() +
+      labs(title = paste("Average Fishing Speed Distribution by Metier L4 for", year),
+           x = "Metier L4",
+           y = "Average Fishing Speed") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1),
+            legend.position = "none")
+    
+    print(plot)
+  } else {
+    cat("No data available for", year, "\n")
+  }
+  
+  cat("\n")
+}
+```
+
+## Invalid ICES rectangles {.tabset}
+
+```{r invalid stat-sqrs}
+if (any(is.na(ve$lon))) {
+  kable(table(`ICES Rectangle` = ve$isq[is.na(ve$lon)],
+              Year = ve$year[is.na(ve$lon)]), booktabs = TRUE)
+} else {
+  x <- "There were no invalid Statistical Rectangles reported"
+  attr(x, "format") <- "markdown"
+  attr(x, "class") <- "knit_asis"
+  x
+}
+```
+
+
+## Habitat Quality Checks
+
+### Habitat distribution over time
+```{r habitat_by_year}
+# Create colour palette with red for NA
+habitat_data <- ve %>% 
+  group_by(Year, Habitat) %>% 
+  summarise(FH = sum(FishingHour), .groups = "drop") %>% 
+  mutate(Habitat = ifelse(is.na(Habitat), "NA", as.character(Habitat)))
+
+# Get unique habitat types (excluding NA)
+habitat_types <- sort(unique(habitat_data$Habitat[habitat_data$Habitat != "NA"]))
+n_habitats <- length(habitat_types)
+
+# Create colour palette
+habitat_colours <- c(setNames(viridis::viridis(n_habitats), habitat_types), "NA" = "red")
+
+# Main plot without legend
+habitat_plot <- habitat_data %>% 
+  ggplot(aes(x = Year, y = FH, fill = Habitat)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(name = "Habitat Type", values = habitat_colours) +
+  labs(x = "Year", y = "Fishing Hours",
+       title = "Fishing effort by habitat type over time") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+print(habitat_plot)
+```
+
+```{r habitat_legend, fig.height=8, fig.width=12}
+# Create a dummy plot just for the legend using the same data and colours
+legend_plot <- habitat_data %>% 
+  ggplot(aes(x = Year, y = FH, fill = Habitat)) +
+  geom_col() +
+  scale_fill_manual(name = "Habitat Type", values = habitat_colours) +
+  theme_void() +
+  theme(legend.text = element_text(size = 10),
+        legend.title = element_text(size = 12)) +
+  guides(fill = guide_legend(ncol = 3, byrow = TRUE))
+
+# Extract just the legend
+legend_only <- get_legend(legend_plot)
+plot(legend_only)
+```
+
+
+### Habitat type frequency table
+```{r habitat_summary}
+ve %>% 
+  group_by(Habitat) %>% 
+  summarise(
+    Records = n(),
+    Total_FH = sum(FishingHour),
+    Pct_Records = round(100 * n() / nrow(ve), 1),
+    Pct_Effort = round(100 * sum(FishingHour) / sum(ve$FishingHour), 1)
+  ) %>% 
+  arrange(desc(Total_FH)) %>% 
+  kable(caption = "Summary of fishing effort by habitat type",
+        col.names = c("Habitat", "Records", "Total Fishing Hours", 
+                     "% of Records", "% of Effort"))
+```
+
+
+
+
+## Depth Quality Checks
+
+### Depth distribution over time
+```{r depth_by_year}
+# Create colour palette with red for NA
+depth_data <- ve %>% 
+  group_by(Year, DepthRange) %>% 
+  summarise(FH = sum(FishingHour, na.rm=T), .groups = "drop") %>% 
+  mutate(DepthStratum = ifelse(is.na(DepthRange), "NA", as.character(DepthRange)))
+
+# Get unique habitat types (excluding NA)
+depth_types <- sort(unique(depth_data$DepthStratum[depth_data$DepthStratum != "NA"]))
+n_depths <- length(depth_types)
+
+# Create colour palette
+depth_colours <- c(setNames(viridis::viridis(n_depths), depth_types), "NA" = "red")
+
+# Main plot without legend
+depth_plot <- depth_data %>% 
+  ggplot(aes(x = Year, y = FH, fill = DepthStratum)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(name = "Depth Stratum", values = depth_colours) +
+  labs(x = "Year", y = "Fishing Hours",
+       title = "Fishing effort by 200m depth stratum over time") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+print(depth_plot)
+```
+
+```{r depth_legend, fig.height=8, fig.width=12}
+# Create a dummy plot just for the legend using the same data and colours
+legend_plot <- depth_data %>% 
+  ggplot(aes(x = Year, y = FH, fill = DepthStratum)) +
+  geom_col() +
+  scale_fill_manual(name = "Depth Stratum", values = depth_colours) +
+  theme_void() +
+  theme(legend.text = element_text(size = 10),
+        legend.title = element_text(size = 12)) +
+  guides(fill = guide_legend(ncol = 3, byrow = TRUE))
+
+# Extract just the legend
+legend_only <- get_legend(legend_plot)
+plot(legend_only)
+```
+
+
+### Depth strata frequency table
+```{r depth_summary}
+ve %>% 
+  group_by(DepthRange) %>% 
+  summarise(
+    Records = n(),
+    Total_FH = round(sum(FishingHour), 0),
+    Pct_Records = round(100 * n() / nrow(ve), 1),
+    Pct_Effort = round(100 * sum(FishingHour) / sum(ve$FishingHour), 1)
+  ) %>% 
+  arrange(DepthRange) %>% 
+  kable(caption = "Summary of fishing effort by habitat type",
+        col.names = c("Depth Stratum", "Records", "Total Fishing Hours", 
+                     "% of Records", "% of Effort"))
+```
+
+## SweptArea Quality Checks
+
+### SweptArea distribution and outlier detection
+```{r sweptarea_distribution}
+# Summary statistics
+sweptarea_stats <- ve %>% 
+  summarise(
+    Min = min(SweptArea, na.rm = TRUE),
+    Q1 = quantile(SweptArea, 0.25, na.rm = TRUE),
+    Median = median(SweptArea, na.rm = TRUE),
+    Mean = mean(SweptArea, na.rm = TRUE),
+    Q3 = quantile(SweptArea, 0.75, na.rm = TRUE),
+    Max = max(SweptArea, na.rm = TRUE),
+    Missing = sum(is.na(SweptArea)),
+    Pct_Missing = round(100 * sum(is.na(SweptArea)) / n(), 1)
+  )
+
+kable(sweptarea_stats, caption = "SweptArea summary statistics", digits = 2)
+
+# Box plot by year to identify outliers and trends
+ve %>% 
+  filter(!is.na(SweptArea)) %>% 
+  ggplot(aes(x = factor(Year), y = SweptArea)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  scale_y_log10() +
+  labs(x = "Year", y = "Swept Area (log scale)",
+       title = "Distribution of swept area by year (outliers shown)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+### SweptArea vs FishingHour relationship
+```{r sweptarea_vs_fishinghour}
+ve %>% 
+  filter(!is.na(SweptArea), SweptArea > 0, FishingHour > 0) %>% 
+  ggplot(aes(x = FishingHour, y = SweptArea, colour = MetierL4)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE, colour = "red") +
+  scale_x_log10() +
+  scale_y_log10() +
+  scale_colour_viridis_d(name = "Metier L4") +
+  labs(x = "Fishing Hours (log scale)", y = "Swept Area (log scale)",
+       title = "Relationship between fishing hours and swept area") +
+  theme_minimal()
+
+# Calculate correlation
+cor_result <- ve %>% 
+  filter(!is.na(SweptArea), SweptArea > 0, FishingHour > 0) %>% 
+  summarise(correlation = cor(log(FishingHour), log(SweptArea)))
+
+cat("Correlation between log(FishingHour) and log(SweptArea):", round(cor_result$correlation, 3))
+```
+
+
+### Extreme SweptArea values
+
+This new (in 2025!) section identifies records with unusually high or low swept area values that may warrant further investigation. The analysis uses a "1.5 × interquartile range rule" to detect outliers:
+
+- **Lower threshold**: Q1 - 1.5 × IQR (this will probably be negative - need some more thought!)
+- **Upper threshold**: Q3 + 1.5 × IQR  
+
+Records beyond these thresholds are flagged as potential outliers. High swept area values might indicate:
+- Very high effort in c-squares
+- Wide fishing gear 
+- Multiple fishing events aggregated in one record
+- Data entry errors
+
+Low swept area values (if any) might suggest:
+- Very short effort assigned to a single ping
+- Narrow gear widths
+- Low power or length vessels
+- Incomplete or erroneous data
+
+When reviewing flagged records, pay particular attention to the relationship between SweptArea, FishingHour, and AverageGearWidth to identify potentially problematic data.
+
+
+```{r sweptarea_extremes}
+# Identify potentially problematic records
+IQR_SA <- IQR(ve$SweptArea, na.rm = TRUE)
+Q1_SA <- quantile(ve$SweptArea, 0.25, na.rm = TRUE)
+Q3_SA <- quantile(ve$SweptArea, 0.75, na.rm = TRUE)
+
+outlier_threshold_low <- Q1_SA - 1.5 * IQR_SA
+outlier_threshold_high <- Q3_SA + 1.5 * IQR_SA
+
+# Create threshold summary table
+threshold_summary <- data.frame(
+  Threshold = c("Lower threshold", "Upper threshold"),
+  Value = round(c(outlier_threshold_low, outlier_threshold_high), 2)
+)
+
+kable(threshold_summary, caption = "Outlier detection thresholds for SweptArea")
+
+extreme_values <- ve %>% 
+  filter(!is.na(SweptArea)) %>% 
+  filter(SweptArea < outlier_threshold_low | SweptArea > outlier_threshold_high) %>% 
+  select(Year, Month, Csquare, MetierL6, FishingHour, SweptArea, AverageGearWidth) %>% 
+  arrange(desc(SweptArea))
+
+if(nrow(extreme_values) > 0) {
+  # Summary of flagged records
+  summary_df <- data.frame(
+    Metric = c("Total flagged records", "Percentage of all records"),
+    Value = c(nrow(extreme_values), paste0(round(100 * nrow(extreme_values) / nrow(ve), 2), "%"))
+  )
+  
+  kable(summary_df, caption = "Summary of extreme SweptArea records")
+  
+  # Top 10 extreme values
+  kable(head(extreme_values, 10), 
+        caption = "Top 10 records with extreme SweptArea values", 
+        digits = 2)
+} else {
+  cat("**No extreme SweptArea outliers detected**")
+}
+```
+
+
+
+## Check codes in VMS data {.tabset}
+
+### Country code
+
+Check VMS CountryCode with ICES vocabulary //vocab.ices.dk/?ref=337
+```{r}
+#Check Logbook CountryCode
+CountryCode <- getCodeList("ISO_3166")
+CountryCode$VocabCountry <- CountryCode$Key
+
+VECountry <- left_join(ve, CountryCode, by = c("CountryCode" = "Key")) %>%
+  select(CountryCode, VocabCountry) %>%
+  distinct()
+
+VECountryErr <- VECountry[is.na(VECountry$VocabCountry),]
+datatable(VECountryErr)
+```
+
+### Gear type
+
+Check VMS GearType with ICES vocabulary //vocab.ices.dk/?ref=1498
+```{r}
+#Check VMS GearType
+GearType <- getCodeList("GearType")
+GearType$VocabGear <- GearType$Key
+
+VEGear <- left_join(ve, GearType, by = c("MetierL4" = "Key"))%>%
+  select(MetierL4, VocabGear) %>%
+  distinct()
+
+VEGearErr <- VEGear[is.na(VEGear$VocabGear),]
+datatable(VEGearErr) 
+```
+
+### Target assemblage
+
+Check VMS TargetAssemblage with ICES vocabulary //vocab.ices.dk/?ref=1499
+```{r}
+#Check VMS TargetAssemblage
+TargetAssemblage <- getCodeList("TargetAssemblage")
+TargetAssemblage$VocabTargetAssemblage <- TargetAssemblage$Key
+
+VETargetAssemblage <- left_join(ve, TargetAssemblage, by = c("MetierL5" = "Key"))%>%
+  select(MetierL5, VocabTargetAssemblage) %>%
+  distinct()
+
+VETargetAssemblageErr <- VETargetAssemblage[is.na(VETargetAssemblage$VocabTargetAssemblage),]
+datatable(VETargetAssemblageErr) 
+```
+
+### Vessel length
+
+Check VMS VesselLength with ICES vocabulary //vocab.ices.dk/?ref=1502
+```{r}
+#Check VMS VesselLength
+VesselLength <- getCodeList("VesselLengthClass")
+VesselLength$VocabVesselLength <- VesselLength$Key
+
+VEVesselLength <- left_join(ve, VesselLength, by = c("VesselLengthRange" = "Key"))%>%
+  select(VesselLengthRange, VocabVesselLength) %>%
+  distinct()
+
+VEVesselLengthErr <- VEVesselLength[is.na(VEVesselLength$VocabVesselLength),]
+datatable(VEVesselLengthErr) 
+```
+
+
+# Sums and medians {.tabset}
+
+## Landings by DCF4
+
+```{r landings-by-gear-year, fig.width = 14, fig.height = 8}
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(catch = round(sum(TotWeight) / 1000, 0),
+            .groups = "drop") %>% 
+  spread(Year, catch) %>% 
+  mutate(across(-MetierL4, ~ifelse(is.na(.), "", as.character(.)))) %>%  # Handle NAs cleanly
+  kable(caption = "Landings [kt]", align = "r") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                font_size = 10)  # Smaller font size
+
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(catch = sum(TotWeight) / 1000,
+            .groups = "drop") %>% 
+  filter(catch > 0) %>%  # Remove zero landings
+  ggplot(aes(Year, catch)) +
+  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+  geom_point(colour = "#e74c3c", size = 2.5, alpha = 0.9) +
+  facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x),
+                minor_breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  labs(x = "Year", 
+       y = "Landings [tonnes] (log scale)",
+       title = "Landings by Gear Type",
+       subtitle = "Zero landings excluded") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+    axis.text = element_text(colour = "#34495e", size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+  )
+```
+
+## Landings by DCF4 - comparison with logbooks
+
+```{r landings-by-gear-year_lgs-comparision}
+bind_rows(ve %>% 
+            group_by(Year, MetierL4) %>% 
+            summarise(catch = round(sum(TotWeight) / 1000, 0),
+                      .groups = "drop") %>% 
+            mutate(source = "vms"),
+          le %>% 
+            group_by(Year, MetierL4) %>% 
+            summarise(catch = sum(TotWeight) / 1000,
+                      .groups = "drop") %>% 
+            mutate(source = "logbook")) %>% 
+  ggplot(aes(Year, catch, colour = source)) +
+  geom_line(lwd = 1) +
+  facet_wrap(~ MetierL4, scales = "free_y") +
+  labs(x = NULL, y = "Landings [kt]",
+       title = "Catch by gear - comparison with logbooks") +
+  expand_limits(y = 0)
+```
+
+## Effort by DCF4
+```{r effort-by-gear-year, fig.width = 14, fig.height = 8}
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(effort = round(sum(FishingHour, na.rm = TRUE) / 24, 0),
+            .groups = "drop") %>% 
+  spread(Year, effort) %>% 
+  mutate(across(where(is.numeric), ~replace_na(., 0))) %>%
+  kable(caption = "Effort [days]")
+
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(effort = sum(FishingHour) / 24,
+            .groups = "drop") %>% 
+  filter(effort > 0) %>%  # Remove zero effort
+  ggplot(aes(Year, effort)) +
+  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+  geom_point(colour = "#3498db", size = 2.5, alpha = 0.9) +
+  facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x),
+                minor_breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  labs(x = "Year", 
+       y = "Effort [days] (log scale)",
+       title = "Effort by Gear Type",
+       subtitle = "Zero effort excluded - log scale allows comparison across all gear types") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+    axis.text = element_text(colour = "#34495e", size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+  )
+```
+
+## Effort by DCF4 - comparison with logbooks
+
+```{r effort-by-gear-year_lgs-comparision}
+bind_rows(ve %>% 
+            group_by(Year, MetierL4) %>% 
+            summarise(effort = sum(FishingHour) / 24,
+                      .groups = "drop") %>% 
+            mutate(source = "vms"),
+          le %>% 
+            group_by(Year, MetierL4) %>% 
+            summarise(effort = sum(FishingDays),
+                      .groups = "drop") %>% 
+            mutate(source = "logbooks")) %>% 
+  ggplot(aes(Year, effort, colour = source)) +
+  geom_line(lwd = 1) +
+  facet_wrap(~ MetierL4, scales = "free_y") +
+  labs(x = NULL, y = "Effort [days]",
+       title = "Effort [days] by gear - comparison with logbooks",
+       caption = "vms: Fishing activity in days, lgs: Days at sea") +
+  expand_limits(y = 0) +
+  scale_colour_brewer(palette = "Set1")
+```
+
+## Median landings per hour
+```{r landings-by-gear0, fig.width = 14, fig.height = 8}
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(cph = round(median(TotWeight/FishingHour, na.rm=T), 1),
+            .groups = "drop") %>% 
+  spread(Year, cph) %>% 
+  kable(caption = "Median landing in kg per hour")
+
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(cph = median(TotWeight/FishingHour, na.rm=T),
+            .groups = "drop") %>% 
+  filter(cph > 0) %>%  # Remove zero catch rates
+  ggplot(aes(Year, cph)) +
+  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+  geom_point(colour = "#e67e22", size = 2.5, alpha = 0.9) +
+  facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x),
+                minor_breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  labs(x = "Year", 
+       y = "Median landing [kg/hour] (log scale)",
+       title = "Median Landing Rate by Gear Type",
+       subtitle = "Zero catch rates excluded") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+    axis.text = element_text(colour = "#34495e", size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+  )
+```
+
+## Median landing per kWh
+
+
+```{r landings-by-gear, fig.width = 14, fig.height = 8}
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(cpkwh = round(median(TotWeight/kWFishingHour, na.rm=T), 1),
+            .groups = "drop") %>% 
+  spread(Year, cpkwh) %>% 
+  kable(caption = "Median landing in kilograms per kilowatt-hour")
+
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(cpkwh = round(median(TotWeight/kWFishingHour, na.rm=T), 0),
+            .groups = "drop") %>% 
+  filter(cpkwh > 0) %>%  # Remove zero efficiency values
+  ggplot(aes(Year, cpkwh)) +
+  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+  geom_point(colour = "#9b59b6", size = 2.5, alpha = 0.9) +
+  facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x),
+                minor_breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  labs(x = "Year", 
+       y = "Median landing [kg/kWh] (log scale)",
+       title = "Median Landing Efficiency by Gear Type",
+       subtitle = "should be relatively flat") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+    axis.text = element_text(colour = "#34495e", size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+  )
+```
+
+## Value
+
+```{r value-by-gear-year, fig.width = 14, fig.height = 8}
+
+# Clean and summarise the data with robust handling
+value_summary <- ve %>% 
+  filter(!is.na(TotValue), is.finite(TotValue)) %>%  # Remove problematic values
+  group_by(Year, MetierL4) %>% 
+  summarise(value = round(sum(TotValue, na.rm = TRUE), 0),
+            .groups = "drop") %>%
+  filter(value > 0 & is.finite(value))  # Ensure positive, finite values
+
+# Create table
+value_summary %>% 
+  spread(Year, value) %>% 
+  mutate(across(-MetierL4, ~format(., big.mark = " ", scientific = FALSE))) %>%
+  kable(caption = "Value [EUR]", align = "r") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                font_size = 10)  # Smaller font size
+
+
+
+# Create plot with additional safeguards
+value_summary %>% 
+  ggplot(aes(Year, value)) +
+  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+  geom_point(colour = "#27ae60", size = 2.5, alpha = 0.9) +
+  facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x),
+                minor_breaks = scales::trans_breaks("log10", function(x) 10^x),
+                limits = c(1, NA)) +  # Set minimum limit to avoid log(0)
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  labs(x = "Year", 
+       y = "Value [EUR] (log scale)",
+       title = "Value by Gear Type",
+       subtitle = "Zero and invalid values excluded") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+    axis.text = element_text(colour = "#34495e", size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+  )
+```
+
+
+## Median value per kWh
+
+```{r mean-value-by-KWhours-year, fig.width = 14, fig.height = 8}
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(vpkwh = round(median(TotValue/kWFishingHour, na.rm=T), 1),
+            .groups = "drop") %>% 
+  spread(Year, vpkwh) %>% 
+  kable(caption = "Median value [EUR] per kilowhathour")
+
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(vpkwh = median(TotValue/kWFishingHour, na.rm=T),
+            .groups = "drop") %>% 
+  filter(vpkwh > 0 & !is.na(vpkwh)) %>%  # Remove zero and NA values
+  ggplot(aes(Year, vpkwh)) +
+  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+  geom_point(colour = "#f39c12", size = 2.5, alpha = 0.9) +
+  facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x),
+                minor_breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  labs(x = "Year", 
+       y = "Median value [EUR/kWh] (log scale)",
+       title = "Median Value Efficiency by Gear Type",
+       subtitle = "Zero and NA values excluded") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+    axis.text = element_text(colour = "#34495e", size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+  )
+```
+
+##  Median price per kg
+
+```{r price, fig.width = 14, fig.height = 8}
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(ppkg = round(median(TotValue/TotWeight, na.rm=T), 1),
+            .groups = "drop") %>% 
+  spread(Year, ppkg) %>% 
+  kable(caption = "Median value per kg")
+
+ve %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(ppkg = median(TotValue/TotWeight, na.rm=T),
+            .groups = "drop") %>% 
+  filter(ppkg > 0 & !is.na(ppkg)) %>%  # Remove zero and NA values
+  ggplot(aes(Year, ppkg)) +
+  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+  geom_point(colour = "#e74c3c", size = 2.5, alpha = 0.9) +
+  facet_wrap(~ MetierL4, scales = "free_y", ncol = 5) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  scale_y_continuous(labels = scales::comma, expand = expansion(mult = c(0.05, 0.1))) +
+  labs(x = "Year", 
+       y = "Median price [EUR/kg]",
+       title = "Median Price per Kilogram by Gear Type",
+       subtitle = "Zero and NA values excluded") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+    axis.text = element_text(colour = "#34495e", size = 10),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+  )
+```
+
+
+# Space {.tabset}
+## Overall
+
+```{r table-exent}
+ve %>% 
+  group_by(Year) %>% 
+  summarise(min.lon = min(lon),
+            max.lon = max(lon),
+            min.lat = min(lat),
+            max.lat = max(lat)) %>% 
+  kable(caption = "Extent of vms data by year")
+```
+
+```{r area-of-data0}
+d <- 
+  ve %>% 
+  select(Year, lon, lat) %>% 
+  distinct() %>% 
+  count(lon, lat)
+map1 +
+  geom_tile(data = d, aes(lon, lat, fill = n)) +
+  scale_fill_viridis_c(guide = "legend",
+                       breaks = 1:50) +
+  labs(fill = "Years",
+       title = "Number of reported years per csquare")
+```
+
+```{r area-of-data,  fig.height = 9}
+d <- 
+  ve %>% 
+  select(Year, lon, lat) %>% 
+  distinct()
+map1 +
+  geom_tile(data = d, aes(lon, lat), fill = "darkred") +
+  scale_fill_viridis_c() +
+  facet_wrap(~ Year, ncol = 5) +
+  labs(title = "Reported csquares per year")
+```
+
+```{r area-of-data2,  fig.height = 9}
+map2 +
+  geom_tile(data = d, aes(lon, lat), fill = "darkred") +
+  scale_fill_viridis_c() +
+  facet_wrap(~ Year, ncol = 5) +
+  labs(title = "Core area: Reported csquares per year")
+```
+
+## Effort
+
+```{r spatial-effort-year, results='asis', fig.height = 9}
+# do plots
+core  <- list(xlim = quantile(ve$lon, c(0.025, 0.975)),
+              ylim = quantile(ve$lat, c(0.025, 0.975)))
+d <- 
+  ve %>% 
+  group_by(Year, lon, lat) %>% 
+  summarise(fishing_days = sum(FishingHour) / 24,
+            .groups = "drop")
+map0 +
+  geom_tile(data = d,
+            aes(lon, lat, fill = fishing_days)) +
+  facet_wrap(~ Year, ncol = 5) +
+  coord_quickmap(xlim = core$xlim, ylim = core$ylim) +
+  scale_fill_viridis_c(trans = "log", option = "B", guide = "legend",
+                       direction = -1,
+                       breaks = c(10000, 2000, 500, 100,50, 10, 1, 0.5,0.1,0),
+                       labels = c(10000, 2000, 500, 100,50, 10, 1, 0.5,0.1,0)) +
+  labs(title = paste("Days@Sea"))
+```
+
+## Effort by DCF5
+
+```{r spatial-extent-dominant-gears, fig.height = 9}
+top4 <- 
+  ve %>% 
+  group_by(MetierL5) %>% 
+  summarise(effort = sum(FishingHour)) %>% 
+  arrange(-effort) %>% 
+  slice(1:6) %>% 
+  pull(MetierL5) 
+d <- 
+  ve %>% 
+  filter(MetierL5 %in% top4) %>% 
+  group_by(MetierL5, Year, lon, lat) %>% 
+  summarise(fishing_days = sum(FishingHour) / 24,
+            .groups = "drop")
+# do plots
+for (gear in top4) {
+  
+  tmp <- d %>% filter(MetierL5 == gear)
+  core  <- list(xlim = quantile(tmp$lon, c(0.025, 0.975)),
+                ylim = quantile(tmp$lat, c(0.025, 0.975)))
+  
+  p <-
+    map0 +
+    geom_tile(data = d %>% filter(MetierL5 == gear),
+              aes(lon, lat, fill = fishing_days)) +
+    facet_wrap(~ Year, ncol = 5) +
+    coord_quickmap(xlim = core$xlim, ylim = core$ylim) +
+    scale_fill_viridis_c(trans = "log", option = "B", guide = "legend",
+                         direction = -1,
+                         breaks = c(10000, 2000, 500, 100,50, 10, 1, 0.5,0.1,0),
+                         labels = c(10000, 2000, 500, 100,50, 10, 1, 0.5,0.1,0)) +
+    labs(title = paste("Days@Sea: ", gear))
+  print(p)
+}
+```
+
+## Effort difference `r tempBound[1]`:`r (tempBound[2]-1)` vs `r tempBound[2]`
+
+```{r, fig.height = 9}
+base <-
+  ve %>% 
+  group_by(Year, Csquare, lon, lat) %>% 
+  summarise(effort = sum(FishingHour),
+            .groups = "drop")
+recent <- 
+  base %>% 
+  filter(Year == max(Year)) %>% 
+  select(-Year)
+d <- 
+  base %>% 
+  filter(Year < max(Year)) %>% 
+  group_by(Csquare, lon, lat) %>% 
+  summarise(median = median(effort),
+            .groups = "drop") %>% 
+  full_join(recent,
+            by = c("Csquare", "lon", "lat")) %>% 
+  mutate(effort = replace_na(effort, 0),
+         median = replace_na(median, 0)) %>% 
+  group_by(Csquare, lon, lat) %>% 
+  mutate(r = 1 / (pmax(effort, 1e-9) / pmax(median, 1e-9))) %>% 
+  ungroup() %>% 
+  mutate(r = ifelse(r > 2, 2, r),
+         r = ifelse(r < 1/2, 1/2, r))
+
+
+  map0 +
+  geom_tile(data = d,
+            aes(lon, lat, fill = r)) +
+  coord_quickmap() +
+  scale_fill_viridis_c(guide = "legend",
+                       breaks = c(-Inf, 1/2, 1/1.5, 1/1.25, 1/1.05, 1, 1.05, 1.25, 1.5, 2, Inf),
+                       labels = c("historic >>","historic> +100%","historic> +50%","historic> +25%",
+                                  "+/-5%",
+                                  "recent> +5%","recent> +25%","recent> +50%","recent> +100%","recent >>", "dummy"))
+```
+
+
+```{r spatial-effort-difference1, fig.height = 9}
+base <- with(ve,
+             aggregate(FishingHour,
+                       by = list(c_square = Csquare, year = Year),
+                       FUN = sum, na.rm = TRUE))
+base <- dplyr::rename(base, fishing_hours = x)
+
+# calculate total fishing hours for recent year
+recent <- base[base$year == tempBound[2],]
+
+# calculate median of the total fishing hours per square for historical years
+#Josefine: only one year so doesnt work.
+#base <- with(base[base$year < tempBound[2],],
+#             aggregate(fishing_hours,
+#                       by = list(c_square = c_square),
+#                       FUN = median, na.rm = TRUE))
+
+base <- with(base,
+             aggregate(fishing_hours,
+                       by = list(c_square = c_square),
+                       FUN = median, na.rm = TRUE))
+
+base <- dplyr::rename(base, fishing_hours_median = x)
+
+# join
+dat2plot <- dplyr::full_join(base,
+                             recent[,c("c_square","fishing_hours")])
+
+# set NAs to zero
+dat2plot$fishing_hours_median[is.na(dat2plot$fishing_hours_median)] <- 0
+dat2plot$fishing_hours[is.na(dat2plot$fishing_hours)] <- 0
+
+# calculate ratio (with exceptions for zeros)
+dat2plot$ratio <- 1/with(dat2plot, pmax(fishing_hours, 1e-9) / pmax(fishing_hours_median, 1e-9))
+
+# add back in lat and long
+dat2plot <- cbind(dat2plot,
+                  CSquare2LonLat(dat2plot$c_square, degrees = 0.05))
+
+breaks <- c(-Inf, 1/2, 1/1.5, 1/1.25, 1/1.05, 1, 1.05, 1.25, 1.5, 2, Inf)
+legval <- c("historic >>","historic> +100%","historic> +50%","historic> +25%",
+            "+/-5%",
+            "recent> +5%","recent> +25%","recent> +50%","recent> +100%","recent >>")
+palette <- RColorBrewer::brewer.pal(length(breaks)-1,"RdYlBu")  #colour for fishing intensity
+dat2plot$colgrp <- as.numeric(cut(dat2plot$ratio, breaks = breaks))
+dat2plot$cols <- palette[dat2plot$colgrp]
+grps <- sort(unique(dat2plot$colgrp))
+map1 +
+  geom_tile(data = dat2plot,
+            aes(SI_LONG, SI_LATI, fill = cols)) +
+  #coord_quickmap() +
+  scale_fill_manual(values = rev(palette)[grps], labels = legval[grps]) +
+  labs(fill = "Days@Sea",
+       subtitle = "Whole area",
+       title = paste0("Effort difference: ", tempBound[1], ":", tempBound[2]-1, " vs ", tempBound[2]))
+map2 +
+  geom_tile(data = dat2plot,
+            aes(SI_LONG, SI_LATI, fill = cols)) +
+  #coord_quickmap() +
+  scale_fill_manual(values = rev(palette)[grps], labels = legval[grps]) +
+  labs(fill = "Days@Sea",
+       subtitle = "Core area",
+       title = paste0("Effort difference: ", tempBound[1], ":", tempBound[2]-1, " vs ", tempBound[2]))
+
+```
+
+## Effort difference `r tempBound[2]-1` vs `r tempBound[2]`
+
+```{r, fig.height = 9}
+base <- with(ve,
+             aggregate(FishingHour,
+                       by = list(c_square = Csquare, year = Year),
+                       FUN = sum, na.rm = TRUE))
+base <- dplyr::rename(base, FishingHour = x)
+
+# calculate total fishing hours for recent year
+recent <- base[base$year == tempBound[2],]
+
+# previous year
+base <- base[base$year == tempBound[2]-1,]
+base <- dplyr::rename(base, fishing_hours_median = FishingHour)
+
+# join
+dat2plot <- dplyr::full_join(base,
+                             recent[,c("c_square","FishingHour")])
+
+
+# set NAs to zero
+dat2plot$fishing_hours_median[is.na(dat2plot$fishing_hours_median)] <- 0
+dat2plot$fishing_hours[is.na(dat2plot$fishing_hours)] <- 0
+
+# calculate ratio (with exceptions for zeros)
+dat2plot$ratio <- 1/with(dat2plot, pmax(fishing_hours, 1e-9) / pmax(fishing_hours_median, 1e-9))
+
+# add back in lat and long
+dat2plot <- cbind(dat2plot,
+                  CSquare2LonLat(dat2plot$c_square, degrees = 0.05))
+
+breaks <- c(-Inf, 1/2, 1/1.5, 1/1.25, 1/1.05, 1, 1.05, 1.25, 1.5, 2, Inf)
+legval <- c("historic >>","historic> +100%","historic> +50%","historic> +25%",
+            "+/-5%",
+            "recent> +5%","recent> +25%","recent> +50%","recent> +100%","recent >>")
+palette <- RColorBrewer::brewer.pal(length(breaks)-1,"RdYlBu")  #colour for fishing intensity
+dat2plot$colgrp <- as.numeric(cut(dat2plot$ratio, breaks = breaks))
+dat2plot$cols <- palette[dat2plot$colgrp]
+grps <- sort(unique(dat2plot$colgrp))
+map1 +
+  geom_tile(data = dat2plot,
+            aes(SI_LONG, SI_LATI, fill = cols)) +
+  scale_fill_manual(values = rev(palette)[grps], labels = legval[grps]) +
+  labs(fill = "Days@Sea",
+       subtitle = "Whole area",
+       title = paste0("Effort difference: ", tempBound[2]-1, " vs ", tempBound[2]))
+map2 +
+  geom_tile(data = dat2plot,
+            aes(SI_LONG, SI_LATI, fill = cols)) +
+  scale_fill_manual(values = rev(palette)[grps], labels = legval[grps]) +
+  labs(fill = "Days@Sea",
+       subtitle = "Core area",
+       title = paste0("Effort difference: ", tempBound[2]-1, " vs ", tempBound[2]))
+```
+
+
+# Logbooks
+___
+
+## Counts {.tabset}
+
+### By time
+
+
+```{r logbook-records}
+le %>% 
+  count(Year, Month) %>% 
+  mutate(Month = as.character(str_pad(Month, width = 2, pad = "0"))) %>% 
+  add_row(le %>% 
+            count(Year) %>% 
+            mutate(Month = "Total")) %>% 
+  spread(Year, n) %>% 
+  kable(caption = "Number of logbook records by year & months")
+le %>% 
+  count(Year) %>% 
+  ggplot(aes(Year, n)) +
+  geom_point() +
+  scale_x_continuous(breaks = 2000:2030) +
+   expand_limits(y = 0) +
+  labs(x = NULL, y = NULL, title = "Number of logbook records by year") 
+```
+
+```{r logbook-entries-month}
+le %>% 
+  count(Year, Month) %>% 
+  complete(Year, Month, fill = list(n = 0)) %>% 
+  ggplot(aes(Year, n)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ Month) +
+   expand_limits(y = 0) +
+  labs(x = NULL, y = NULL, title = "Number of logbook records by year & month")
+```
+
+### By length class
+
+```{r by_lclass2}
+le %>% 
+  count(Year, VesselLengthRange) %>% 
+  spread(Year, n) %>% 
+  kable(caption = "Number of logbook records by length class and year")
+le %>% 
+  count(Year, VesselLengthRange) %>% 
+  complete(Year, VesselLengthRange, fill = list(n = 0)) %>% 
+  ggplot(aes(Year, n)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ VesselLengthRange, scales = "free_y") +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = NULL, title = "Number of logbook records by vessel length class")
+```
+
+### By DCF4
+
+```{r by_dcf42}
+le %>% 
+  group_by(Year) %>% 
+  summarise(dcf4 = n_distinct(MetierL4)) %>% 
+  spread(Year, dcf4) %>% 
+  kable(caption = "Number of unique logbook DCF4 by year")
+le %>% 
+  count(Year, MetierL4) %>% 
+  spread(Year, n) %>% 
+  kable(caption = "Number of logbook records by DCF4")
+le %>% 
+  count(Year, MetierL4) %>% 
+  ggplot(aes(Year, n)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ MetierL4, scales = "free_y") +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = NULL, title = "Number of logbook records by DCF4") 
+```
+
+### By DCF5
+
+```{r by_dcf52}
+le %>% 
+  group_by(Year) %>% 
+  summarise(dcf5 = n_distinct(MetierL5)) %>% 
+  spread(Year, dcf5) %>% 
+  kable(caption = "Number of unique logbooks DCF5 by year")
+le %>% 
+  count(Year, MetierL5) %>% 
+  spread(Year, n) %>% 
+  kable(caption = "Number of logbooks records by DCF5")
+le %>% 
+  count(Year, MetierL5) %>% 
+  ggplot(aes(Year, n)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ MetierL5, scales = "free_y") +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = NULL, title = "Number of logbook records by DCF5") 
+```
+
+
+### By DCF6
+
+```{r by_dcf62, fig.height = 6}
+le %>% 
+  group_by(Year) %>% 
+  summarise(dcf6 = n_distinct(MetierL6)) %>% 
+  spread(Year, dcf6) %>% 
+  kable(caption = "Number of unique logbook DCF6 by year")
+le %>% 
+  count(MetierL6, Year) %>% 
+  spread(Year, n) %>% 
+  kable(caption = "Number of logbook records by DCF6 by month and year")
+# add here labels on the dcf6 level
+le %>% 
+  count(Year, MetierL4, MetierL5, MetierL6) %>% 
+  ggplot(aes(Year, n, colour = MetierL5, group = MetierL6)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ MetierL4, scales = "free_y") +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = NULL,
+       title = "Number of logbook records by DCF6",
+       subtitle = "needs further work")
+```
+
+### Unique vessels
+
+```{r unique-vessels222}
+le %>% 
+  count(NoDistinctVessels) %>% 
+  mutate(p = n / sum(n) * 1000,
+         p = ifelse(p < 1.03, 1.03, p)) %>% 
+  ggplot(aes(NoDistinctVessels, p)) +
+  geom_col() +
+  labs(x = "Number of unique vessels",
+       title = "Unnagregated",
+       subtitle = "Promill of ices-squares with given number of unique vessels") +
+  scale_y_log10()
+```
+
+```{r unique-vessels22}
+tmp <- le %>%
+  dplyr::group_by(Year, ICESrectangle) %>%
+  dplyr::summarise(
+    new_count =
+      ifelse(
+        any(NoDistinctVessels > 2),
+        3,
+        length(unique(unlist(strsplit(AnonymizedVesselID, ";"))))
+      )
+  ) %>%
+  dplyr::mutate(
+    new_count = ifelse(new_count >= 3, "3+", paste(new_count))
+  )
+
+try(
+  barplot(
+    prop.table(
+      table(factor(tmp$new_count))
+    ),
+    main = "Aggregated to year level",
+    ylab = "Proportion of ices-squares with given number of unique vessels",
+    xlab = "Number of unique vessels"
+  )
+)
+```
+
+```{r unique-vessels32}
+tmp <- le %>%
+  dplyr::group_by(ICESrectangle) %>%
+  dplyr::summarise(
+    new_count =
+      ifelse(
+        any(NoDistinctVessels > 2),
+        3,
+        length(unique(unlist(strsplit(AnonymizedVesselID, ";"))))
+      )
+  ) %>%
+  dplyr::mutate(
+    new_count = ifelse(new_count >= 3, "3+", paste(new_count))
+  )
+
+try(
+  barplot(
+    prop.table(
+      table(factor(tmp$new_count))
+    ),
+    main = "Fully aggregated",
+    ylab = "Proportion of ices-squares with given number of unique vessels",
+    xlab = "Number of unique vessels"
+  )
+)
+```
+
+## Distribution {.tabset}
+
+
+### Fishing days
+
+```{r table-fishing-day}
+kable(do.call(rbind, tapply(le$FishingDays, le$Year, summary)), booktabs = TRUE,
+      caption = "Summary statistics of average fishing days")
+```
+
+```{r fishing-days, fig.height = 6}
+ggplot(le, aes(x = FishingDays)) +
+  geom_histogram() +
+  scale_x_log10(breaks = c(1, 2, 3, 5, 10, 50, 100, 500)) +
+  labs(x = "Average fishing days", y = "Count") +
+  facet_wrap( ~ Year, ncol = 4)
+```
+
+
+### kW-days
+
+```{r average_kWdays, fig.height = 6}
+kable(do.call(rbind, tapply(round(le$kWFishingDays, 0), le$Year, summary)),
+      caption = "Quantile distribution of average kW days")
+
+ggplot(le, aes(x = kWFishingDays))+
+  geom_histogram() +
+  scale_x_log10() +
+  xlab("Average kW days") + ylab ("Count") +
+  facet_wrap( ~ Year, ncol = 4)
+```
+
+## Sums and medians {.tabset}
+
+### Landings by DCF4
+
+```{r landings-by-gear-year2}
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(catch = round(sum(TotWeight) / 1000, 0),
+            .groups = "drop") %>% 
+  spread(Year, catch) %>% 
+  mutate(across(-MetierL4, ~round(., 1))) %>%  # Round to 1 decimal place
+  mutate(across(-MetierL4, ~format(., big.mark = " ", scientific = FALSE, nsmall = 1))) %>%
+  kable(caption = "Landings [kt]", align = "r")
+
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(catch = sum(TotWeight) / 1000,
+            .groups = "drop") %>% 
+  ggplot(aes(Year, catch)) +
+  geom_line(lwd = 1) +
+  facet_wrap(~ MetierL4, scales = "free_y") +
+    expand_limits(y = 0) +
+  labs(x = NULL, y = "[t]",
+       title = "Landings by gear")
+```
+
+### Median landing per kW-days
+
+```{r landings-by-gear2}
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(cpkwh = round(median(TotWeight/kWFishingDays, na.rm=T), 0),
+            .groups = "drop") %>% 
+  spread(Year, cpkwh) %>% 
+  kable(caption = "Median landing in kilograms per kilowhathour")
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(cpkwh = median(TotWeight/kWFishingDays, na.rm=T),
+            .groups = "drop") %>% 
+  ggplot(aes(Year, cpkwh)) +
+  geom_line() +
+  facet_wrap(~ MetierL4, scales = "free_y") +
+    expand_limits(y = 0) +
+  labs(x = NULL, y = NULL,
+       title = "Median landing [kg] per kilowattdays")
+```
+
+### Value
+
+```{r value-by-gear-year2}
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(value = round(sum(TotValue)/1000, 0),
+            .groups = "drop") %>% 
+  spread(Year, value) %>% 
+  mutate(across(-MetierL4, ~round(., 1))) %>%  # Round to 1 decimal place
+  mutate(across(-MetierL4, ~format(., big.mark = " ", scientific = FALSE, nsmall = 1))) %>%
+  kable(caption = "Value ['000 €]")
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(value = sum(TotValue)/1000,
+            .groups = "drop") %>% 
+  ggplot(aes(Year, value)) +
+  geom_line(lwd = 1) +
+  facet_wrap(~ MetierL4, scales = "free_y") +
+    expand_limits(y = 0) +
+  labs(x = NULL, y = "['000 €]",
+       title = "Value by gear")
+```
+
+### Median value per kW-days
+
+```{r mean-value-by-KWhours-year2}
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(vpkwh = round(median(TotValue/kWFishingDays, na.rm=T), 0),
+            .groups = "drop") %>% 
+  spread(Year, vpkwh) %>% 
+  kable(caption = "Median value [EUR] per kilowatt-days")
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(vpkwh = median(TotValue/kWFishingDays, na.rm=T),
+            .groups = "drop") %>% 
+  ggplot(aes(Year, vpkwh)) +
+  geom_line() +
+  facet_wrap(~ MetierL4, scales = "free_y") +
+    expand_limits(y = 0) +
+  labs(x = NULL, y = NULL,
+       title = "Median value [EUR] per kilowatt-days")
+```
+
+
+###  Median price per kg
+
+```{r price2}
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(ppkg = round(median(TotValue/TotWeight, na.rm=T), 1),
+            .groups = "drop") %>% 
+  spread(Year, ppkg) %>% 
+  kable(caption = "Median value per kg")
+le %>% 
+  group_by(Year, MetierL4) %>% 
+  summarise(ppkg = median(TotValue/TotWeight, na.rm=T),
+            .groups = "drop") %>% 
+  ggplot(aes(Year, ppkg)) +
+  geom_line() +
+  facet_wrap(~ MetierL4, scales = "free_y") +
+    expand_limits(y = 0) +
+  labs(x = NULL, y = NULL,
+       title = "Median value per kg")
+```
+
+
+## Invalid ICES rectangles {.tabset}
+
+```{r invalid stat-sqrs-le}
+if (any(is.na(le$lon))) {
+  kable(table(`ICES Rectangle` = le$ICESrectangle[is.na(le$lon)],
+              Year = le$Year[is.na(le$lon)]), booktabs = TRUE)
+} else {
+  x <- "There were no invalid Statistical Rectangles reported"
+  attr(x, "format") <- "markdown"
+  attr(x, "class") <- "knit_asis"
+  x
+}
+```
+
+## Space {.tabset}
+
+### Overall
+
+```{r table-exent2}
+le %>% 
+  group_by(Year) %>% 
+  summarise(min.lon = min(lon),
+            max.lon = max(lon),
+            min.lat = min(lat),
+            max.lat = max(lat)) %>% 
+  kable(caption = "Extent of logbook data by year")
+```
+
+```{r area-of-data02}
+d <- 
+  le %>% 
+  select(Year, lon, lat) %>% 
+  distinct() %>% 
+  count(lon, lat)
+map1 +
+  geom_tile(data = d, aes(lon, lat, fill = n)) +
+  scale_fill_viridis_c(guide = "legend",
+                       breaks = 1:50) +
+  labs(fill = "Years",
+       title = "Number of reported years per ices square")
+```
+
+```{r area-of-data3,  fig.height = 9}
+d <- 
+  le %>% 
+  select(Year, lon, lat) %>% 
+  distinct()
+map1 +
+  geom_tile(data = d, aes(lon, lat), fill = "darkred") +
+  scale_fill_viridis_c() +
+  facet_wrap(~ Year, ncol = 5) +
+  labs(title = "Reported ices squares per year")
+```
+
+```{r area-of-data22,  fig.height = 9}
+map2 +
+  geom_tile(data = d, aes(lon, lat), fill = "darkred") +
+  scale_fill_viridis_c() +
+  facet_wrap(~ Year, ncol = 5) +
+  labs(title = "Core area: Reported ices squares per year")
+```
+
+### Effort
+
+```{r spatial-effort-year2, results='asis', fig.height = 9}
+# do plots
+core  <- list(xlim = quantile(le$lon, c(0.025, 0.975)),
+              ylim = quantile(le$lat, c(0.025, 0.975)))
+d <- 
+  le %>% 
+  group_by(Year, lon, lat) %>% 
+  summarise(fishing_days = sum(FishingDays),
+            .groups = "drop")
+map0 +
+  geom_tile(data = d,
+            aes(lon, lat, fill = fishing_days)) +
+  facet_wrap(~ Year, ncol = 5) +
+  coord_quickmap(xlim = core$xlim, ylim = core$ylim) +
+  scale_fill_viridis_c(trans = "log", option = "B", guide = "legend",
+                       direction = -1,
+                       breaks = c(10000, 2000, 500, 100,50, 10, 1, 0.5,0.1,0),
+                       labels = c(10000, 2000, 500, 100,50, 10, 1, 0.5,0.1,0)) +
+  labs(title = paste("Days@Sea"))
+```
+
+### Effort by DCF5
+
+```{r spatial-extent-dominant-gears2, fig.height = 9}
+top4 <- 
+  le %>% 
+  group_by(MetierL5) %>% 
+  summarise(time = sum(FishingDays)) %>% 
+  arrange(-time) %>% 
+  slice(1:6) %>% 
+  pull(MetierL5) 
+d <- 
+  le %>% 
+  filter(MetierL5 %in% top4) %>% 
+  group_by(MetierL5, Year, lon, lat) %>% 
+  summarise(fishing_days = sum(FishingDays),
+            .groups = "drop")
+# do plots
+for (gear in top4) {
+  
+  tmp <- d %>% filter(MetierL5 == gear)
+  core  <- list(xlim = quantile(tmp$lon, c(0.025, 0.975)),
+                ylim = quantile(tmp$lat, c(0.025, 0.975)))
+  
+  p <-
+    map0 +
+    geom_tile(data = d %>% filter(MetierL5 == gear),
+              aes(lon, lat, fill = fishing_days)) +
+    facet_wrap(~ Year, ncol = 5) +
+    coord_quickmap(xlim = core$xlim, ylim = core$ylim) +
+    scale_fill_viridis_c(trans = "log", option = "B", guide = "legend",
+                         direction = -1,
+                         breaks = c(10000, 2000, 500, 100,50, 10, 1, 0.5,0.1,0),
+                         labels = c(10000, 2000, 500, 100,50, 10, 1, 0.5,0.1,0)) +
+    labs(title = paste("Days@Sea: ", gear))
+  print(p)
+}
+```
+
+### Effort difference `r tempBound[1]`:`r (tempBound[2]-1)` vs `r tempBound[2]`
+
+```{r, eval = FALSE, fig.height = 9}
+base <-
+  le %>% 
+  group_by(Year, ICESrectangle, lon, lat) %>% 
+  summarise(time = sum(FishingDays),
+            .groups = "drop")
+recent <- 
+  base %>% 
+  filter(Year == max(Year)) %>% 
+  select(-Year)
+d <- 
+  base %>% 
+  filter(Year < max(Year)) %>% 
+  group_by(ICESrectangle, lon, lat) %>% 
+  summarise(median = median(time),
+            .groups = "drop") %>% 
+  full_join(recent,
+            by = c("ICESrectangle", "lon", "lat")) %>% 
+  mutate(time = replace_na(time, 0),
+         median = replace_na(median, 0)) %>% 
+  group_by(ICESrectangle, lon, lat) %>% 
+  mutate(r = 1 / (pmax(time, 1e-9) / pmax(median, 1e-9))) %>% 
+  ungroup() %>% 
+  mutate(r = ifelse(r > 2, 2, r),
+         r = ifelse(r < 1/2, 1/2, r))
+
+map0 +
+  geom_tile(data = d,
+            aes(lon, lat, fill = r)) +
+  coord_quickmap() +
+  scale_fill_viridis_c(guide = "legend",
+                       breaks = c(-Inf, 1/2, 1/1.5, 1/1.25, 1/1.05, 1, 1.05, 1.25, 1.5, 2, Inf),
+                       labels = c("historic >>","historic> +100%","historic> +50%","historic> +25%",
+                                  "+/-5%",
+                                  "recent> +5%","recent> +25%","recent> +50%","recent> +100%","recent >>", "dummy"))
+```
+
+
+```{r spatial-effort-difference12, fig.height = 9, eval = FALSE}
+base <- with(le,
+             aggregate(FishingDays,
+                       by = list(ICESrectangle, Year),
+                       FUN = sum, na.rm = TRUE))
+base <- dplyr::rename(base, ICESrectangle = Group.1, Year = Group.2, FishingDays = x)
+
+# calculate total fishing hours for recent year
+recent <- base[base$Year == tempBound[2],]
+
+# calculate median of the total fishing hours per square for historical years
+#Josefine: Only one year
+#base <- with(base[base$year < tempBound[2],],
+#             aggregate(fishing_hours,
+#                       by = list(c_square = c_square),
+#                       FUN = median, na.rm = TRUE))
+base <- with(base,
+             aggregate(FishingDays,
+                       by = list(ICESrectangle = ICESrectangle),
+                       FUN = median, na.rm = TRUE))
+
+
+base <- dplyr::rename(base, fishing_days_median = x)
+
+# join
+dat2plot <- dplyr::full_join(base,
+                             recent[,c("ICESrectangle","FishingDays")])
+
+# set NAs to zero
+dat2plot$fishing_days_median[is.na(dat2plot$fishing_days_median)] <- 0
+dat2plot$FishingDays[is.na(dat2plot$FishingDays)] <- 0
+
+# calculate ratio (with exceptions for zeros)
+dat2plot$ratio <- 1/with(dat2plot, pmax(FishingDays, 1e-9) / pmax(fishing_days_median, 1e-9))
+
+# add back in lat and long
+dat2plot <- 
+  dat2plot %>% 
+  mutate(lon = ir2d(ICESrectangle)$lon,
+         lat = ir2d(ICESrectangle)$lat)
+
+breaks <- c(-Inf, 1/2, 1/1.5, 1/1.25, 1/1.05, 1, 1.05, 1.25, 1.5, 2, Inf)
+legval <- c("historic >>","historic> +100%","historic> +50%","historic> +25%",
+            "+/-5%",
+            "recent> +5%","recent> +25%","recent> +50%","recent> +100%","recent >>")
+palette <- RColorBrewer::brewer.pal(length(breaks)-1,"RdYlBu")  #colour for fishing intensity
+dat2plot$colgrp <- as.numeric(cut(dat2plot$ratio, breaks = breaks))
+dat2plot$cols <- palette[dat2plot$colgrp]
+grps <- sort(unique(dat2plot$colgrp))
+map1 +
+  geom_tile(data = dat2plot,
+            aes(lon, lat, fill = cols)) +
+  #coord_quickmap() +
+  scale_fill_manual(values = rev(palette)[grps], labels = legval[grps]) +
+  labs(fill = "Days@Sea",
+       subtitle = "Whole area",
+       title = paste0("Effort difference: ", tempBound[1], ":", tempBound[2]-1, " vs ", tempBound[2]))
+map2 +
+  geom_tile(data = dat2plot,
+            aes(lon, lat, fill = cols)) +
+  #coord_quickmap() +
+  scale_fill_manual(values = rev(palette)[grps], labels = legval[grps]) +
+  labs(fill = "Days@Sea",
+       subtitle = "Core area",
+       title = paste0("Effort difference: ", tempBound[1], ":", tempBound[2]-1, " vs ", tempBound[2]))
+
+```
+
+### Effort difference `r tempBound[2]-1` vs `r tempBound[2]`
+
+```{r, fig.height = 9}
+base <- with(le,
+             aggregate(FishingDays,
+                       by = list(ICESrectangle, Year),
+                       FUN = sum, na.rm = TRUE))
+base <- dplyr::rename(base, ICESrectangle=Group.1, Year = Group.2, FishingDays = x)
+
+# calculate total fishing hours for recent year
+recent <- base[base$Year == tempBound[2],]
+
+# previous year
+base <- base[base$Year == tempBound[2]-1,]
+base <- dplyr::rename(base, fishing_days_median = FishingDays)
+
+# join
+dat2plot <- dplyr::full_join(base,
+                             recent[,c("ICESrectangle","FishingDays")])
+
+
+# set NAs to zero
+dat2plot$fishing_hours_median[is.na(dat2plot$fishing_days_median)] <- 0
+dat2plot$fishing_hours[is.na(dat2plot$FishingDays)] <- 0
+
+# calculate ratio (with exceptions for zeros)
+dat2plot$ratio <- 1/with(dat2plot, pmax(FishingDays, 1e-9) / pmax(fishing_days_median, 1e-9))
+
+# add back in lat and long
+dat2plot <- 
+  dat2plot %>% 
+  mutate(lon = ir2d(ICESrectangle)$lon,
+         lat = ir2d(ICESrectangle)$lat)
+breaks <- c(-Inf, 1/2, 1/1.5, 1/1.25, 1/1.05, 1, 1.05, 1.25, 1.5, 2, Inf)
+legval <- c("historic >>","historic> +100%","historic> +50%","historic> +25%",
+            "+/-5%",
+            "recent> +5%","recent> +25%","recent> +50%","recent> +100%","recent >>")
+palette <- RColorBrewer::brewer.pal(length(breaks)-1,"RdYlBu")  #colour for fishing intensity
+dat2plot$colgrp <- as.numeric(cut(dat2plot$ratio, breaks = breaks))
+dat2plot$cols <- palette[dat2plot$colgrp]
+grps <- sort(unique(dat2plot$colgrp))
+map1 +
+  geom_tile(data = dat2plot,
+            aes(lon, lat, fill = cols)) +
+  scale_fill_manual(values = rev(palette)[grps], labels = legval[grps]) +
+  labs(fill = "Days@Sea",
+       subtitle = "Whole area",
+       title = paste0("Effort difference: ", tempBound[2]-1, " vs ", tempBound[2]))
+map2 +
+  geom_tile(data = dat2plot,
+            aes(lon, lat, fill = cols)) +
+  scale_fill_manual(values = rev(palette)[grps], labels = legval[grps]) +
+  labs(fill = "Days@Sea",
+       subtitle = "Core area",
+       title = paste0("Effort difference: ", tempBound[2]-1, " vs ", tempBound[2]))
+```
+
+
+## Check codes in logbook data {.tabset}
+
+### ICES rectangle
+
+Check Logbook ICES rectangle with ICES vocabulary //vocab.ices.dk/?ref=107
+```{r}
+#Check Logbook ICES rectangle
+icesRect <- getCodeList("StatRec")
+icesRect$VocabRect <- icesRect$Key
+
+LERect <- left_join(le, icesRect, by = c("ICESrectangle" = "Key"))%>%
+  select(ICESrectangle, VocabRect) %>%
+  distinct()
+
+LERectErr <- LERect[is.na(LERect$VocabRect),]
+datatable(LERectErr) 
+```
+
+### Country code
+
+Check Logbook CountryCode with ICES vocabulary //vocab.ices.dk/?ref=337
+```{r}
+#Check Logbook CountryCode
+CountryCode <- getCodeList("ISO_3166")
+CountryCode$VocabCountry <- CountryCode$Key
+
+LECountry <- left_join(le, CountryCode, by = c("CountryCode" = "Key")) %>%
+  select(CountryCode, VocabCountry) %>%
+  distinct()
+
+LECountryErr <- LECountry[is.na(LECountry$VocabCountry),]
+datatable(LECountryErr)
+```
+
+### Gear type
+
+Check Logbook GearType with ICES vocabulary //vocab.ices.dk/?ref=1498
+```{r}
+#Check Logbook GearType
+GearType <- getCodeList("GearType")
+GearType$VocabGear <- GearType$Key
+
+LEGear <- left_join(le, GearType, by = c("MetierL4" = "Key"))%>%
+  select(MetierL4, VocabGear) %>%
+  distinct()
+
+LEGearErr <- LEGear[is.na(LEGear$VocabGear),]
+datatable(LEGearErr) 
+```
+
+### Target assemblage
+
+Check Logbook TargetAssemblage with ICES vocabulary //vocab.ices.dk/?ref=1499
+```{r}
+#Check Logbook TargetAssemblage
+TargetAssemblage <- getCodeList("TargetAssemblage")
+TargetAssemblage$VocabTargetAssemblage <- TargetAssemblage$Key
+
+LETargetAssemblage <- left_join(le, TargetAssemblage, by = c("MetierL5" = "Key"))%>%
+  select(MetierL5, VocabTargetAssemblage) %>%
+  distinct()
+
+LETargetAssemblageErr <- LETargetAssemblage[is.na(LETargetAssemblage$VocabTargetAssemblage),]
+datatable(LETargetAssemblageErr) 
+```
+
+### Vessel length
+
+Check Logbook VesselLength with ICES vocabulary //vocab.ices.dk/?ref=1502
+```{r}
+#Check Logbook VesselLength
+VesselLength <- getCodeList("VesselLengthClass")
+VesselLength$VocabVesselLength <- VesselLength$Key
+
+LEVesselLength <- left_join(le, VesselLength, by = c("VesselLengthRange" = "Key"))%>%
+  select(VesselLengthRange, VocabVesselLength) %>%
+  distinct()
+
+LEVesselLengthErr <- LEVesselLength[is.na(LEVesselLength$VocabVesselLength),]
+datatable(LEVesselLengthErr) 
+```
+
+### VMSEnabled
+
+Check Logbook VMSEnabled with ICES vocabulary //vocab.ices.dk/?ref=316
+```{r}
+#Check Logbook VMSEnabled
+VMSEnabled <- getCodeList("YesNoFields")
+VMSEnabled$VocabVMSEnabled <- VMSEnabled$Key
+
+LEVMSEnabled <- left_join(le, VMSEnabled, by = c("VMSEnabled" = "Key"))%>%
+  select(VMSEnabled, VocabVMSEnabled) %>%
+  distinct()
+
+LEVMSEnabledErr <- LEVMSEnabled[is.na(LEVMSEnabled$VocabVMSEnabled),]
+datatable(LEVMSEnabledErr) 
+```
+
+
+# Comparisons
+___
+
+
+```{r}
+le %>% count(Year, MetierL6, name = "logbook records") %>% 
+  full_join(ve %>% count(Year, MetierL6, name = "vms records")) %>% 
+  kable(caption = "Comparison of Metier level 6 reporting between logbook records and VMS records")
+```

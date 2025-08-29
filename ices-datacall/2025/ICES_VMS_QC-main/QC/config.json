@@ -1,0 +1,12 @@
+
+{
+"all_countries" : ["BE", "DE", "DK", "EE", "FI", "FR", "IE",
+"LV", "LT", "NL", "PL", "SE", "PT", "ES", "GB", "IS", "NO","FAR","GRE", "RU"],
+"countries": [ "LV" ],
+"years": 2025,
+"data_dir": "data/data_2025",
+"report_dir": "QC/reports_2025",
+"LE_session_ID": 59128,
+"VE_session_ID": 59127,
+"db_connection": "Driver={SQL Server};Server=SQL10;Database=DATSU;Trusted_Connection=yes"
+}
