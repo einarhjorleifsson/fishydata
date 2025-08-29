@@ -1,3 +1,4 @@
+# Check out: https://github.com/quarto-dev/quarto-cli/discussions/13040
 library(conflicted)
 library(duckdbfs)
 suppressWarnings(library(vmstools))
@@ -25,7 +26,11 @@ iv_target <- getCodeList("TargetAssemblage")$Key
 iv_met6 <-   getCodeList("Metier6_FishingActivity")$Key
 iv_yesno <-  getCodeList("YesNoFields")$Key
 iv_country <- getCodeList("ISO_3166")$Key
-# native stuff -----------------------------------------------------------------
+## native stuff ----------------------------------------------------------------
+# There is confusion on this, needs to be fixed
+exclude_gear <- c("FPO", "GND", "LHP", "MIS")
+exclude_met5 <- c("FPO_DEF", "GND_SPF", "LHP_FIF", "MIS_DWF")
+
 vessels <- 
   open_dataset(here("data/vessels/vessels_iceland.parquet")) |> 
   mutate(loa_class = cut(loa,
@@ -33,7 +38,7 @@ vessels <-
                          right = FALSE,
                          include.lowest = TRUE,
                          labels = iv_lclass)) |> 
-  select(vid, kw_total, loa_class) |> 
+  select(vid, kw_total, loa_class, loa) |> 
   mutate(VE_ID = row_number(),
          VE_ID = as.character(VE_ID),
          VE_ID = paste0("IS", str_pad(VE_ID, pad = "0", width = 4)))
@@ -46,7 +51,9 @@ trail <-
          .cid > 0,
          whack == FALSE,
          !is.na(.sid),
-         between(speed, s1, s2))
+         between(speed, s1, s2),
+         between(time, t1, t2))
+
 midpoint <- 
   trail |> 
   select(.sid, lb_base, lon, lat) |> 
@@ -57,10 +64,11 @@ midpoint <-
   filter(.row_number == floor(total/2)) |> 
   mutate(in_stk = "Y")
 LB <- 
-  open_dataset(here("data/logbooks/station-for-ais.parquet")) |> 
+  open_dataset(here("data/logbooks/station-for-ais.parquet")) |>
   filter(between(year(date), 2009, 2024)) |>
   # this should be fixed upstream - about 0.05% of data
   distinct(vid, t1, t2, .keep_all = TRUE)
+    
 
 # Processsing ------------------------------------------------------------------
 
@@ -95,7 +103,8 @@ lb <-
   mutate(kw_fishing_days = fishing_days * kw_total) |> 
   mutate(
     checks = 
-      case_when(is.na(catch_total) ~ "01 catch missing",
+      case_when(gear %in% exclude_gear ~ "00 excluded gear",
+                is.na(catch_total) ~ "01 catch missing",
                 is.na(agf_gid) ~ "02 agf gid missing",
                 is.na(loa_class) & is.na(kw_total) ~ "03 loa and kw missing",
                 is.na(loa_class) & !is.na(kw_total) ~ "04 loa missing",
@@ -107,12 +116,15 @@ lb <-
                 is.na(lat) ~ "10 lat missing",
                 !between(lon, -44, 69) ~ "11 lon outside range",
                 !between(lat, 36, 85) ~ "11 lat outside range",
+                loa == 0 ~ "12 Vessel zero length",
                 .default = "ok"))
+
 lb |> 
   count(checks) |> 
   collect() |> 
   arrange(checks) |> 
-  mutate(p = round(n / sum(n, na.rm = TRUE) * 100, 3))
+  mutate(p = round(n / sum(n, na.rm = TRUE) * 100, 3)) |> 
+  knitr::kable()
 lb <- 
   lb |> 
   filter(checks == "ok") |>
@@ -223,9 +235,30 @@ lb_summary |>
 ## Trails ----------------------------------------------------------------------
 ### Processing -----------------------------------------------------------------
 
+trail <- 
+  trail |> 
+  mutate(checks = case_when(met5 %in% exclude_met5 ~ "00 excluded gear",
+                            is.na(loa) ~ "01 loa missing",
+                            loa == 0 ~ "02 loa zero",
+                            dt / (3600) > 2 ~ "03 interval greater than 2 hours",
+                            dt < 5 ~ "03 interval less than 30 seconds", 
+                            .default = "ok"))
+trail |> 
+  count(checks) |> 
+  collect() |> 
+  arrange(checks) |> 
+  mutate(p = round(n / sum(n, na.rm = TRUE) * 100, 2)) |> 
+  knitr::kable(caption = "Rows to be filtered")
+
+trail <- 
+  trail |> 
+  filter(checks == "ok") |> 
+  select(-c(checks))
+
 ### Aggregate and summarise ----------------------------------------------------
 trail_summary <-
   trail |> 
+  select(-c(loa)) |> 
   # Should be fixed/checked upstream
   filter(!is.na(dt), !is.na(dd)) |> 
   # Should also be fixed/checked upstream
@@ -260,7 +293,7 @@ trail_summary <-
     No_Records = n(),
     AverageFishingSpeed = mean(speed, na.rm = TRUE),
     FishingHour = sum(dt, na.rm = TRUE) / (60 * 60),       # dt is in seconds
-    AverageInterval = mean(dt, na.rm = TRUE) / 60,         # minutes
+    AverageInterval = mean(dt, na.rm = TRUE) / (60 * 60),  # hours!
     AverageVesselLength = mean(loa, na.rm = TRUE),         # meters
     AveragekW = mean(kw_total, na.rm = TRUE),
     kWFishingHour = sum(kw_total * dt, na.rm = TRUE) / (60 * 60),
