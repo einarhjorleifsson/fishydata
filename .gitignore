@@ -26,5 +26,6 @@ docs
 
 *.html
 *.zip
+*.csv
 
 /.quarto/

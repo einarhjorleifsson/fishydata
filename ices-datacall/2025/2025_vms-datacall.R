@@ -8,58 +8,7 @@ library(here)
 library(nanoparquet)
 library(tictoc)
 conflict_prefer(name = "filter", winner = "dplyr")
-
 lubridate::now() |> print()
-
-# Specs of final tables --------------------------------------------------------
-## Logbooks --------------------------------------------------------------------
-## Final variables, type and order
-#  | Field               | Type         | Required | Description               |
-#  |---------------------|--------------|----------|---------------------------|
-#  | RecordType          | char(2)      | Yes      | "LE" for logbook records  |
-#  | CountryCode         | char(3)      | Yes      | ISO 3166-1 alpha-3 code   |
-#  | Year                | char(4)      | Yes      | Year of data              |
-#  | Month               | int(2)       | Yes      | Month of data             |
-#  | NoDistinctVessels   | int(5)       | Yes      | Distinct vessels          |
-#  | AnonymizedVesselID  | nvarchar(500)| Yes      | Anonymised vessel IDs     |
-#  | ICESrectangle       | char(4)      | Yes      | ICES rectangle            |
-#  | MetierL4            | char(25)     | Yes      | Gear type level 4         |
-#  | MetierL5            | char(50)     | Yes      | Target assemblage         |
-#  | MetierL6            | char(40)     | Yes      | Metier level 6            |
-#  | VesselLengthRange   | char(20)     | Yes      | Vessel length class       |
-#  | VMSEnabled          | char         | No       | Trip has VMS ("Y"/"N")    |          |
-#  | FishingDays         | float(15)    | Yes      | Number of fishing days    |
-#  | kWFishingDays       | float(15)    | No       | kW × fishing days         |
-#  | TotWeight           | float(15)    | Yes      | Total catch weight (kg)   |
-#  | TotValue            | float(15)    | No       | Total catch value (EUR)   |
-## Trails ----------------------------------------------------------------------
-## Final variables, type and order
-# | Field                | Type         | Required | Description               |
-# |----------------------|--------------|----------|---------------------------|
-# | RecordType           | char(2)      | Yes      | "VE" for VMS records      |
-# | CountryCode          | char(3)      | Yes      | ISO 3166-1 alpha-3 code   |
-# | Year                 | char(4)      | Yes      | Year of data              |
-# | Month                | int(2)       | Yes      | Month of data             |
-# | NoDistinctVessels    | int(5)       | Yes      | Distinct vessels          |
-# | AnonymizedVesselID   | nvarchar(500)| Yes      | Anonymised vessel IDs     |
-# | Csquare              | nvarchar(15) | Yes      | C-square reference (0.05  |
-# | MetierL4             | char(25)     | Yes      | Gear type level 4         |
-# | MetierL5             | char(50)     | Yes      | Target assemblage         |
-# | MetierL6             | char(40)     | Yes      | Metier level 6            |
-#-| VesselLengthRange    | char(20)     | Yes      | Vessel length class       |
-# | Habitat              | nvarchar     | No       | MSFD Habitat type         |
-# | Depth                | nvarchar     | No       | Depth range               |
-# | No_Records           | int          | Yes      | Number of VMS records     |
-# | AverageFishingSpeed  | float(15)    | Yes      | Fishing speed [knots}     |
-# | FishingHour          | float(15)    | Yes      | Fishing hours             |
-# | AverageInterval      | float(10)    | Yes      | Mean polling interval (minutes)            |
-# | AverageVesselLength  | float(15)    | Yes      | Average vessel length (m) |
-#-| AveragekW            | float(15)    | Yes      | Average engine power (kW) |
-# | kWFishingHour        | float(15)    | Yes      | kW × fishing hours        |
-# | SweptArea            | float        | No       | Swept area (km²)          |
-# | TotWeight            | float(15)    | Yes      | Total catch weight (kg)   |
-# | TotValue             | float(15)    | No       | Total catch value (EUR)   |
-#-| AverageGearWidth     | float(15)    | Yes      | Average gear width (km)   |
 
 # data -------------------------------------------------------------------------
 ## CSquare resolution ----------------------------------------------------------
@@ -76,8 +25,7 @@ iv_target <- getCodeList("TargetAssemblage")$Key
 iv_met6 <-   getCodeList("Metier6_FishingActivity")$Key
 iv_yesno <-  getCodeList("YesNoFields")$Key
 iv_country <- getCodeList("ISO_3166")$Key
-
-
+# native stuff -----------------------------------------------------------------
 vessels <- 
   open_dataset(here("data/vessels/vessels_iceland.parquet")) |> 
   mutate(loa_class = cut(loa,
@@ -171,6 +119,8 @@ lb <-
   select(-checks)
 
 ### Aggregate and summarise ----------------------------------------------------
+dx_ir <- 1
+dy_ir <- dx_ir / 2
 lb_summary <- 
   lb |> 
   mutate(RecordType = "LE",
@@ -178,8 +128,8 @@ lb_summary <-
          Year = year(date),
          Month = month(date),
          # Midpoint of ICES rectangles
-         lon = lon %/% 1 * 1 + 1/2,
-         lat = lat %/% 0.5 * 0.5 + 0.5 / 2) |> 
+         lon = lon %/% dx_ir * dx_ir + dx_ir / 2,
+         lat = lat %/% dy_ir * dy_ir + dy_ir / 2) |> 
   group_by(
     RecordType, 
     CountryCode, 
@@ -261,24 +211,19 @@ gt(
     footnote = md('Non mandatory fields can include null values if not available'),
     locations = cells_stub( rows = c('TotValue'))
   )
-
 ### Export ---------------------------------------------------------------------
 lb_summary |> 
-  write.table(file = here("ices-datacall/2025_logbooks.csv"),
+  write.table(file = here("ices-datacall/2025/ICES_LE_IS.csv"),
               na = "",
               row.names = FALSE,
               col.names = TRUE,
               sep = ",",
               quote = FALSE)
-lb_summary |>
-  write_parquet(file = "/net/hafgola/var/ftp/pub/data/ices_datacall/2025_logbooks.parquet")
-system("chmod a+r /net/hafgola/var/ftp/pub/data/ices_datacall/2025_logbooks.parquet")
+
 ## Trails ----------------------------------------------------------------------
 ### Processing -----------------------------------------------------------------
 
 ### Aggregate and summarise ----------------------------------------------------
-dx_ir <- 1
-dy_ir <- dx_ir / 2
 trail_summary <-
   trail |> 
   # Should be fixed/checked upstream
@@ -294,8 +239,8 @@ trail_summary <-
             by = join_by(.sid, lb_base)) |> 
   mutate(RecordType = "VE",
          CountryCode = "IS",
-         lon = lon%/%dx_ir * dx_ir + dx_ir/2,
-         lat = lat%/%dy_ir * dy_ir + dy_ir/2) |>
+         lon = lon%/%dx * dx + dx/2,
+         lat = lat%/%dy * dy + dy/2) |>
   group_by(.sid, lb_base) |> 
   mutate(catch = catch_total / n()) |> 
   ungroup() |> 
@@ -440,28 +385,14 @@ trail_summary |>
   count(MetierL4, has_sa) |> 
   spread(has_sa, n)
 
-
-
 ### Export ---------------------------------------------------------------------
 trail_summary |> 
-  write.table(file = here("ices-datacall/2025_trails.csv"), 
+  write.table(file = here("ices-datacall/2025/ICES_VE_IS.csv"), 
               na = "",
               row.names = FALSE,
               col.names = TRUE,
               sep = ",",
               quote = FALSE)
-trail_summary |> 
-  write.table(file = "/net/hafgola/var/ftp/pub/data/ices_datacall/2025_trails.csv", 
-              na = "",
-              row.names = FALSE,
-              col.names = TRUE,
-              sep = ",",
-              quote = FALSE)
-system("chmod a+r /net/hafgola/var/ftp/pub/data/ices_datacall/2025_trails.csv")
-trail_summary |>
-  write_parquet(file = "/net/hafgola/var/ftp/pub/data/ices_datacall/2025_trails.parquet")
-system("chmod a+r /net/hafgola/var/ftp/pub/data/ices_datacall/2025_trails.parquet")
-
 
 # Session info -----------------------------------------------------------------
 devtools::session_info()
