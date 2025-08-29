@@ -250,6 +250,7 @@ lclass <-
 
 ```{r get-data}
 # Get data ---------------------------------------------------------------------
+print(veDataPath)
 ve <- read_ve(veDataPath)
 ve <- bind_cols(ve,
             CSquare2LonLat(ve$Csquare, degrees = 0.05) %>% 
