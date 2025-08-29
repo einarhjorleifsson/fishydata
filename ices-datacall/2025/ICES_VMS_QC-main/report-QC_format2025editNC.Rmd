@@ -3,10 +3,11 @@ title: "ICES VMS datacall quality check report"
 subtitle: "Country: `r params$country`<br>VE Session ID: `r params$ve_id`<br>LE Session ID: `r params$le_id`"
 date: "`r lubridate::now()`"
 params:
-  country: NULL
-  ve_id: NULL
-  le_id: NULL
-  data_dir: NULL
+  country: "IS"
+  ve_id: "VE"
+  le_id: "LE"
+  data_dir: "ices-datacall/2025"
+  personal_test: TRUE
 output: 
   html_document: 
     fig_width: 9
@@ -32,20 +33,30 @@ library(kableExtra)
 library(cowplot)
 library(tidyr)
 library(jsonlite)
+library(here)
 options(digits = 4)
 
+if(interactive()) {
+  params = list(country = "IS", ve_id = "VE", le_id = "LE", data_dir = "ices-datacall/2025",
+                personal_test = TRUE)
+}
 # Get parameters from YAML header
 country <- as.character(params$country)
 ve_id <- as.character(params$ve_id)  
 le_id <- as.character(params$le_id)
+data_dir <- params$data_dir
+personal_test <- params$personal_test
+
+# Logbooks have header prior to uploading, not if QC run by ICES seq
+le_header <- ifelse(personal_test, TRUE, FALSE)
 
 # Load config to get data directory (since R sessions are isolated)
-config <- read_json("QC/config.json", simplifyVector = TRUE)
-
+if(!personal_test) {
+ config <- read_json("QC/config.json", simplifyVector = TRUE)
+}
 # Construct file paths - use absolute paths to avoid working directory issues
-veDataPath <- file.path(getwd(), config$data_dir, paste0("ICES_VE_", country, ".csv"))
-leDataPath <- file.path(getwd(), config$data_dir, paste0("ICES_LE_", country, ".csv"))
-
+veDataPath <- here(data_dir, paste0("ICES_", ve_id, "_", country, ".csv"))
+leDataPath <- here(data_dir, paste0("ICES_", le_id, "_", country, ".csv"))
 
 # Functions --------------------------------------------------------------------
 grade <-function (x, dx) {
@@ -160,10 +171,10 @@ CSquare2LonLat <- function(csqr,degrees){
 return(data.frame(SI_LATI=lat,SI_LONG=lon))}
 
 
-read_le <- function(file) {
+read_le <- function(file, header = TRUE) {
   data <- read.csv(file,
                    stringsAsFactors = FALSE,
-                   header = FALSE,  # LE files don't have headers
+                   header = header,  # LE files don't have headers once uploaded
                    na.strings = "NULL") %>% 
     tidyr::as_tibble()
   
@@ -246,11 +257,13 @@ ve <- bind_cols(ve,
                      lat = SI_LATI)) %>% 
     as_tibble()
 
-ve <- ve %>% 
-  filter(!is.na(lon)) %>% 
-  mutate(isq = d2ir(lat, lon))
+ve <- 
+  ve %>% 
+  # This really should have been checked upstream
+  #filter(!is.na(lon)) %>% 
+  mutate(isq = d2ir(lon, lat))
 
-le <- read_le(leDataPath)
+le <- read_le(leDataPath, le_header)
 
 #file <- veDataPath 
 # some bounds ------------------------------------------------------------------
@@ -787,7 +800,7 @@ ve %>%
 ```{r depth_by_year}
 # Create colour palette with red for NA
 depth_data <- ve %>% 
-  group_by(Year, DepthRange) %>% 
+  group_by(Year, DepthRange = Depth) %>% 
   summarise(FH = sum(FishingHour, na.rm=T), .groups = "drop") %>% 
   mutate(DepthStratum = ifelse(is.na(DepthRange), "NA", as.character(DepthRange)))
 
@@ -832,7 +845,7 @@ plot(legend_only)
 ### Depth strata frequency table
 ```{r depth_summary}
 ve %>% 
-  group_by(DepthRange) %>% 
+  group_by(DepthRange = Depth) %>% 
   summarise(
     Records = n(),
     Total_FH = round(sum(FishingHour), 0),
@@ -1248,7 +1261,8 @@ ve %>%
 ## Value
 
 ```{r value-by-gear-year, fig.width = 14, fig.height = 8}
-
+check_values <- unique(ve$TotValue)
+no_values <- ifelse(length(check_values) == 1 & is.na(check_values), TRUE, FALSE)
 # Clean and summarise the data with robust handling
 value_summary <- ve %>% 
   filter(!is.na(TotValue), is.finite(TotValue)) %>%  # Remove problematic values
@@ -1268,6 +1282,7 @@ value_summary %>%
 
 
 # Create plot with additional safeguards
+if(!no_values) {
 value_summary %>% 
   ggplot(aes(Year, value)) +
   geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
@@ -1294,6 +1309,7 @@ value_summary %>%
     axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
     axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
   )
+}
 ```
 
 
@@ -1307,6 +1323,7 @@ ve %>%
   spread(Year, vpkwh) %>% 
   kable(caption = "Median value [EUR] per kilowhathour")
 
+if(!no_values) {
 ve %>% 
   group_by(Year, MetierL4) %>% 
   summarise(vpkwh = median(TotValue/kWFishingHour, na.rm=T),
@@ -1336,6 +1353,7 @@ ve %>%
     axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
     axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
   )
+}
 ```
 
 ##  Median price per kg
@@ -1348,6 +1366,7 @@ ve %>%
   spread(Year, ppkg) %>% 
   kable(caption = "Median value per kg")
 
+if(!no_values) {
 ve %>% 
   group_by(Year, MetierL4) %>% 
   summarise(ppkg = median(TotValue/TotWeight, na.rm=T),
@@ -1375,6 +1394,7 @@ ve %>%
     axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
     axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
   )
+}
 ```
 
 
