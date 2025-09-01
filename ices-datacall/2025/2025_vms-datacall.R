@@ -1,3 +1,25 @@
+# TODO: 2025-08-30
+## QC issues -------------------------------------------------------------------
+# * Shrimp and nephrops missing as target (met 5)
+#  * Why - Now the target is set as DEF in the gear table
+#  * ACTION - Replace with CRU in the gear table
+#  * DONE
+# * Area swept missing for some mobile gear
+#  * ACTION - In LB set a width when is.na(width) - use agf_gid as the conditional test
+#   * Use some median/mean value for the missing values
+#  * DONE
+# * Check if capping has been applied
+#  * Gear width in logbooks
+#  * Maximum catch - logbooks and vms
+#  * ...
+# * VMS data
+#   * In the QC report year 2023 and 2024 show no difference in effort
+#   * ACTION: Seems like a coding error in the QC, no change in datacall code
+#   * DONE
+
+
+
+
 # Check out: https://github.com/quarto-dev/quarto-cli/discussions/13040
 library(conflicted)
 library(duckdbfs)
@@ -27,7 +49,8 @@ iv_met6 <-   getCodeList("Metier6_FishingActivity")$Key
 iv_yesno <-  getCodeList("YesNoFields")$Key
 iv_country <- getCodeList("ISO_3166")$Key
 ## native stuff ----------------------------------------------------------------
-# There is confusion on this, needs to be fixed
+# There is confusion on metier5 vs target among different files
+#  Needs to be fixed upstream
 exclude_gear <- c("FPO", "GND", "LHP", "MIS")
 exclude_met5 <- c("FPO_DEF", "GND_SPF", "LHP_FIF", "MIS_DWF")
 
@@ -52,7 +75,12 @@ trail <-
          whack == FALSE,
          !is.na(.sid),
          between(speed, s1, s2),
-         between(time, t1, t2))
+         between(time, t1, t2)) |> 
+  # last minute change - also in logbooks
+  #  Next time: No mets in preprocessed logbooks nor trail
+  mutate(met6 = case_when(met6 == "OTB_DEF_>=40_0_0" & agf_gid == 7 ~ "OTB_CRU_90-99_1_120",
+                          met6 == "OTB_DEF_>=40_0_0" & agf_gid == 8 ~ "OTB_CRU_40-54_0_0",
+                          .default = met6))
 
 midpoint <- 
   trail |> 
@@ -68,13 +96,73 @@ LB <-
   filter(between(year(date), 2009, 2024)) |>
   # this should be fixed upstream - about 0.05% of data
   distinct(vid, t1, t2, .keep_all = TRUE)
-    
+
 
 # Processsing ------------------------------------------------------------------
 
 ## Logbooks --------------------------------------------------------------------
 ### Processing -----------------------------------------------------------------
-gear_no_width <- c("GND", "GNS", "LLS", "MIS", "PS", "LHM", "GNS", "FPO", "DIV")
+
+#### Gear width ----------------------------------------------------------------
+# 1. Find median width of towed gear and use those values to replace missing values
+#    Pelagic gear here excluded though
+# 2. Cap gear width - winzoriztion
+
+# 1. Missingness (NAs) - find median and use that for NA's
+#    No width for pelagics - are made NA downstream
+LB |> 
+  filter(agf_gid %in% c(6:8, 15)) |> 
+  mutate(has_width = ifelse(!is.na(width), 1, 0)) |> 
+  group_by(agf_gid) |> 
+  summarise(total = n(),
+            has_width = sum(has_width),
+            min = min(width, na.rm = TRUE),
+            median = median(width, na.rm = TRUE),
+            mean = mean(width, na.rm = TRUE),
+            max = max(width, na.rm = TRUE)) |> 
+  collect() |> 
+  mutate(p = has_width / total,
+         .after = has_width) |> 
+  arrange(agf_gid)
+width_agf_gid6 <- 100
+width_agf_gid7 <- 45    # Rækjuvarpa - dubios, most likely larger for offshore
+width_agf_gid8 <- 60    # Humarvarpa - larett opnun i fiskar
+width_agf_gid15 <- 2
+## 
+LB <- 
+  LB |> 
+  mutate(width = case_when(agf_gid %in% c(6:8, 15) & !is.na(width) ~ width,
+                           agf_gid == 6 & is.na(width) ~ width_agf_gid6,
+                           agf_gid == 7 & is.na(width) ~ width_agf_gid7,
+                           agf_gid == 8 & is.na(width) ~ width_agf_gid8,
+                           agf_gid == 15 & is.na(width) ~ width_agf_gid15,
+                           .default = NA))   # all other gear get an NA
+# Capping
+LB |> 
+  group_by(agf_gid) |> 
+  summarise(n = n(),
+            max = max(width)) |> 
+  collect() |> 
+  drop_na() |> 
+  arrange(agf_gid) |> 
+  knitr::kable(caption = "Maximum reported gear width")
+LB |> 
+  filter(agf_gid %in% c(6:8, 15)) |> 
+  collect() |> 
+  ggplot(aes(width)) +
+  geom_histogram() +
+  facet_wrap(~ agf_gid, scales = "free")
+LB <- 
+  LB |> 
+  mutate(width = case_when(agf_gid == 7 & width > 65 ~ 65,
+                           agf_gid == 8 & width > 30 ~ 30,
+                           .default = width))
+LB |> 
+  filter(agf_gid %in% c(6:8, 15)) |> 
+  collect() |> 
+  ggplot(aes(width)) +
+  geom_histogram() +
+  facet_wrap(~ agf_gid, scales = "free")
 lb <- 
   LB |> 
   left_join(midpoint |> select(.sid, lb_base, lon_ais = lon, lat_ais = lat, in_stk),
@@ -89,14 +177,6 @@ lb <-
             by = join_by(vid)) |> 
   left_join(gear,
             by = join_by(agf_gid)) |> 
-  # this should be fixed upstream
-  mutate(
-    width = 
-      case_when(gear %in% gear_no_width ~ NA,
-                gear == "DRB" ~ 2,
-                gear == "OTB" ~ 100,
-                gear == "OTM" ~ 100,
-                .default = NA)) |> 
   group_by(vid, date) |> 
   mutate(fishing_days = 1 / n()) |> 
   ungroup() |> 
@@ -223,6 +303,11 @@ gt(
     footnote = md('Non mandatory fields can include null values if not available'),
     locations = cells_stub( rows = c('TotValue'))
   )
+
+### Expect checks --------------------------------------------------------------
+
+
+
 ### Export ---------------------------------------------------------------------
 lb_summary |> 
   write.table(file = here("ices-datacall/2025/ICES_LE_IS.csv"),
