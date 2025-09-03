@@ -115,7 +115,7 @@ VIDs <-
 
 # Landings ---------------------------------------------------------------------
 landings_date_lumpsucker <- 
-  ln_agf(con) |>
+  nanoparquet::read_parquet(here::here("data/landings/agf_stations.parquet")) |> 
   filter(vid %in% VIDs,
          gid %in% c(3, 4)) |> 
   collect() |> 
@@ -174,7 +174,7 @@ effort_by_area |>
        caption = "Lumpsucker effort outside and inside area closures") +
   scale_x_continuous(breaks = seq(2008, 2024, by = 2)) +
   scale_y_continuous(breaks = seq(0, 1, by = 0.1)) +
-  scale_fill_manual(values = pal) +
+  #scale_fill_manual(values = pal) +
   geom_vline(xintercept = 2019.5)
 ```
 
@@ -216,7 +216,7 @@ ais <-
   select(vid, date, time, lon, lat, speed) |> 
   to_duckdb()
 lan <- 
-  ln_agf(con) |> 
+  nanoparquet::read_parquet(here::here("data/landings/agf_stations.parquet")) |> 
   filter(gid == 2) |> 
   collect() |> 
   mutate(date = as_date(date)) |> 

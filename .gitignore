@@ -3,6 +3,12 @@
 .RData
 .Ruserdata
 
+*.html
+*.zip
+*.csv
+*.pdf
+*.tif
+
 scripts/older
 
 data
@@ -23,9 +29,8 @@ _freeze
 _site
 garbage
 docs
+index_cache
+index_files
 
-*.html
-*.zip
-*.csv
 
 /.quarto/

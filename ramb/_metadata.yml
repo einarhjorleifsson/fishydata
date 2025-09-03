@@ -17,6 +17,8 @@ execute:
   echo: true
   message: false
   warning: false
+  cache: true
+  freeze: true
 
 # Default author
 author:
@@ -37,3 +39,4 @@ format:
     warning: false
     echo: true
     code-fold: false
+
