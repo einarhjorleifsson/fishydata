@@ -1,0 +1,83 @@
+---
+title: "On duplicates in the new logbooks"
+author: Einar Hjörleifsson
+description: ""
+date: "2025-08-19"
+categories: [code, rtip]
+echo: true
+---
+
+```{r}
+library(tidyverse)
+library(mar)
+# Functions --------------------------------------------------------------------
+lb_trip_new <- function(con) {
+  tbl_mar(con, "adb.trip_v") |> 
+    select(trip_id, 
+           vid = vessel_no,
+           T1 = departure,
+           hid1 = departure_port_no,
+           T2 = landing,
+           hid2 = landing_port_no,
+           source)
+}
+lb_station_new0 <- function(con) {
+  tbl_mar(con, "adb.station_v") |> 
+    select(trip_id,
+           station_id,
+           gid = gear_no,
+           t1 = fishing_start,
+           t2 = fishing_end,
+           lon = longitude,
+           lat = latitude,
+           lon2 = longitude_end,
+           lat2 = latitude_end,
+           z1 = depth,
+           z2 = depth_end,
+           tow_start,
+           everything())
+}
+lb_base_new <- function(con) {
+  lb_trip_new(con) |> 
+    inner_join(lb_station_new0(con) |> 
+                 select(trip_id:tow_start),
+               by = "trip_id") |> 
+    select(vid, gid, t1:tow_start, everything()) |> 
+    mutate(whack = case_when(between(lon, 10, 30) & between(lat, 62.5, 67.6) ~ "mirror",
+                             between(lon, -3, 3) & gid != 7 ~ "ghost",
+                             .default = "ok"),
+           lon = ifelse(whack == "mirror",
+                        -lon,
+                        lon),
+           lon2 = ifelse(whack == "mirror",
+                         -lon2,
+                         lon2))
+}
+lb_catch_new <- function(con) {
+  tbl_mar(con, "adb.catch") |> 
+    mutate(catch = case_when(condition == "GUTT" ~ quantity / 0.8,
+                             condition == "UNGU" ~ quantity,
+                             .default = NA)) |> 
+    select(station_id = fishing_station_id,
+           sid = species_no, 
+           catch, 
+           weight, 
+           quantity, 
+           condition, 
+           catch_type = source_type)
+}
+
+
+con <- connect_mar()
+trips <- 
+  lb_trip_new(con) |> 
+  collect() |> 
+  group_by(vid, T1, T2) |> 
+  mutate(replicates = n(),
+         source = n_distinct(source)) |> 
+  ungroup()
+```
+
+
+The total number of records in the trip table is `r nrow(trips)` while the number of distinct vessel, departure and arrivals are `r trips |> dplyr::distinct(vid, T1, T2) |> nrow()`, a diference of some `r (nrow(trips)) - (trips |> dplyr::distinct(vid, T1, T2) |> nrow())` records.
+

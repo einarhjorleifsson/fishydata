@@ -1,0 +1,232 @@
+---
+title: "On ping assignments"
+author: Einar Hjörleifsson
+description: ""
+date: "2025-09-03"
+categories: [code, rtip]
+echo: true
+---
+
+## Preamble
+
+```{r}
+# Function to assign LOGBOOK data for parameters with more than one value per trip
+#' For example , fishing trips using more than 1 gear or visiting more than 1 ICES RECTANGLE
+#' The function try: 
+#' 1) Match teh Logbook and VMS by the LE_CDAT and VMS date fields
+#' 2) ONLY IF YOU HAVE HAUL START and END dates: If still some TACSAT records with NA , it try to match by 
+#' start and end dates of the haul
+#' 3) If after step 1 and step2 still some remaining remaining TACSAT records with NULL values it choose
+#' the value with more related landings for that trip ( e.g. gear with more captures related)
+
+trip_assign <- function(tacsatp, eflalo, col = "LE_GEAR", haul_logbook = F) {
+  
+  # 1) Get teh TRIPS with MORE THAN ONE GEAR ( or other columns ) REPORTED
+  tst <- data.table::data.table(eflalo)[!is.na(get(col)),.(data.table::uniqueN(get(col))), by=.(FT_REF)]
+  
+  if(nrow(tst[V1>1]) > 0 ){
+    
+    e <- data.table::data.table(eflalo)[FT_REF %in% tst[V1>1]$FT_REF]
+    
+    tz <- data.table::data.table(tacsatp)[FT_REF  %in% tst[V1>1]$FT_REF]
+    tz[, (col) := NULL] 
+    
+    ## 2)  Try to match LOGBOOKS TRIPS with VMS RECORDS  by TRIP   ( FT_REF ) and CATCH DATE ( LE_CDAT)  ########
+    
+    ## Check if the column e.g. LE_GEAR in eflalo by TRIP and DAY has a unique VALUE .          
+    
+    
+    order_col <- "LE_KG_TOT"  # the column you want to order by (string)
+    
+    e2 <- e[order(-get(order_col)),  ## order the records by total LE_KG 
+            .(get(col)[1L]), 
+            by = .(FT_REF, LE_CDAT)]
+    
+    names(e2) <- c("FT_REF", "LE_CDAT", col)
+    
+    tz <- tz |>
+      dplyr::left_join(e2, by = c("FT_REF" = "FT_REF", "SI_DATE" = "LE_CDAT"), relationship = "many-to-many")
+    
+    tz <- unique(tz)  #|>  as.data.frame()
+    
+    if(haul_logbook){
+      
+      #If some are still missing, use haul information  ( LE_SDATIM , LE_EDATIM) to get the closest time
+      
+      if(nrow(tz[is.na(get(col))]) > 0){
+        
+        if  ("LE_SDATTIM" %in% names(e)) {
+          
+          
+          if ( ! class(e$FT_DDATIM )[1] == "POSIXct" )  {
+            #set formats right
+            e$FT_DDATIM <- as.POSIXct(paste(e$FT_DDAT, e$FT_DTIME,
+                                            sep = " "), tz = "GMT", format = "%d/%m/%Y  %H:%M")
+            e$FT_LDATIM <- as.POSIXct(paste(e$FT_LDAT, e$FT_LTIME,
+                                            sep = " "), tz = "GMT", format = "%d/%m/%Y  %H:%M")
+            
+            e$LE_SDATTIM <- as.POSIXct(paste(e$LE_SDAT, e$LE_STIME,
+                                             sep = " "), tz = "GMT", format = "%d/%m/%Y  %H:%M")
+            e$LE_EDATTIM <- as.POSIXct(paste(e$LE_EDAT, e$LE_ETIME,
+                                             sep = " "), tz = "GMT", format = "%d/%m/%Y  %H:%M")
+          }
+          
+          tx <- tz[is.na(get(col))]
+          tx[, (col) := NULL]
+          
+          
+          
+          q1 = e[,.(meantime = LE_SDATTIM), by = .(get(col), FT_REF)]
+          q2 = e[,.(meantime = LE_EDATTIM), by = .(get(col), FT_REF)]
+          mx <- rbind(q1 ,q2 )
+          names(mx) <-  c(col, "FT_REF", "meantime")
+          data.table::setkey(mx, FT_REF, meantime)
+          tx <- mx[tx, roll="nearest"]
+          tx$meantime <- NULL
+
+          tx[, time := SI_DATIM]
+
+          data.table::dsetkey(tx, FT_REF, time)
+          tz <- data.table::rbindlist(list(tz[!is.na(get(col))], tx), fill = T)
+          
+        } else {
+          print("dataframe EFLALO  has no LE_SDATTIM column")
+        }
+      }
+    } # End of haul_logbooks == TRUE
+    
+    
+    ## 3) Records didnt match by TRIP and LE_CDAT get assigned with  the GEAR ( or other coumns ) with more LANDINGS KG reported   ########
+    #   RECORDS DID NOT MATCH BY DATE will be ASSIGNED  to the COLUMN category with most value in LANDINGS KG
+    
+    if(nrow(  tz[is.na(get(col))] ) > 0){
+      
+      ft_ref_isna = tz |>  dplyr::filter ( is.na ( get(col)  )) |>  dplyr::distinct(FT_REF) |> dplyr::pull()
+      tz2 = tz |>  dplyr::filter ( FT_REF %in% ft_ref_isna & is.na ( get ( col)  )  ) |>  as.data.frame()
+      e2 = e |>  dplyr::filter ( FT_REF %in% ft_ref_isna )
+      
+      
+      if(!"LE_KG_TOT" %in% names(e2)){
+        idxkgeur <- colnames(e2)[grepl("LE_KG_|LE_EURO_", colnames(e2))]
+        # Calculate the total KG and EURO for each row
+        e2$LE_KG_TOT <- rowSums(e2[,..idxkgeur], na.rm = TRUE)
+      }
+      
+      highvalue <- e2[,.(LE_KG_TOT = sum(LE_KG_TOT, na.rm = T)), by = .(FT_REF, get(col))]
+      highvalue <- highvalue[,.(get[which.max(LE_KG_TOT)]), by = .(FT_REF)]
+      names(highvalue) <-  c("FT_REF", col)
+      
+      tx2 <- tz2
+      tx2 = tx2 |>  dplyr::select ( - any_of( col )  )
+      tz2 <- tx2 |>  dplyr::inner_join ( highvalue, by =  "FT_REF")
+      
+    }
+    
+    tz = tz |> dplyr::filter(!is.na(get(col)))
+    if(exists("tz2")) {tz = rbind(tz, tz2)}
+    tz = tz |> as.data.frame()
+    
+    return(tz)
+    
+  } else {
+    warning(paste("No more than one value for ", col, " in EFLALO trips"))
+    return(data.frame())
+  }
+}
+```
+
+
+```{r}
+lb <-
+  tibble::tribble(~FT_REF, ~LE_GEAR, ~LE_CDAT,    ~LE_KG_TOT,
+                  "XXX1TRIP", "OTB", "01/01/2000",   2,
+                  "XXX1TRIP", "OTM", "01/01/2000",  10,
+                  "XXX1TRIP", "OTM", "02/01/2000",  1)
+vms <-
+  tibble::tribble(~FT_REF, ~SI_DATE, ~SI_TIME, ~SI_HE, ~SI_DATIM,
+                  "XXX1TRIP", "01/01/2000", "05:52", 328,  "2000-01-01 05:52:00",
+                  "XXX1TRIP", "02/01/2000", "14:00", 200,  "2000-01-02 14:00:00")
+# 
+# source("~/stasi/ices/ICES-VMS-and-Logbook-Data-Call/0_global_functions.R")
+trip_assign(vms, lb, col = "LE_GEAR",  haul_logbook = F)
+```
+
+```{r}
+library(dplyr)
+vms |> 
+  mutate(.rowid = 1:n(), .before = FT_REF) |> 
+  left_join(lb,
+                   by = join_by(FT_REF, SI_DATE == LE_CDAT)) |> 
+  arrange(desc(LE_KG_TOT))
+vms |> 
+  mutate(.rowid = 1:n(), .before = FT_REF) |> 
+  left_join(lb |> 
+              arrange(FT_REF, LE_CDAT, desc(LE_KG_TOT)) |>
+              group_by(FT_REF, LE_CDAT) |> 
+              slice(1),
+                   by = join_by(FT_REF, SI_DATE == LE_CDAT)) |> 
+  arrange(desc(LE_KG_TOT))
+```
+
+```{r}
+#| echo: false
+#| eval: false
+lb <- ramb::eflalo |> select(!starts_with("LE_EURO"))
+lb <- 
+  lb |> 
+  select(!starts_with("LE_KG_")) |> 
+  left_join(lb |> 
+  select(.ride, starts_with("LE_KG_")) |> 
+  gather(var, val, -.ride) |> 
+  group_by(.ride) |> 
+  summarise(LE_KG_TOTAL = sum(val),
+            .groups = "drop"))
+# let's find some trips with more than one gear
+lb |> 
+  group_by(FT_REF) |> 
+  summarise(n_GEAR = n_distinct(LE_GEAR)) |> 
+  filter(n_GEAR > 1) |> 
+  pull(FT_REF) ->
+  trips
+lb <- 
+  lb |> 
+  filter(FT_REF %in% trips)
+vms <- 
+  ramb::tacsat |> 
+  filter(VE_REF %in% unique(lb$VE_REF))
+vmsp <- 
+  vmstools::mergeEflalo2Tacsat(lb |> as.data.frame(), 
+                                     vms |> as.data.frame()) |> 
+  as_tibble() |> 
+  filter(FT_REF != "0")
+
+
+
+lb <- 
+  lb |> 
+  filter(FT_REF %in% vmsp$FT_REF)
+
+lb2 <- 
+  lb |> 
+  mutate(lon = geo::ir2d(LE_RECT)$lon,
+         lat = geo::ir2d(LE_RECT)$lat) |> 
+  group_by(VE_REF, FT_REF, lon, lat) |> 
+  summarise(n = n(),
+            n_gear = n_distinct(LE_GEAR),
+            .groups = "drop")
+vmsp |> 
+  ggplot() +
+  theme_bw() +
+  geom_path(aes(SI_LONG, SI_LATI), colour = "grey") +
+  geom_point(aes(SI_LONG, SI_LATI, colour = SI_SP)) +
+  geom_text(data = lb2,
+             aes(lon, lat, label = n_gear),
+            angle = 45,
+            size = 10,
+            colour = "red") +
+  facet_wrap(~ FT_REF) +
+  scale_colour_viridis_c(option = "inferno") +
+  scale_x_continuous(breaks = -1:10) +
+  scale_y_continuous(breaks = seq(50, 60, by = 0.5))
+```
+

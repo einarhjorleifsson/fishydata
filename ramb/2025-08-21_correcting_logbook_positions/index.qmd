@@ -1,0 +1,98 @@
+---
+title: "Correcting/replacing logbook positions"
+author: Einar Hjörleifsson
+description: "Captains fill in the logbooks, including the geographic position of each activity. There are some errors in them like fishing points being recorded on land. Also the reported precision may be poor like recording to the nearest minute, leading to striations when rasterizing at a reasonably high resolution. Here an attempt is made to obtain 'better' values from the ais-data."
+date: "2025-08-21"
+categories: [code, rtip]
+echo: true
+---
+
+## The approach
+
+### Midpoint
+
+* Start with some 450 million vessel positioning records
+* Filter for vessels out of harbours and operating at fishing speed crops the data down to ~87 million records
+* For each setting (defined by variables '.sid' and 'lb_base') find and filter out the mid-point record (some 1.7 million points remaining)
+  * This is done because we want to keep the lon-lat pairs - hence deriving independently the mean longitude and mean latitude is nonsensical
+* What is of note is that this process takes only some 15 seconds within the duckdb environment
+
+### Correcting logbook positions
+
+* Join the midpoint values from the ais with the logbooks
+* Replace the captains recorded longitute and latitude with the one obtained from the ais.
+  * There are some 6% of logbook records where no ais-match is found - in those cases we just use what was reported
+    * The reason for this is most likely that match between the stk mobileid and the vessel registry was not found
+
+```{r}
+library(duckdbfs)
+library(tidyverse)
+library(patchwork)
+library(here)
+## data ------------------------------------------------------------------------
+midpoint <- 
+  open_dataset(here("data/ais/trail")) |> 
+  filter(between(year, 2009, 2024),
+         .cid > 0,
+         !is.na(.sid),
+         between(speed, s1, s2)) |> 
+  select(.sid, lb_base, lon, lat) |> 
+  group_by(.sid, lb_base) |> 
+  mutate(.row_number = row_number(),
+         total = n()) |> 
+  ungroup() |> 
+  filter(.row_number == floor(total/2)) |> 
+  collect()
+
+dx <- 0.05
+lb <- 
+  open_dataset(here("data/logbooks/station-for-ais.parquet")) |> 
+  filter(between(year(date), 2009, 2024)) |> 
+  # this should be fixed upstream - about 0.05% of data
+  distinct(vid, t1, t2, .keep_all = TRUE) |> 
+  collect() |> 
+  left_join(midpoint |> select(.sid, lb_base, lon_ais = lon, lat_ais = lat)) 
+
+p1 <- 
+  lb |> 
+  mutate(lon = gisland::grade(lon, dx),
+         lat = gisland::grade(lat, dx / 2)) |> 
+  count(lon, lat) |> 
+  filter(between(lon, -30, -10),
+         between(lat, 62.5, 68)) |> 
+  mutate(n = ramb::rb_cap_winsorize(n, 0.75)) |> 
+  ggplot(aes(lon, lat, fill = n)) +
+  theme_void() +
+  geom_tile() +
+  coord_quickmap() +
+  scale_fill_viridis_c(option = "inferno", direction = 1, , guide = "none") +
+  labs(caption = "Original data")
+p2 <- 
+  lb |> 
+  mutate(lon = case_when(!is.na(lon_ais) ~ lon_ais,
+                         .default = lon),
+         lat = case_when(!is.na(lat_ais) ~ lat_ais,
+                         .default = lat)) |> 
+  mutate(lon = gisland::grade(lon, dx),
+         lat = gisland::grade(lat, dx / 2)) |> 
+  count(lon, lat) |> 
+  filter(between(lon, -30, -10),
+         between(lat, 62.5, 68)) |> 
+  mutate(n = ramb::rb_cap_winsorize(n, 0.75)) |> 
+  ggplot(aes(lon, lat, fill = n)) +
+  theme_void() +
+  geom_tile() +
+  coord_quickmap() +
+  scale_fill_viridis_c(option = "inferno", direction = 1, guide = "none") +
+  labs(caption = "Replacement")
+p1 + p2 + plot_layout(ncol = 1)
+```
+
+What is apparent:
+
+* We got rid of a lot of positions recorded on land (those still remaining are the non-matched records)
+* We have a more plausible/nicer distribution of effort
+
+Take note that the grid resolution is 0.05 x 0.025, i.e. roughly equivalent to the c-square resolution of the vms data in the data-call.
+
+

@@ -1,0 +1,117 @@
+---
+title: "Calculating effect of areal closure"
+author: Einar Hjörleifsson
+description: "One may be of interested in a particular area closure. The first question that springs to mind is what effect does it have on fishing? Here we explore some algorithm that may be of use when trying to answer that question."
+date: "2025-08-22"
+categories: [code, rtip]
+echo: true
+---
+
+* Catch distribution by depth
+* Catch composition by depth and longitude
+
+
+
+
+```{r}
+library(duckdbfs)
+library(sf)
+library(tidyverse)
+library(stars)
+library(terra)
+library(tmap)
+tmap_mode("view")
+library(here)
+```
+
+
+```{r}
+#| eval: false
+dx <- 0.005
+dy <- dx / 2   # grid resolution approximately 275 x 275 meters
+q <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  # Not in harbour
+  filter(.cid > 0,                           # .cid positive -> not in harbour
+         whack == FALSE,
+         between(year, 2008, 2024),
+         between(speed, s1, s2),
+         between(time, t1, t2)) |> 
+  mutate(x = lon %/% dx * dx + dx/2,
+         y = lat %/% dy * dy + dy/2) |> 
+  group_by(year, gid_trip, x, y) |> 
+  summarise(dt = sum(dt, na.rm = TRUE) / 60,    # effort as time
+            catch = sum(catch_total, na.rm = TRUE),
+            .groups = "drop")
+g <- 
+  q |> 
+  group_by(gid_trip, x, y) |> 
+  summarise(dt = sum(dt, na.rm = TRUE),
+            catch = sum(catch, na.rm = TRUE),
+            .groups = "drop") |> 
+  collect()
+library(here)
+v1 <- read_sf(here("vernd1.gpkg")) |> st_cast("POLYGON")
+v2 <- read_sf(here("vernd2.gpkg")) |> st_cast("POLYGON")
+v <- st_union(v1, v2)
+z <- 
+  read_sf("/u3/haf/gisland/data/depth/sjomaelingar_dypislinur.gpkg") |> 
+  filter(depth %in% c(300, 400, 500))
+zr <- rast("/u3/haf/gisland/data/gebco_2024_n89.0_s34.0_w-83.0_e69.0.tif")
+g2 <- 
+  g |> 
+  filter(gid_trip == 6) |> 
+  st_as_sf(coords = c("x", "y"),
+           crs = 4326,
+           remove = FALSE) |> 
+  mutate(inside = ramb::rb_st_keep(geometry, v))
+xyz <- terra::extract(zr, g2)
+g2$z <- xyz$`gebco_2024_n89.0_s34.0_w-83.0_e69.0`
+g2 |> 
+  st_drop_geometry() |> 
+  mutate(z = -z) |> 
+  filter(z > 0) |> 
+  mutate(z = santoku::chop(z, seq(0, 1000, by = 100))) |> 
+  group_by(z) |> 
+  reframe(catch = sum(catch, na.rm = TRUE)) |> 
+  mutate(p = catch / sum(catch)) |> 
+  ggplot(aes(z, p)) +
+  geom_col() +
+  coord_flip()
+
+
+g2 |> 
+  st_drop_geometry() |> 
+  group_by(gid_trip, tmp) |> 
+  summarise(dt = sum(dt, na.rm = TRUE),
+            catch = sum(catch, na.rm = TRUE)) |> 
+  group_by(gid_trip) |> 
+  mutate(p = round(catch / sum(catch) * 100, 2)) |> 
+  ungroup() |> 
+  filter(tmp == TRUE)
+  
+
+
+
+g |> 
+  filter(!gid_trip %in% c(9, 10)) |> 
+  group_by(x, y) |> 
+  reframe(z = sum(catch, na.rm = TRUE)) |> 
+  filter(
+       between(x, -30, -10),
+       between(y, 62, 68.5)) |> 
+  mutate(z = ramb::rb_cap_winsorize(z, 0.99)) |> 
+  mutate(z = sqrt(z)) |> 
+  rast(type = "xyz",
+       crs = "epsg:4326") |> 
+  st_as_stars() |> 
+  tm_shape() +
+  tm_raster("z", palette = "-inferno") +
+  tm_shape(v1) +
+  tm_borders() +
+  tm_shape(v2) +
+  tm_borders() +
+  tm_shape(z) +
+  tm_borders()
+```
+
