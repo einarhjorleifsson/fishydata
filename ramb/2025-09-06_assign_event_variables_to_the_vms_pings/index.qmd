@@ -1,0 +1,344 @@
+---
+title: "Assign event variables to the vms pings"
+subtitle: "What is all the magic behind the trip_assign function?"
+author: Einar Hjörleifsson
+description: "Here we make a comparison of assigning things like gear from eflalo (logbooks) data to tacsat (vms) data using the approach provided in the ICES VMS datacall vs. an alternative approach strictly witin dplyr. Done both to verify the understanding of what the `trip_assign` function does as well as making steps towards the future aim of running things via the duckdb-framework."
+date: "2025-09-06"
+categories: [code, rtip]
+echo: true
+---
+
+## Libraries and functions
+
+```{r libraries}
+library(data.table)
+library(tidyverse)
+```
+
+The `trip_assign` function below is based on [issue #52](https://github.com/ices-eg/ICES-VMS-and-Logbook-Data-Call/issues/52#issue-3375282477). Only change:
+
+* Functions documentation initiated
+* The 'haul_logbook' part was stripped
+* Some opinionated comments where added/amended
+* Added a suppressWarning in one line
+
+
+```{r adhoc-function}
+#' Assign logbook events to vessel positions
+#'
+#' 
+#' The script section associated with haul_logbooks has been removed from this
+#' version of the function.Thus the argument 'haul_logbooks' is inactive.
+#' 
+#' The approach:
+#' 
+#' * For pings where catch date is reported in the logbooks allocate the gear with the highest
+#' recorded catches within the catch date (no aggregation none a priori within a catch date).
+#' * For pings outside reported logbook catch dates allocate the gear with the highest trip
+#' catch.
+#' 
+#' @param tacsatp Vessel position, tacsat format 
+#' @param eflalo Logbooks, eflalo format
+#' @param col An atomic character (default "LE_GEAR"), normally "LE_GEAR", "LE_MZS", "LE_MET"
+#' @param haul_logbook Boolean (default FALSE), **not active** in this version
+#'ot
+#' @return A dataframe, returning only rows where trip has more than one gear (or other variables
+#' specified by argument 'col', with additional/overwritten variable specified in the col argument.
+#' @export
+#'
+trip_assign <- function(tacsatp, eflalo, col = "LE_GEAR", haul_logbook = FALSE) {
+  
+  # Count the number of gear (or other variables specified by argument 'col') per trip
+  #  The name of the count variable is by default 'V1'
+  tst <- data.table(eflalo)[!is.na(get(col)),.(uniqueN(get(col))), by=.(FT_REF)]
+  
+  # Use/filter only **trips** with more then **one** gear (or other ...)
+  # Einar's comment: Think this works where trips has only **one** gear (or other ...)
+  #                  So the usage of conditional if is questionable
+  #                  If dropped amend/simplify the code in the script, e.g. no row-bind needed
+  if(nrow(tst[V1>1]) > 0 ) {
+    
+    e <- data.table(eflalo)[FT_REF %in% tst[V1>1]$FT_REF]
+    tz <- data.table(tacsatp)[FT_REF  %in% tst[V1>1]$FT_REF]
+    suppressWarnings(tz[, (col) := NULL])  # Any prior allocation is nullified
+    
+    # Allocate gear (or other variable) with the highest catch within a **date** (LE_CDAT) 
+    #  Note this leaves pings within a trip on other dates than catch dates as NA, that being dealt with downstream
+    #  Einar's comment: We may have within a single date 3 events:
+    #                     LE_CDAT     LE_RECT LE_GEAR LE_KG_TOT
+    #                     01/01/2001  44F8    FPO      10
+    #                     01/01/2001  43F8    GNS      99
+    #                     01/01/2001  43F8    FPO      90
+    #                   So for FPO we have a total catch of 100 kg over the day, for GNS 99 kg
+    #                   I think the downstream algorithm will allocate the GNS for the date even though the 
+    #                   catch by gear for the date in question is highest for the FPO
+    #                   If correct should one not use similar approach as downstream and get the 'highvalue'
+    #                   value by gear (or other variable) by date (sum by gear per date, ignoring the ices
+    #                   rectangle stuff)
+    order_col <- "LE_KG_TOT"  # the column you want to order by (string)
+    e2 <- e[order(-get(order_col)),               # order the records by total LE_KG, the negative ensures descending order (highest first) 
+            .(get(col)[1L]),                      # get the gear corresponding with the higest catch
+            by = .(FT_REF, LE_CDAT)]              #   .... within a trip and catch date
+    names(e2) <- c("FT_REF", "LE_CDAT", col)
+    # Einar's comment; I think usage of "many-to-many" and followed by the unique argument may invite trouble
+    #                  At minimum a justification for usage of these two is warranted. I.e. why?
+    tz <- tz |>
+      left_join(e2, by = c("FT_REF" = "FT_REF", "SI_DATE" = "LE_CDAT"), relationship = "many-to-many")
+    tz <- unique(tz)  #%>%  as.data.frame()
+    
+    # Einar - STRIPPED if(haul_logbook)
+    
+    # For vms **dates** where logbook catch is not reported we still have not allocated any gear (those
+    #  pings are NA's at the moment). For those pings (non-reported fishing days) allocate the 
+    #  gear that has the highest catch within the **trip** (FT_REF) 
+    
+    if(nrow(  tz[is.na(get(col))] ) > 0){
+      ft_ref_isna = tz %>%  filter ( is.na ( get(col)  )) %>%  distinct(FT_REF) %>% pull()
+      tz2 = tz %>%  filter ( FT_REF %in% ft_ref_isna & is.na ( get ( col)  )  ) %>%  as.data.frame()
+      e2 = e %>%  filter ( FT_REF %in% ft_ref_isna )
+      
+      if(!"LE_KG_TOT" %in% names(e2)){
+        idxkgeur <- colnames(e2)[grepl("LE_KG_|LE_EURO_", colnames(e2))]
+        # Calculate the total KG and EURO for each row
+        e2$LE_KG_TOT <- rowSums(e2[,..idxkgeur], na.rm = TRUE)
+      }
+      
+      highvalue <- e2[,.(LE_KG_TOT = sum(LE_KG_TOT, na.rm = T)), by = .(FT_REF, get(col))]
+      highvalue <- highvalue[,.(get[which.max(LE_KG_TOT)]), by = .(FT_REF)]
+      names(highvalue) <-  c("FT_REF", col)
+      
+      tx2 <- tz2
+      tx2 = tx2 %>%  dplyr::select ( - any_of( col )  )
+      tz2 <- tx2 %>%  inner_join ( highvalue, by =  "FT_REF")
+      
+    }
+    
+    tz = tz %>% filter(!is.na(get(col)))
+    if(exists("tz2")) {tz = rbind(tz, tz2)}
+    tz = tz |> as.data.frame()
+    
+    return(tz)
+    # Einar's comment: The else can be dropped if I am right about the stuff mentioned
+    #                  at the start of the if-statement
+  } else {
+    warning(paste("No more than one value for ", col, " in EFLALO trips"))
+    return(data.frame())
+  }
+}
+```
+
+
+## The `trip_assign` function - digging under the hood
+
+One way to try to understand or test a function is to generate short bare minimum datasets. Here we just focus on gear, creating two trips, one where single gear is used another with two gears and three event records (one gear has catch reported in two different rectangles):
+
+```{r}
+eflalo <- 
+  tribble(
+    ~VE_REF,  ~FT_REF, ~LE_GEAR, ~LE_ID,     ~LE_CDAT, ~LE_RECT, ~LE_KG_TOT,
+      "two",  "trip1",    "GNS",    "1", "01/01/1901",  "one",    10000,   # trip w.  1 gear
+      "two",  "trip2",    "OTB",    "1", "02/01/2001",  "one",       99,   # trip w. >1 gear
+      "two",  "trip2",    "OTM",    "2", "02/01/2001",  "two",      100,
+      "two",  "trip2",    "OTB",    "3", "02/01/2001",  "two",       99)
+tacsatp <-
+  tribble(~.id, ~VE_REF,  ~FT_REF,     ~SI_DATE, ~comment,
+          1L,   "two",  "trip1", "01/01/1901",   "this gets dropped",
+          2L,   "two",  "trip2", "01/01/2001",   "outbound, no lb record",
+          3L,   "two",  "trip2", "02/01/2001",   "lb record",
+          4L,   "two",  "trip2", "02/01/2001",   "lb record",
+          5L,   "two",  "trip2", "02/01/2001",   "lb record",
+          6L,   "two",  "trip2", "03/01/2001",   "inbound, no lb record"
+          )
+```
+
+Take note:
+
+* Trip 1 has only a single gear
+* Trip 2 contains more than one gear. Here the highest individual **event** record of catches on day "02/01/2001" is 100 kg where gear OTM was used.
+* On that date however the gear with the highest total catches is OTB (99 + 99 = 198 kg)
+
+Let's see what happens when confronting these data with `trip_assign` function.
+
+```{r}
+trip_assign(tacsatp, eflalo) |> 
+  arrange(.id)
+```
+
+So, this confirms that the function is correctly interpreted as indicated in the above function documentation. Just to repeat it using slightly different wording: 
+
+* If fishing is reported on a particular catch date (LE_CDAT) allocate the gear that has the **highest event catches** within that date to the pings for that date.
+* For pings falling on dates where no catch is reported use the gear that has the highest **summed catches** over the whole trip.
+
+Other things to note:
+
+* The function does not return trip records where the a single gear was used
+* The order of the returned dataframe is not the same as in the original dataframe.
+
+For now I refrain from having an opinion about why things are done this way, the objective here was just to test my understanding of what the `trip_assign` function does.
+
+## Trial using pure tidyverse approach
+
+If I were to emulate this in pure tidyverse I would try this:
+
+1. Create a table from logbooks only containing the gear with the highest reported **event** catch within a fishing date
+2. Create a table from logbooks only containing the gear with the highest **trip** catches
+3. Join both these tables to the vms first and then do the final gear allocation to each ping 
+
+Let's just take this step at a time:
+
+```{r}
+highest_event_catches <-
+  eflalo |> 
+  arrange(desc(LE_KG_TOT)) |> 
+  group_by(VE_REF, FT_REF, LE_CDAT) |> 
+  slice(1) |> 
+  ungroup() |> 
+  select(VE_REF, FT_REF, LE_CDAT, gear_maxkg_event = LE_GEAR)
+tacsatp |> 
+  left_join(highest_event_catches,
+            by = join_by(VE_REF, FT_REF, SI_DATE == LE_CDAT),
+            relationship = "many-to-one") |> 
+  knitr::kable(caption = "Step 1: Gear allocation based on the highest event catces")
+```
+
+2. Gear with highest trip catch
+
+```{r}
+highest_trip_catches <-
+  eflalo |> 
+  group_by(VE_REF, FT_REF, LE_GEAR) |> 
+  summarise(LE_KG_TOT = sum(LE_KG_TOT),
+            .groups = "drop") |> 
+  arrange(desc(LE_KG_TOT)) |> 
+  group_by(VE_REF, FT_REF) |> 
+  slice(1) |> 
+  ungroup() |> 
+  select(VE_REF, FT_REF, gear_maxkg_trip = LE_GEAR)
+tacsatp |> 
+  left_join(highest_trip_catches,
+            by = join_by(VE_REF, FT_REF),
+            relationship = "many-to-one") |> 
+  knitr::kable(caption = "Step 2: Gear allocation based on the highest trip catces")
+```
+
+3. All steps above and then munge:
+
+```{r}
+tacsatp |> 
+  left_join(highest_event_catches,
+            by = join_by(VE_REF, FT_REF, SI_DATE == LE_CDAT),
+            relationship = "many-to-one") |> 
+  left_join(highest_trip_catches,
+            by = join_by(VE_REF, FT_REF),
+            relationship = "many-to-one") |> 
+  mutate(LE_GEAR = case_when(!is.na(gear_maxkg_event) ~ gear_maxkg_event,
+                             is.na(gear_maxkg_event) & !is.na(gear_maxkg_trip) ~ gear_maxkg_trip,
+                             # capture possible bugs
+                             .default = "Unexpected"),
+         .after = SI_DATE) |> 
+  select(.id, VE_REF, FT_REF, SI_DATE, LE_GEAR) |> 
+  knitr::kable(caption = "Step 1, 2 & 3: Final gear allocations to pings")
+```
+
+So we have reproduce the process, but here with the added bonus that:
+
+* No dichotomy in the process, single and multiple gear trips done in one sweep (the `trip_assign` and the datacall process could likely easily be modified doing the same).
+* The original order of the vms data remains
+
+One could easily generalize the process to work with other variables (LE_MZS, LE_MET6). Or just do the three variable allocation in one sweep.
+
+## Comparison using the vmstools datasets
+
+Just an added test testing the two approaches using the built in vmstools datasets
+
+```{r}
+library(vmstools)
+data("eflalo")
+data("tacsat")
+
+eflalo_dcall <- 
+  eflalo |> 
+  mutate(weight = rowSums(dplyr::across(dplyr::starts_with("LE_KG_")))) |> 
+  select(-c(starts_with("LE_KG_"), starts_with("LE_EURO"))) |> 
+  rename(LE_KG_TOT = weight)
+eflalo_tvers <- eflalo_dcall # to be used in the tidyverse test
+  
+tacsatp_dcall <- 
+  vmstools::mergeEflalo2Tacsat(eflalo_dcall, tacsat) |> 
+  filter(FT_REF != "0") |> 
+  mutate(.rowid = 1:n(),
+         .before = VE_COU)
+tacsatp_tvers <- tacsatp_dcall # to be used in the tidyverse test
+```
+
+#### Datacall flow
+
+```{r}
+# Define the columns to be added
+cols <- c("LE_GEAR", "LE_MSZ", "VE_LEN", "VE_KW", "LE_RECT", "LE_MET", "LE_WIDTH", "VE_FLT", "VE_COU")
+
+# Use a loop to add each column
+for (col in cols) {
+  # Match 'FT_REF' values in 'tacsatp' and 'eflalo' and use these to add the column from 'eflalo' to 'tacsatp'
+  tacsatp_dcall[[col]] <- eflalo_dcall[[col]][match(tacsatp_dcall$FT_REF, eflalo_dcall$FT_REF)]
+}
+tacsatpa_dcall_LE_GEAR <- trip_assign(tacsatp_dcall, eflalo_dcall, col = "LE_GEAR",  haul_logbook = F)
+tacsatp_dcall <- 
+  rbindlist(list(tacsatp_dcall[!tacsatp_dcall$FT_REF %in% tacsatpa_dcall_LE_GEAR$FT_REF,],
+                 tacsatpa_dcall_LE_GEAR), fill = T)
+```
+
+#### Pure tidyverse
+
+```{r}
+gear_max_catch_per_day <- 
+  eflalo_tvers |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_GEAR, LE_CDAT) |> 
+  summarise(catch = sum(LE_KG_TOT),
+            .groups = "drop") |> 
+  arrange(desc(catch)) |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_CDAT) |> 
+  slice(1) |> 
+  ungroup() |> 
+  rename(gear_date = LE_GEAR)
+# unfortunately these are the same
+gear_max_catch_per_trip <- 
+  eflalo_tvers |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_GEAR) |> 
+  summarise(catch = sum(LE_KG_TOT),
+            .groups = "drop") |> 
+  arrange(desc(catch)) |> 
+  group_by(VE_COU, VE_REF, FT_REF) |> 
+  slice(1) |> 
+  ungroup() |> 
+  rename(gear_trip = LE_GEAR)
+# now for the join
+tacsatp_tvers <- 
+  tacsatp_tvers |> 
+  left_join(gear_max_catch_per_day |> select(-catch),
+            by = join_by(VE_COU, VE_REF, FT_REF, SI_DATE == LE_CDAT),
+            relationship = "many-to-one") |> 
+  left_join(gear_max_catch_per_trip |> select(-catch),
+            by = join_by(VE_COU, VE_REF, FT_REF),
+            relationship = "many-to-one") |> 
+  mutate(gear_tvers = case_when(!is.na(gear_date) ~ gear_date,
+                          !is.na(gear_trip) ~ gear_trip,
+                          .default = "unexpected"))
+```
+
+#### Comparison
+
+Join the vms datasets by rowid and make a comparison of gear allocation:
+
+```{r}
+nrow(tacsatp_tvers) == nrow(tacsatp_dcall)
+tacsatp_tvers |> 
+  as_tibble() |> 
+  select(.rowid, gear_tvers) |> 
+  full_join(tacsatp_dcall |> select(.rowid, gear_dcall = LE_GEAR),
+            by = join_by(.rowid)) |> 
+  count(gear_tvers, gear_dcall) |> 
+  knitr::kable(caption = "Comparions of allocation of gear to pings, datacall vs tverse")
+```
+
+So things looking dandy. Now even though the two approaches give the same results further comparative test on diverse datasets is warranted.
