@@ -9,6 +9,25 @@ echo: true
 
 ## Preamble
 
+### Pseudocode
+
+#### Think only of assigning LE_GEAR to vms pings
+
+* If one gear per trip:
+  * If LE_CDAT available assign that gear by trip and dates
+* If more than one gear per trip and if/when LE_CDAT available 
+  * Witin a LE_CDAT assign the gear with the highest catches to the ping
+
+
+* Assume that FT_REF is mandatory in the logbook data, however LE_CDAT may or may not be reported
+  * If LE_CDAT available:
+    * Within a date assign the gear with the highest catch to the pings
+
+* Get trips with more than one LE_GEAR
+  * Match lb and vms by FT_REF and SI_DATE-LE_CDAT
+
+
+
 ```{r}
 # Function to assign LOGBOOK data for parameters with more than one value per trip
 #' For example , fishing trips using more than 1 gear or visiting more than 1 ICES RECTANGLE
@@ -21,7 +40,7 @@ echo: true
 
 trip_assign <- function(tacsatp, eflalo, col = "LE_GEAR", haul_logbook = F) {
   
-  # 1) Get teh TRIPS with MORE THAN ONE GEAR ( or other columns ) REPORTED
+  # 1) Get the trips (LE_REF) with more than one gear ( or other columns ) reported
   tst <- data.table::data.table(eflalo)[!is.na(get(col)),.(data.table::uniqueN(get(col))), by=.(FT_REF)]
   
   if(nrow(tst[V1>1]) > 0 ){
@@ -83,9 +102,9 @@ trip_assign <- function(tacsatp, eflalo, col = "LE_GEAR", haul_logbook = F) {
           data.table::setkey(mx, FT_REF, meantime)
           tx <- mx[tx, roll="nearest"]
           tx$meantime <- NULL
-
+          
           tx[, time := SI_DATIM]
-
+          
           data.table::dsetkey(tx, FT_REF, time)
           tz <- data.table::rbindlist(list(tz[!is.na(get(col))], tx), fill = T)
           
@@ -143,9 +162,9 @@ lb <-
                   "XXX1TRIP", "OTM", "01/01/2000",  10,
                   "XXX1TRIP", "OTM", "02/01/2000",  1)
 vms <-
-  tibble::tribble(~FT_REF, ~SI_DATE, ~SI_TIME, ~SI_HE, ~SI_DATIM,
-                  "XXX1TRIP", "01/01/2000", "05:52", 328,  "2000-01-01 05:52:00",
-                  "XXX1TRIP", "02/01/2000", "14:00", 200,  "2000-01-02 14:00:00")
+  tibble::tribble(~FT_REF, ~SI_DATE, 
+                  "XXX1TRIP", "01/01/2000",
+                  "XXX1TRIP", "02/01/2000")
 # 
 # source("~/stasi/ices/ICES-VMS-and-Logbook-Data-Call/0_global_functions.R")
 trip_assign(vms, lb, col = "LE_GEAR",  haul_logbook = F)
@@ -156,7 +175,7 @@ library(dplyr)
 vms |> 
   mutate(.rowid = 1:n(), .before = FT_REF) |> 
   left_join(lb,
-                   by = join_by(FT_REF, SI_DATE == LE_CDAT)) |> 
+            by = join_by(FT_REF, SI_DATE == LE_CDAT)) |> 
   arrange(desc(LE_KG_TOT))
 vms |> 
   mutate(.rowid = 1:n(), .before = FT_REF) |> 
@@ -164,9 +183,22 @@ vms |>
               arrange(FT_REF, LE_CDAT, desc(LE_KG_TOT)) |>
               group_by(FT_REF, LE_CDAT) |> 
               slice(1),
-                   by = join_by(FT_REF, SI_DATE == LE_CDAT)) |> 
+            by = join_by(FT_REF, SI_DATE == LE_CDAT)) |> 
   arrange(desc(LE_KG_TOT))
 ```
+
+Should one not, in this very specific case, do something like this:
+
+```{r}
+lb |> 
+  group_by(FT_REF, LE_CDAT) |> 
+  mutate(max_catch = max(LE_KG_TOT),
+         max_gear = LE_GEAR[LE_KG_TOT == max_catch]) |> 
+  group_by(FT_REF, LE_CDAT, LE_GEAR = max_gear) |> 
+  reframe(LE_KG_TOT = sum(LE_KG_TOT))
+```
+
+
 
 ```{r}
 #| echo: false
@@ -176,11 +208,11 @@ lb <-
   lb |> 
   select(!starts_with("LE_KG_")) |> 
   left_join(lb |> 
-  select(.ride, starts_with("LE_KG_")) |> 
-  gather(var, val, -.ride) |> 
-  group_by(.ride) |> 
-  summarise(LE_KG_TOTAL = sum(val),
-            .groups = "drop"))
+              select(.ride, starts_with("LE_KG_")) |> 
+              gather(var, val, -.ride) |> 
+              group_by(.ride) |> 
+              summarise(LE_KG_TOTAL = sum(val),
+                        .groups = "drop"))
 # let's find some trips with more than one gear
 lb |> 
   group_by(FT_REF) |> 
@@ -196,7 +228,7 @@ vms <-
   filter(VE_REF %in% unique(lb$VE_REF))
 vmsp <- 
   vmstools::mergeEflalo2Tacsat(lb |> as.data.frame(), 
-                                     vms |> as.data.frame()) |> 
+                               vms |> as.data.frame()) |> 
   as_tibble() |> 
   filter(FT_REF != "0")
 
@@ -220,7 +252,7 @@ vmsp |>
   geom_path(aes(SI_LONG, SI_LATI), colour = "grey") +
   geom_point(aes(SI_LONG, SI_LATI, colour = SI_SP)) +
   geom_text(data = lb2,
-             aes(lon, lat, label = n_gear),
+            aes(lon, lat, label = n_gear),
             angle = 45,
             size = 10,
             colour = "red") +
