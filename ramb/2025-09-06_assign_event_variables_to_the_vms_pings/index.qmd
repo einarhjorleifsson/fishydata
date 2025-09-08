@@ -18,7 +18,7 @@ library(tidyverse)
 The `trip_assign` function below is based on [issue #52](https://github.com/ices-eg/ICES-VMS-and-Logbook-Data-Call/issues/52#issue-3375282477). Only change:
 
 * Functions documentation initiated
-* The 'haul_logbook' part was stripped
+* The 'haul_logbook' part was stripped (consider this temporary)
 * Some opinionated comments where added/amended
 * Added a suppressWarning in one line
 
@@ -64,17 +64,6 @@ trip_assign <- function(tacsatp, eflalo, col = "LE_GEAR", haul_logbook = FALSE) 
     
     # Allocate gear (or other variable) with the highest catch within a **date** (LE_CDAT) 
     #  Note this leaves pings within a trip on other dates than catch dates as NA, that being dealt with downstream
-    #  Einar's comment: We may have within a single date 3 events:
-    #                     LE_CDAT     LE_RECT LE_GEAR LE_KG_TOT
-    #                     01/01/2001  44F8    FPO      10
-    #                     01/01/2001  43F8    GNS      99
-    #                     01/01/2001  43F8    FPO      90
-    #                   So for FPO we have a total catch of 100 kg over the day, for GNS 99 kg
-    #                   I think the downstream algorithm will allocate the GNS for the date even though the 
-    #                   catch by gear for the date in question is highest for the FPO
-    #                   If correct should one not use similar approach as downstream and get the 'highvalue'
-    #                   value by gear (or other variable) by date (sum by gear per date, ignoring the ices
-    #                   rectangle stuff)
     order_col <- "LE_KG_TOT"  # the column you want to order by (string)
     e2 <- e[order(-get(order_col)),               # order the records by total LE_KG, the negative ensures descending order (highest first) 
             .(get(col)[1L]),                      # get the gear corresponding with the higest catch
@@ -126,7 +115,6 @@ trip_assign <- function(tacsatp, eflalo, col = "LE_GEAR", haul_logbook = FALSE) 
   }
 }
 ```
-
 
 ## The `trip_assign` function - digging under the hood
 
