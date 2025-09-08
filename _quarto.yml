@@ -7,12 +7,14 @@ website:
   # favicon: "image/hafro_logo.png"
   navbar:
     right:
-      - text: The concep
+      - text: Processing
         menu:
-          - qmd/datacall.qmd
+          - qmd/the_fishydata_process.qmd
+          - qmd/ices_vms_datacall.qmd
+          - qmd/
       - text: On coding
         menu:
-          - qmd/datacall.qmd
+          - qmd/ices_vms_datacall.qmd
       - ramb-list.qmd # add ramb blog to the navbar
       - icon: github
         href: https://github.com/einarhjorleifsson/fishydata
