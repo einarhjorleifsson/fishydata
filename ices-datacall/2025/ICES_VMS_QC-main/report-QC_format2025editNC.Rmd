@@ -52,7 +52,7 @@ le_header <- ifelse(personal_test, TRUE, FALSE)
 
 # Load config to get data directory (since R sessions are isolated)
 if(!personal_test) {
- config <- read_json("QC/config.json", simplifyVector = TRUE)
+  config <- read_json("QC/config.json", simplifyVector = TRUE)
 }
 # Construct file paths - use absolute paths to avoid working directory issues
 veDataPath <- here(data_dir, paste0("ICES_", ve_id, "_", country, ".csv"))
@@ -69,7 +69,7 @@ grade <-function (x, dx) {
 }
 
 `an` <-
-function(x){return(as.numeric(x))}
+  function(x){return(as.numeric(x))}
 
 csq2pos <- function(d, dx = 0.05) {
   bind_cols(d,
@@ -122,7 +122,7 @@ ir2d <- function (ir, useI = FALSE) {
 }
 
 CSquare2LonLat <- function(csqr,degrees){
-
+  
   ra          <- 1e-6 #Artificial number to add for rounding of 5'ves (round(0.5) = 0, but in Excel (where onversion comes from, it is 1)onversion comes from, it is 1)  
   chars       <- an(nchar(csqr))
   tensqd      <- an(substr(csqr,1,1))+ra;      gqlat     <- (round(abs(tensqd-4)*2/10)*10/5)-1
@@ -138,7 +138,7 @@ CSquare2LonLat <- function(csqr,degrees){
   hundlatd    <- an(substr(csqr,15,15))+ra;    iqhlon    <- (round((hundqd-1)/2,1) - floor((hundqd-1)/2))*2
   hundlond    <- an(substr(csqr,16,16))+ra
   reso        <- 10^(1-floor((chars-4)/4))-((round((chars-4)/4,1)-floor((chars-4)/4))*10^(1-floor((chars-4)/4)))
-
+  
   if(degrees < reso[1]) stop("Returning degrees is smaller than format of C-square")
   if(degrees == 10){   
     lat <- ((tenslatd*10)+5)*gqlat-ra                              
@@ -167,8 +167,8 @@ CSquare2LonLat <- function(csqr,degrees){
   if(degrees == 0.01){ 
     lat <- ((tenslatd*10)+ unitslatd + (tenthslatd*0.1)+(hundlatd*0.01)+0.005)*gqlat-ra
     lon <- ((tenslond*10)+ unitslond + (tenthslond*0.1)+(hundlond*0.01)+0.005)*gqlon-ra
-}
-return(data.frame(SI_LATI=lat,SI_LONG=lon))}
+  }
+  return(data.frame(SI_LATI=lat,SI_LONG=lon))}
 
 
 read_le <- function(file, header = TRUE) {
@@ -182,7 +182,7 @@ read_le <- function(file, header = TRUE) {
                    "AnonymizedVesselID", "ICESrectangle", "MetierL4", "MetierL5", 
                    "MetierL6", "VesselLengthRange", "VMSEnabled", "FishingDays", 
                    "kWFishingDays", "TotWeight", "TotValue")
-
+  
   # Add computed fields
   data <- data %>%
     mutate(
@@ -199,7 +199,7 @@ read_ve <- function(file.loc) {
                    stringsAsFactors = FALSE,
                    header = TRUE,  # VE files have headers
                    na.strings = "NULL")
-
+  
   # Convert to tibble
   data <- tidyr::as_tibble(data)
   
@@ -232,7 +232,7 @@ read_ve <- function(file.loc) {
   if ("SweptArea" %in% names(data)) {
     data$SweptArea <- as.numeric(data$SweptArea)
   }
-    if ("HabitatType" %in% names(data)) {
+  if ("HabitatType" %in% names(data)) {
     data <- data %>% rename(Habitat = HabitatType)
   }
   
@@ -246,6 +246,25 @@ lclass <-
           "C", "10-12",
           "D", "12-15",
           "E", ">= 15")
+
+# TODO
+rb_getCodeList <- function(code_type, from_file = TRUE) {
+  if(from_file) {
+    readr::read_rds(paste0(here::here("data/icesVocab"), "/", code_type, ".rds"))
+  } else {
+    getCodeList(code_type)
+  }
+}
+
+CountryCode <- rb_getCodeList("ISO_3166")
+GearType <- rb_getCodeList("GearType")
+TargetAssemblage <- rb_getCodeList("TargetAssemblage")
+VesselLength <- rb_getCodeList("VesselLengthClass")
+icesRect <- rb_getCodeList("StatRec")
+CountryCode <- rb_getCodeList("ISO_3166")
+TargetAssemblage <- rb_getCodeList("TargetAssemblage")
+VesselLength <- rb_getCodeList("VesselLengthClass")
+VMSEnabled <- rb_getCodeList("YesNoFields")
 ```
 
 ```{r get-data}
@@ -253,10 +272,10 @@ lclass <-
 print(veDataPath)
 ve <- read_ve(veDataPath)
 ve <- bind_cols(ve,
-            CSquare2LonLat(ve$Csquare, degrees = 0.05) %>% 
-              select(lon = SI_LONG,
-                     lat = SI_LATI)) %>% 
-    as_tibble()
+                CSquare2LonLat(ve$Csquare, degrees = 0.05) %>% 
+                  select(lon = SI_LONG,
+                         lat = SI_LATI)) %>% 
+  as_tibble()
 
 ve <- 
   ve %>% 
@@ -478,8 +497,8 @@ ve %>%
 ve %>% 
   group_by(Year, VesselLengthRange ) %>% 
   summarise(FH=sum(FishingHour)) %>%
-#  left_join(lclass) %>% 
-#  unite(lclass, length_class, col = "lclass", sep = ": ") %>% 
+  #  left_join(lclass) %>% 
+  #  unite(lclass, length_class, col = "lclass", sep = ": ") %>% 
   ggplot(aes(Year, FH)) +
   geom_point() +
   geom_line() +
@@ -789,7 +808,7 @@ ve %>%
   arrange(desc(Total_FH)) %>% 
   kable(caption = "Summary of fishing effort by habitat type",
         col.names = c("Habitat", "Records", "Total Fishing Hours", 
-                     "% of Records", "% of Effort"))
+                      "% of Records", "% of Effort"))
 ```
 
 
@@ -856,7 +875,7 @@ ve %>%
   arrange(DepthRange) %>% 
   kable(caption = "Summary of fishing effort by habitat type",
         col.names = c("Depth Stratum", "Records", "Total Fishing Hours", 
-                     "% of Records", "% of Effort"))
+                      "% of Records", "% of Effort"))
 ```
 
 ## SweptArea Quality Checks
@@ -986,7 +1005,7 @@ if(nrow(extreme_values) > 0) {
 Check VMS CountryCode with ICES vocabulary //vocab.ices.dk/?ref=337
 ```{r}
 #Check Logbook CountryCode
-CountryCode <- getCodeList("ISO_3166")
+
 CountryCode$VocabCountry <- CountryCode$Key
 
 VECountry <- left_join(ve, CountryCode, by = c("CountryCode" = "Key")) %>%
@@ -1002,7 +1021,7 @@ datatable(VECountryErr)
 Check VMS GearType with ICES vocabulary //vocab.ices.dk/?ref=1498
 ```{r}
 #Check VMS GearType
-GearType <- getCodeList("GearType")
+
 GearType$VocabGear <- GearType$Key
 
 VEGear <- left_join(ve, GearType, by = c("MetierL4" = "Key"))%>%
@@ -1018,7 +1037,7 @@ datatable(VEGearErr)
 Check VMS TargetAssemblage with ICES vocabulary //vocab.ices.dk/?ref=1499
 ```{r}
 #Check VMS TargetAssemblage
-TargetAssemblage <- getCodeList("TargetAssemblage")
+
 TargetAssemblage$VocabTargetAssemblage <- TargetAssemblage$Key
 
 VETargetAssemblage <- left_join(ve, TargetAssemblage, by = c("MetierL5" = "Key"))%>%
@@ -1034,7 +1053,7 @@ datatable(VETargetAssemblageErr)
 Check VMS VesselLength with ICES vocabulary //vocab.ices.dk/?ref=1502
 ```{r}
 #Check VMS VesselLength
-VesselLength <- getCodeList("VesselLengthClass")
+
 VesselLength$VocabVesselLength <- VesselLength$Key
 
 VEVesselLength <- left_join(ve, VesselLength, by = c("VesselLengthRange" = "Key"))%>%
@@ -1284,32 +1303,32 @@ value_summary %>%
 
 # Create plot with additional safeguards
 if(!no_values) {
-value_summary %>% 
-  ggplot(aes(Year, value)) +
-  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
-  geom_point(colour = "#27ae60", size = 2.5, alpha = 0.9) +
-  facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
-  scale_y_log10(labels = scales::comma,
-                breaks = scales::trans_breaks("log10", function(x) 10^x),
-                minor_breaks = scales::trans_breaks("log10", function(x) 10^x),
-                limits = c(1, NA)) +  # Set minimum limit to avoid log(0)
-  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
-  labs(x = "Year", 
-       y = "Value [EUR] (log scale)",
-       title = "Value by Gear Type",
-       subtitle = "Zero and invalid values excluded") +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
-    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
-    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
-    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
-    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
-    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
-    axis.text = element_text(colour = "#34495e", size = 10),
-    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
-  )
+  value_summary %>% 
+    ggplot(aes(Year, value)) +
+    geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+    geom_point(colour = "#27ae60", size = 2.5, alpha = 0.9) +
+    facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
+    scale_y_log10(labels = scales::comma,
+                  breaks = scales::trans_breaks("log10", function(x) 10^x),
+                  minor_breaks = scales::trans_breaks("log10", function(x) 10^x),
+                  limits = c(1, NA)) +  # Set minimum limit to avoid log(0)
+    scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+    labs(x = "Year", 
+         y = "Value [EUR] (log scale)",
+         title = "Value by Gear Type",
+         subtitle = "Zero and invalid values excluded") +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+      plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+      strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+      strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+      panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+      panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+      axis.text = element_text(colour = "#34495e", size = 10),
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+      axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+    )
 }
 ```
 
@@ -1325,35 +1344,35 @@ ve %>%
   kable(caption = "Median value [EUR] per kilowhathour")
 
 if(!no_values) {
-ve %>% 
-  group_by(Year, MetierL4) %>% 
-  summarise(vpkwh = median(TotValue/kWFishingHour, na.rm=T),
-            .groups = "drop") %>% 
-  filter(vpkwh > 0 & !is.na(vpkwh)) %>%  # Remove zero and NA values
-  ggplot(aes(Year, vpkwh)) +
-  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
-  geom_point(colour = "#f39c12", size = 2.5, alpha = 0.9) +
-  facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
-  scale_y_log10(labels = scales::comma,
-                breaks = scales::trans_breaks("log10", function(x) 10^x),
-                minor_breaks = scales::trans_breaks("log10", function(x) 10^x)) +
-  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
-  labs(x = "Year", 
-       y = "Median value [EUR/kWh] (log scale)",
-       title = "Median Value Efficiency by Gear Type",
-       subtitle = "Zero and NA values excluded") +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
-    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
-    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
-    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
-    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
-    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
-    axis.text = element_text(colour = "#34495e", size = 10),
-    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
-  )
+  ve %>% 
+    group_by(Year, MetierL4) %>% 
+    summarise(vpkwh = median(TotValue/kWFishingHour, na.rm=T),
+              .groups = "drop") %>% 
+    filter(vpkwh > 0 & !is.na(vpkwh)) %>%  # Remove zero and NA values
+    ggplot(aes(Year, vpkwh)) +
+    geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+    geom_point(colour = "#f39c12", size = 2.5, alpha = 0.9) +
+    facet_wrap(~ MetierL4, scales = "fixed", ncol = 5) +
+    scale_y_log10(labels = scales::comma,
+                  breaks = scales::trans_breaks("log10", function(x) 10^x),
+                  minor_breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+    scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+    labs(x = "Year", 
+         y = "Median value [EUR/kWh] (log scale)",
+         title = "Median Value Efficiency by Gear Type",
+         subtitle = "Zero and NA values excluded") +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+      plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+      strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+      strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+      panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+      panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+      axis.text = element_text(colour = "#34495e", size = 10),
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+      axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+    )
 }
 ```
 
@@ -1368,33 +1387,33 @@ ve %>%
   kable(caption = "Median value per kg")
 
 if(!no_values) {
-ve %>% 
-  group_by(Year, MetierL4) %>% 
-  summarise(ppkg = median(TotValue/TotWeight, na.rm=T),
-            .groups = "drop") %>% 
-  filter(ppkg > 0 & !is.na(ppkg)) %>%  # Remove zero and NA values
-  ggplot(aes(Year, ppkg)) +
-  geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
-  geom_point(colour = "#e74c3c", size = 2.5, alpha = 0.9) +
-  facet_wrap(~ MetierL4, scales = "free_y", ncol = 5) +
-  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
-  scale_y_continuous(labels = scales::comma, expand = expansion(mult = c(0.05, 0.1))) +
-  labs(x = "Year", 
-       y = "Median price [EUR/kg]",
-       title = "Median Price per Kilogram by Gear Type",
-       subtitle = "Zero and NA values excluded") +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
-    plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
-    strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
-    strip.background = element_rect(fill = "#ecf0f1", colour = NA),
-    panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
-    panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
-    axis.text = element_text(colour = "#34495e", size = 10),
-    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-    axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
-  )
+  ve %>% 
+    group_by(Year, MetierL4) %>% 
+    summarise(ppkg = median(TotValue/TotWeight, na.rm=T),
+              .groups = "drop") %>% 
+    filter(ppkg > 0 & !is.na(ppkg)) %>%  # Remove zero and NA values
+    ggplot(aes(Year, ppkg)) +
+    geom_line(colour = "#2c3e50", size = 1.2, alpha = 0.8) +
+    geom_point(colour = "#e74c3c", size = 2.5, alpha = 0.9) +
+    facet_wrap(~ MetierL4, scales = "free_y", ncol = 5) +
+    scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) +
+    scale_y_continuous(labels = scales::comma, expand = expansion(mult = c(0.05, 0.1))) +
+    labs(x = "Year", 
+         y = "Median price [EUR/kg]",
+         title = "Median Price per Kilogram by Gear Type",
+         subtitle = "Zero and NA values excluded") +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 16, face = "bold", colour = "#2c3e50"),
+      plot.subtitle = element_text(size = 12, colour = "#7f8c8d"),
+      strip.text = element_text(size = 11, face = "bold", colour = "#34495e"),
+      strip.background = element_rect(fill = "#ecf0f1", colour = NA),
+      panel.grid.major = element_line(colour = "#bdc3c7", size = 0.3),
+      panel.grid.minor = element_line(colour = "#ecf0f1", size = 0.2),
+      axis.text = element_text(colour = "#34495e", size = 10),
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+      axis.title = element_text(colour = "#2c3e50", face = "bold", size = 12)
+    )
 }
 ```
 
@@ -1536,7 +1555,7 @@ d <-
          r = ifelse(r < 1/2, 1/2, r))
 
 
-  map0 +
+map0 +
   geom_tile(data = d,
             aes(lon, lat, fill = r)) +
   coord_quickmap() +
@@ -1693,7 +1712,7 @@ le %>%
   ggplot(aes(Year, n)) +
   geom_point() +
   scale_x_continuous(breaks = 2000:2030) +
-   expand_limits(y = 0) +
+  expand_limits(y = 0) +
   labs(x = NULL, y = NULL, title = "Number of logbook records by year") 
 ```
 
@@ -1705,7 +1724,7 @@ le %>%
   geom_point() +
   geom_line() +
   facet_wrap(~ Month) +
-   expand_limits(y = 0) +
+  expand_limits(y = 0) +
   labs(x = NULL, y = NULL, title = "Number of logbook records by year & month")
 ```
 
@@ -1919,7 +1938,7 @@ le %>%
   ggplot(aes(Year, catch)) +
   geom_line(lwd = 1) +
   facet_wrap(~ MetierL4, scales = "free_y") +
-    expand_limits(y = 0) +
+  expand_limits(y = 0) +
   labs(x = NULL, y = "[t]",
        title = "Landings by gear")
 ```
@@ -1940,7 +1959,7 @@ le %>%
   ggplot(aes(Year, cpkwh)) +
   geom_line() +
   facet_wrap(~ MetierL4, scales = "free_y") +
-    expand_limits(y = 0) +
+  expand_limits(y = 0) +
   labs(x = NULL, y = NULL,
        title = "Median landing [kg] per kilowattdays")
 ```
@@ -1963,7 +1982,7 @@ le %>%
   ggplot(aes(Year, value)) +
   geom_line(lwd = 1) +
   facet_wrap(~ MetierL4, scales = "free_y") +
-    expand_limits(y = 0) +
+  expand_limits(y = 0) +
   labs(x = NULL, y = "['000 €]",
        title = "Value by gear")
 ```
@@ -1984,7 +2003,7 @@ le %>%
   ggplot(aes(Year, vpkwh)) +
   geom_line() +
   facet_wrap(~ MetierL4, scales = "free_y") +
-    expand_limits(y = 0) +
+  expand_limits(y = 0) +
   labs(x = NULL, y = NULL,
        title = "Median value [EUR] per kilowatt-days")
 ```
@@ -2006,7 +2025,7 @@ le %>%
   ggplot(aes(Year, ppkg)) +
   geom_line() +
   facet_wrap(~ MetierL4, scales = "free_y") +
-    expand_limits(y = 0) +
+  expand_limits(y = 0) +
   labs(x = NULL, y = NULL,
        title = "Median value per kg")
 ```
@@ -2308,7 +2327,7 @@ map2 +
 Check Logbook ICES rectangle with ICES vocabulary //vocab.ices.dk/?ref=107
 ```{r}
 #Check Logbook ICES rectangle
-icesRect <- getCodeList("StatRec")
+
 icesRect$VocabRect <- icesRect$Key
 
 LERect <- left_join(le, icesRect, by = c("ICESrectangle" = "Key"))%>%
@@ -2324,7 +2343,7 @@ datatable(LERectErr)
 Check Logbook CountryCode with ICES vocabulary //vocab.ices.dk/?ref=337
 ```{r}
 #Check Logbook CountryCode
-CountryCode <- getCodeList("ISO_3166")
+
 CountryCode$VocabCountry <- CountryCode$Key
 
 LECountry <- left_join(le, CountryCode, by = c("CountryCode" = "Key")) %>%
@@ -2340,7 +2359,7 @@ datatable(LECountryErr)
 Check Logbook GearType with ICES vocabulary //vocab.ices.dk/?ref=1498
 ```{r}
 #Check Logbook GearType
-GearType <- getCodeList("GearType")
+
 GearType$VocabGear <- GearType$Key
 
 LEGear <- left_join(le, GearType, by = c("MetierL4" = "Key"))%>%
@@ -2356,7 +2375,7 @@ datatable(LEGearErr)
 Check Logbook TargetAssemblage with ICES vocabulary //vocab.ices.dk/?ref=1499
 ```{r}
 #Check Logbook TargetAssemblage
-TargetAssemblage <- getCodeList("TargetAssemblage")
+
 TargetAssemblage$VocabTargetAssemblage <- TargetAssemblage$Key
 
 LETargetAssemblage <- left_join(le, TargetAssemblage, by = c("MetierL5" = "Key"))%>%
@@ -2372,7 +2391,7 @@ datatable(LETargetAssemblageErr)
 Check Logbook VesselLength with ICES vocabulary //vocab.ices.dk/?ref=1502
 ```{r}
 #Check Logbook VesselLength
-VesselLength <- getCodeList("VesselLengthClass")
+
 VesselLength$VocabVesselLength <- VesselLength$Key
 
 LEVesselLength <- left_join(le, VesselLength, by = c("VesselLengthRange" = "Key"))%>%
@@ -2388,7 +2407,7 @@ datatable(LEVesselLengthErr)
 Check Logbook VMSEnabled with ICES vocabulary //vocab.ices.dk/?ref=316
 ```{r}
 #Check Logbook VMSEnabled
-VMSEnabled <- getCodeList("YesNoFields")
+
 VMSEnabled$VocabVMSEnabled <- VMSEnabled$Key
 
 LEVMSEnabled <- left_join(le, VMSEnabled, by = c("VMSEnabled" = "Key"))%>%

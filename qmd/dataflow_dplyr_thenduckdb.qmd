@@ -1,0 +1,288 @@
+---
+title: "Dataflow: Going -> dplyr -> duckdb"
+---
+
+```{r}
+# setup ------------------------------------------------------------------------
+## libraries -------------------------------------------------------------------
+library(vmstools)
+library(tidyverse)
+library(duckdb)
+## ad-hoc functions ------------------------------------------------------------
+### ramb functions
+source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/format.R")
+source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/sum_accross.R")
+### datacall functions - can not source global.R, here a datacall trip_assign as a temporary gist
+source("https://gist.githubusercontent.com/einarhjorleifsson/deee46b493f1f95e95e905c15f1c2432/raw/e2d2a0a8241ac8f9c86c3971de677ff260d7319d/rb_trip_assign.R")
+
+# Data pre-processing-----------------------------------------------------------
+#  Use eflalo and tacsat in the vmstools package as a demo
+#  Only do some minimal stuff here
+## logbooks --------------------------------------------------------------------
+data(eflalo)
+# consolidate
+eflalop <- 
+  eflalo |> 
+  as_tibble() |>
+  rb_sum_across("LE_KG", remove = TRUE) |> 
+  rb_sum_across("LE_EURO", remove = TRUE) |> 
+  mutate(D_DATIM = rb_create_timestamp(FT_DDAT, FT_DTIME),
+         L_DATIM = rb_create_timestamp(FT_LDAT, FT_LTIME),
+         # LE_CDAT = dmy(LE_CDAT), # should be, but ...
+         .after = FT_REF) |> 
+  select(-c(FT_DDAT, FT_DTIME, FT_LDAT, FT_LTIME)) |> 
+  rename(LE_MET6 = LE_MET_level6)
+# create a tidy trip table
+#  eflalo is not a tidy structure - can be split into a tidy trip table and then
+#   a detail event table. tverse pipe code flow becomes more succinct downstream
+trips <-
+  eflalop |> 
+  group_by(VE_COU, VE_REF, FT_REF) |> 
+  mutate(weight = sum(LE_KG),
+         price = sum(LE_EURO)) |> 
+  ungroup() |> 
+  select(VE_COU, VE_REF, VE_LEN, VE_KW, VE_TON, FT_REF, D_DATIM, L_DATIM, weight, price) |> 
+  distinct(VE_COU, VE_REF, FT_REF, .keep_all = TRUE)
+duck_trips <- trips |> arrow::to_duckdb()  # for later
+# The detail table, remove vessel and trip variables except those used as keys 
+events <- 
+  eflalop |> 
+  select(VE_COU, VE_REF, FT_REF, starts_with("LE_")) |> 
+  # reduce the clutter for this demo test
+  janitor::remove_empty(which = "cols")
+duck_events <- events |> arrow::to_duckdb() # for later
+
+## trails ----------------------------------------------------------------------
+data(tacsat)
+trails <- 
+  tacsat |> 
+  as_tibble() |> 
+  mutate(SI_DATIM = ramb::rb_create_timestamp(SI_DATE, SI_TIME),
+         .after = VE_REF) |> 
+  # select(-c(SI_DATE, SI_TIME)) |> assign_trip only works if these are available
+  arrange(VE_COU, VE_REF, SI_DATIM) |> 
+  distinct(VE_COU, VE_REF, SI_DATIM, .keep_all = TRUE) |> 
+  mutate(.pid = 1L:n(),
+         .before = VE_COU)
+# Analysis ---------------------------------------------------------------------
+## Add trip information to pings -----------------------------------------------
+### datacallway ----------------------------------------------------------------
+tacsatp <- 
+  mergeEflalo2Tacsat(eflalop |> as.data.frame(),
+                     trails |> as.data.frame())
+# NOTE: even information added downstream - separated to clarify thinking
+cols <- c("VE_LEN", "VE_KW")
+for (col in cols) {
+  tacsatp[[col]] <- eflalo[[col]][match(tacsatp$FT_REF, eflalo$FT_REF)]
+}
+### myway ----------------------------------------------------------------------
+trails <- 
+  trails |> 
+  left_join(trips,
+            by = join_by(VE_COU, VE_REF, between(SI_DATIM, D_DATIM, L_DATIM)),
+            relationship = "many-to-one") |> 
+  select(-c(D_DATIM, L_DATIM))
+duck_trails <- trails |> arrow::to_duckdb() # for later
+
+### comparisons ----------------------------------------------------------------
+identical(tacsatp$.pid, trails$.pid)
+identical(tacsatp$FT_REF, replace_na(trails$FT_REF, "0"))
+identical(tacsatp$VE_LEN, trails$VE_LEN)
+identical(tacsatp$VE_KW, trails$VE_KW)
+# check non-identicals
+data(eflalo) # reload eflalo
+comparison <- 
+  tacsatp |> 
+  as_tibble() |> 
+  select(.pid, VE_COU, VE_REF, FT_REF, length_dc = VE_LEN, kw_dc = VE_KW) |> 
+  left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, length_mw = VE_LEN, kw_mw = VE_KW)) |> 
+  filter(length_dc != length_mw | kw_dc != kw_mw) |> 
+  select(-c(.pid, FT_REF)) |> 
+  distinct()
+comparison |> 
+  left_join(eflalo |> 
+              filter(VE_REF %in% unique(comparison$VE_REF)) |> 
+              select(VE_REF, VE_LEN, VE_KW) |> 
+              distinct()) |> 
+  knitr::kable(caption = "Assigning vessel info to pings - discrepancies\n'_dc': datacall, '_mw: myway, original from eflalo\nSeems like myway same as the original")
+# so something to check in the datacall flow
+
+## Add gear, mesh and met6 to pings --------------------------------------------
+#  this is ambiguously called trip assign in the datacall flow
+### datacallway ----------------------------------------------------------------
+# Now add the event info - this step needed so that next step works - could be simplified
+cols <- c("LE_GEAR", "LE_MSZ", "LE_RECT", "LE_MET6")
+for (col in cols) {
+   tacsatp[[col]] <- eflalop[[col]][match(tacsatp$FT_REF, eflalop$FT_REF)]
+}
+
+library(data.table)  # needed in the trip_assign
+
+tacsatpa_LE_GEAR <- trip_assign(tacsatp, eflalop, col = "LE_GEAR",  haul_logbook = F)
+# Here and subsequently, replaced %!in% with %in%, moving the ! upfront
+tacsatp <- rbindlist(list(tacsatp[!tacsatp$FT_REF %in% tacsatpa_LE_GEAR$FT_REF,], tacsatpa_LE_GEAR), fill = T)
+
+tacsatpa_LE_MSZ <- trip_assign(tacsatp, eflalop, col = "LE_MSZ",  haul_logbook = F)
+tacsatp <- rbindlist(list(tacsatp[!tacsatp$FT_REF %in% tacsatpa_LE_MSZ$FT_REF,], tacsatpa_LE_MSZ), fill = T)
+
+tacsatpa_LE_RECT <- trip_assign(tacsatp, eflalop, col = "LE_RECT",  haul_logbook = F)
+tacsatp <- rbindlist(list(tacsatp[!tacsatp$FT_REF %in% tacsatpa_LE_RECT$FT_REF,], tacsatpa_LE_RECT), fill = T)
+
+tacsatpa_LE_MET <- trip_assign(tacsatp, eflalop, col = "LE_MET6",  haul_logbook = F)
+tacsatp <- rbindlist(list(tacsatp[!tacsatp$FT_REF %in% tacsatpa_LE_MET$FT_REF,], tacsatpa_LE_MET), fill = T)
+
+### myway ----------------------------------------------------------------------
+# 1. For each fishing day, add the values of gear, mesh and met6 from the 
+#    highest event catch record within the day (no summation done a priori)
+# 2. For non-fishing days, add the values of gear, mesh and met6 from the 
+#    highest trip catches
+highest_event_catch_per_day <-
+  events |> 
+  arrange(desc(LE_KG)) |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_CDAT) |> 
+  slice(1) |> 
+  ungroup() |> 
+  select(VE_COU, VE_REF, FT_REF, LE_CDAT, LE_GEAR, LE_MSZ, LE_MET6, LE_RECT)
+highest_trip_catches <-
+  events |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_GEAR, LE_MSZ, LE_MET6, LE_RECT) |> 
+  summarise(LE_KG = sum(LE_KG),
+            .groups = "drop") |> 
+  arrange(desc(LE_KG)) |> 
+  group_by(VE_COU, VE_REF, FT_REF) |> 
+  slice(1) |> 
+  ungroup() |> 
+  select(VE_COU, VE_REF, FT_REF, .LE_GEAR = LE_GEAR, .LE_MSZ = LE_MSZ, 
+         .LE_MET6 = LE_MET6, .LE_RECT = LE_RECT)
+trails_copy <- trails
+trails <- 
+  trails |> 
+  left_join(highest_event_catch_per_day,
+            by = join_by(VE_COU, VE_REF, FT_REF, SI_DATE == LE_CDAT),
+            relationship = "many-to-one") |> 
+  left_join(highest_trip_catches,
+            by = join_by(VE_COU, VE_REF, FT_REF),
+            relationship = "many-to-one") |> 
+  mutate(LE_GEAR = case_when(is.na(LE_GEAR) & !is.na(.LE_GEAR) ~ .LE_GEAR,
+                             .default = LE_GEAR),
+         LE_MSZ = case_when(is.na(LE_MSZ) & !is.na(.LE_MSZ) ~ .LE_MSZ,
+                            .default = LE_MSZ),
+         LE_MET6 = case_when(is.na(LE_MET6) & !is.na(.LE_MET6) ~ .LE_MET6,
+                            .default = LE_MET6),
+         LE_RECT = case_when(is.na(LE_RECT) & !is.na(.LE_RECT) ~ .LE_RECT,
+                             .default = LE_RECT)) |> 
+  select(-c(.LE_GEAR, .LE_MSZ, .LE_MET6, .LE_RECT))
+### comparisons ----------------------------------------------------------------        
+identical(tacsatp$.pid, trails$.pid)
+tacsatp <- tacsatp |> arrange(.pid)
+identical(tacsatp$.pid, trails$.pid)
+identical(tacsatp$FT_REF, replace_na(trails$FT_REF, "0"))
+identical(tacsatp$LE_MET6, trails$LE_MET6)
+# TODO: check these
+# so some work needed, do not get identical
+identical(tacsatp$LE_GEAR, trails$LE_GEAR)
+identical(tacsatp$LE_MSZ, trails$LE_MSZ)
+identical(tacsatp$LE_RECT, trails$LE_RECT)
+
+comparison <- 
+  tacsatp |> 
+  as_tibble() |> 
+  select(.pid, VE_COU, VE_REF, FT_REF, LE_GEAR, LE_MSZ, LE_MET6, LE_RECT) |> 
+  left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, 
+                             .LE_GEAR = LE_GEAR, .LE_MSZ = LE_MSZ, 
+                             .LE_MET6 = LE_MET6, .LE_RECT = LE_RECT)) |> 
+  # reorder
+  select(.pid, VE_COU, VE_REF, FT_REF, LE_GEAR, .LE_GEAR, LE_MSZ, .LE_MSZ, LE_MET6, .LE_MET6, LE_RECT, .LE_RECT)
+comparison |> 
+  #filter(LE_GEAR != .LE_GEAR  | LE_MSZ != .LE_MSZ | LE_MET6 != .LE_MET6) |> 
+  mutate(gear = if_else(LE_GEAR == .LE_GEAR, "yes", "no", "yes_na"),
+         mesh = if_else(LE_MSZ  == .LE_MSZ, "yes", "no", "yes_na"),
+         met6 = if_else(LE_MET6 == .LE_MET6, "yes", "no", "yes_na"),
+         rect = if_else(LE_RECT   == .LE_RECT, "yes", "no", "yes_na")) |> 
+  count(gear, mesh, met6, rect) |> 
+  mutate('%' = round(n / sum(n) * 100, 2)) |> 
+  knitr::kable(caption = "Assigning events info to pings - discrepancies between datacall vs. myway\nNeeds a revisit, at least the rectangles")
+# For now let's look at the event records were gear and rectangles are not the same (33 records)
+problem_trips <- 
+  comparison |> 
+  #filter(LE_GEAR != .LE_GEAR  | LE_MSZ != .LE_MSZ | LE_MET6 != .LE_MET6) |> 
+  filter(LE_GEAR != .LE_GEAR  & LE_RECT != .LE_RECT) |> 
+  select(VE_COU, VE_REF, FT_REF) |> 
+  distinct()
+problem_events <- 
+  problem_trips |> 
+  left_join(events |> select(VE_REF, FT_REF, LE_CDAT, LE_GEAR, LE_RECT, LE_KG)) |> 
+  arrange(LE_CDAT, desc(LE_KG))
+problem_events |> knitr::kable(caption = "Events table, original data")
+problem_events |> 
+  inner_join(trails) |> 
+  arrange(SI_DATIM) |> 
+  select(.pid, SI_DATIM, VE_REF, FT_REF, LE_CDAT, SI_DATE, LE_GEAR, LE_RECT, LE_KG) |> 
+  #distinct(VE_REF, FT_REF, LE_CDAT, SI_DATE, LE_GEAR, LE_RECT, LE_KG, .keep_all = TRUE) |> 
+  knitr::kable(caption = "Discrepancies - myway")
+problem_events |> 
+  inner_join(tacsatp) |> 
+  arrange(SI_DATIM) |> 
+  select(.pid, SI_DATIM, VE_REF, FT_REF, LE_CDAT, SI_DATE, LE_GEAR, LE_RECT, LE_KG) |> 
+  #distinct(VE_REF, FT_REF, LE_CDAT, SI_DATE, LE_GEAR, LE_RECT, LE_KG, .keep_all = TRUE) |> 
+  knitr::kable(caption = "Discrepancies - datacall")
+# TODO: Check why something is wrotten in the State of Denmark
+print("There is a pending issue, the ways do not give the same results")
+
+
+# Fireworks - running via duckdb -----------------------------------------------
+duck_highest_event_catch_per_day <-
+  duck_events |> 
+  arrange(desc(LE_KG)) |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_CDAT) |> 
+  filter(row_number()==1) |> # instead of slice
+  ungroup() |> 
+  select(VE_COU, VE_REF, FT_REF, LE_CDAT, LE_GEAR, LE_MSZ, LE_MET6, LE_RECT)
+duck_highest_trip_catches <-
+  duck_events |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_GEAR, LE_MSZ, LE_MET6, LE_RECT) |> 
+  summarise(LE_KG = sum(LE_KG),
+            .groups = "drop") |> 
+  arrange(desc(LE_KG)) |> 
+  group_by(VE_COU, VE_REF, FT_REF) |> 
+  filter(row_number()==1) |> # instead of slice
+  ungroup() |> 
+  select(VE_COU, VE_REF, FT_REF, .LE_GEAR = LE_GEAR, .LE_MSZ = LE_MSZ, 
+         .LE_MET6 = LE_MET6, .LE_RECT = LE_RECT)
+duck_trails <- 
+  duck_trails |> 
+  left_join(duck_highest_event_catch_per_day,
+            by = join_by(VE_COU, VE_REF, FT_REF, SI_DATE == LE_CDAT)) |> 
+            # relationship = "many-to-one") |> 
+  left_join(duck_highest_trip_catches,
+            by = join_by(VE_COU, VE_REF, FT_REF)) |> 
+            # relationship = "many-to-one") |> 
+  mutate(LE_GEAR = case_when(is.na(LE_GEAR) & !is.na(.LE_GEAR) ~ .LE_GEAR,
+                             .default = LE_GEAR),
+         LE_MSZ = case_when(is.na(LE_MSZ) & !is.na(.LE_MSZ) ~ .LE_MSZ,
+                            .default = LE_MSZ),
+         LE_MET6 = case_when(is.na(LE_MET6) & !is.na(.LE_MET6) ~ .LE_MET6,
+                             .default = LE_MET6),
+         LE_RECT = case_when(is.na(LE_RECT) & !is.na(.LE_RECT) ~ .LE_RECT,
+                             .default = LE_RECT)) |> 
+  select(-c(.LE_GEAR, .LE_MSZ, .LE_MET6, .LE_RECT))
+```
+
+
+```{r collect}
+# Once we have few more things sorted out, like state and split-among-ping
+#  we would in end sum the stuff, like:
+dx <- dy <- 0.05 # csquare
+final <- 
+  duck_trails |> 
+  mutate(year = year(SI_DATIM),
+         month = month(SI_DATIM),
+         lon = SI_LONG%/%dx * dx + dx/2,
+         lat = SI_LATI%/%dy * dy + dy/2) |> 
+  group_by(year, month, lon, lat, LE_GEAR, LE_MET6) |> 
+  summarise(pings = n(),
+            .groups = "drop") # |> 
+  # collect() # get an error if not interactive
+  
+```
+

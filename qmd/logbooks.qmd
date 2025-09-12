@@ -1,8 +1,220 @@
 ---
-title: "Logbooks"
+title: "Logbooks - Quality control"
 ---
 
-## Preamble
+```{r}
+library(mar)
+library(tidyverse)
+library(janitor)
+con <- connect_mar()
+```
+
+* Check this tow_start in events
+
+## Trips
+
+```{r}
+trips <-
+  tbl_mar(con, "adb.trip_v") |> 
+  select(tid = trip_id, 
+         vid = vessel_no,
+         T1 = departure,
+         hid1 = departure_port_no,
+         T2 = landing,
+         hid2 = landing_port_no,
+         source) |> 
+  filter(year(T1) == 2024) |> 
+  collect() |> 
+  arrange(vid, T1, T2)
+```
+
+```{r}
+trips |> 
+  count(source) |> 
+  arrange(-n) |> 
+  mutate(p = n / sum(n),
+         cp = cumsum(p)) |> 
+  knitr::kable(caption = "Trips source in 2024", digits = 3)
+```
+
+```{r}
+trips |> 
+  filter(T1 == T2) |> 
+  mutate(h1 = hour(T1),
+         m1 = minute(T1),
+         s1 = second(T1),
+         h2 = hour(T2),
+         m2 = minute(T2),
+         s2 = second(T2)) |> 
+  count(source, h1, m1, s1, h2, m2, s2) |> 
+  knitr::kable(caption = "Trips - only departure date recorded, not time")
+checks <- 
+  trips |> 
+  arrange(vid, T1, T2) |> 
+  group_by(vid) |> 
+  mutate(
+    checks = 
+      case_when(
+        T1 > T2 ~ "01 arrival before departure",
+        T1 == lead(T1) & T2 == lead(T2) ~ "02 next trip times the same",
+        T1 == lag(T1) & T2 == lag(T2) ~ "03 previous trip times the same",
+        T2 > lead(T1) ~ "04 next departure before current arrival",
+        lag(T2) > T1 ~ "05 previous arrival after current departure",
+        T1 == T2 ~ "06 arrival same as departure",
+        .default = "ok")) |> 
+  ungroup()
+checks |> 
+  count(checks) |> 
+  mutate(p = round(n / sum(n) * 100, 2)) |> 
+  knitr::kable(caption = "Trips - Departure and arrival time checks")
+```
+
+### Checking links with station table
+
+```{r}
+events <- 
+  tbl_mar(con, "adb.station_v") |> 
+  filter(year(fishing_start) == 2024) |> 
+  select(eid = station_id,
+         tid = trip_id,
+         gid = gear_no,
+         
+         t1 = fishing_start,  # For nets, lines this is likely logn hefst
+         t11 = tow_start,     # For above, likely drattur hefst
+         lon1 = longitude,
+         lat1 = latitude,
+         z1 = depth,
+         
+         t2 = fishing_end,
+         lon2 = longitude_end,
+         lat2 = latitude_end,
+         z2 = depth_end,
+         tow_start) |> 
+  collect() |> 
+  left_join(trips |> select(tid, vid),
+            by = join_by(tid)) |> 
+  arrange(vid, t1, t2)
+
+trips |> 
+  mutate(
+    childless = 
+      case_when(tid %in% unique(events$tid) ~ "no",
+                .default = "yes")) |> 
+  count(childless) |> 
+  mutate(p = round(n / sum(n) * 100, 2)) |> 
+  knitr::kable(caption = "Trips with no stations")
+```
+
+```{r}
+trips |> 
+  mutate(
+    childless = 
+      case_when(tid %in% unique(events$tid) ~ "no",
+                .default = "yes")) |> 
+  count(childless, source) |> 
+  spread(childless, n, fill = 0) |> 
+  mutate(p_childless = round(yes / (yes + no) * 100, 3)) |> 
+  arrange(-p_childless) |> 
+  knitr::kable(caption = "Trip - events issues by source")
+```
+
+
+```{r}
+events |>
+  left_join(trips) |> 
+  group_by(vid) |> 
+  mutate(
+    checks = 
+      case_when(
+        T1 == T2 ~ "01 Start and end of trip the same",
+        !between(t1, T1, T2) | !between(t2, T1, T2) ~ "02 start or end time of events not within trip time",
+        .default = "ok")) |> 
+  ungroup() |> 
+  count(checks) |> 
+  mutate(p = round(n / sum(n) * 100, 2)) |> 
+  knitr::kable(catpion = "Trip and event time issues")
+
+events |> 
+  left_join(trips) |> 
+  filter(T1 != T2) |> 
+  filter(!between(t1, T1, T2) | !between(t2, T1, T2)) |> 
+  select(source, eid, tid, T1, t1, t2, T2) |> 
+  group_by(source) |> 
+  slice(1:5) |> 
+  ungroup() |> 
+  select(-source) |> 
+  knitr::kable(caption = "Examples of trip and event time issues")
+```
+
+```{r}
+events |> 
+  mutate(has_towstart = ifelse(!is.na(t11), "yes", "no")) |> 
+  count(gid, has_towstart) |> 
+  spread(has_towstart, n)
+```
+
+## Stations
+
+```{r}
+events |> 
+  arrange(vid, t1, t2) |> 
+  group_by(vid) |> 
+  mutate(
+    checks =
+      case_when(
+        is.na(t1) == TRUE ~ "01 start time missing",
+        is.na(t2) == TRUE ~ "02 end time missing",
+        t1 == t2 ~ "03 event start and ends at the same",
+        t1 > t2 ~ "04 event starts before it ends",
+        t1 == lead(t1) & t2 == lead(t2) ~ "05 next event times the same",
+        t1 == lag(t1) & t2 == lag(t2) ~ "06 previous event times the same",
+        t2 == lead(t1) ~ "07 event end time same as next event start time",
+        t2 > lead(t1) ~ "08 event end time greater than next event start time",
+        lag(t2) == t1 ~ "09 previos event time same as current start time",
+        lag(t2) > t1 ~ "10 previous event time end after current start time",
+        .default = "ok")) |> 
+  ungroup() |> 
+  count(checks) |> 
+  mutate(p = round( n / sum(n) * 100, 2)) |> 
+  knitr::kable(captions = "Event time issues")
+```
+
+```{r}
+
+```
+
+
+## Appendix
+
+### Trips duplicates
+
+```{r}
+trips |> 
+  get_dupes(vid, T1, T2) |> 
+  knitr::kable(caption = "Trips - multiple entry of same vessel, departure and arrival")
+```
+
+
+
+### A trip
+
+* tid: trip id
+* T1: Departure time
+* hid: Harbour id
+* eid: Fishing event id
+* lon1: Start position
+* lat1: Start postion
+* lon2: End position
+* lat2: End position
+* t1: Time start of deployment (kast hefst, lögn hefst)
+* t2: Time start fishing       (veiðarfæri í botni, lögn lýkur)
+* t3: Time end of fishing      (veiðarfæri af botni, dráttur hefst)
+* t4: Time end of deployment   (kast lokið, dráttur lýkur)
+
+* T2: 
+
+
+
 
 In principle there is no difference between scample from catch, logbooks and scientific surveys. They could hence for all practical purposes be all stored within the same schema and table structure.
 
@@ -12,22 +224,3 @@ What they all have in common is:
 * Station table
 * Sample table
 * Detail (biological) table
-
-## The logbook data
-
-The Fiskistofa logbook schema structure is a total mess.
-
-### The new data
-
-```{r, eval = FALSE}
-tbl_mar(con, "adb.trip_v") |> 
-    select(trip_id, 
-           vid = vessel_no,
-           T1 = departure,
-           hid1 = departure_port_no,
-           T2 = landing,
-           hid2 = landing_port_no,
-           source,
-           everything())
-```
-

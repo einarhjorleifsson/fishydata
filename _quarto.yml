@@ -10,11 +10,10 @@ website:
       - text: Processing
         menu:
           - qmd/the_fishydata_process.qmd
-          - qmd/ices_vms_datacall.qmd
-          - qmd/
+          - ices-datacall/2025/ICES_VMS_QC-main/report-QC_format2025editNC.Rmd
       - text: On coding
         menu:
-          - qmd/ices_vms_datacall.qmd
+          - qmd/dataflow_dplyr_thenduckdb.qmd
       - ramb-list.qmd # add ramb blog to the navbar
       - icon: github
         href: https://github.com/einarhjorleifsson/fishydata
@@ -28,3 +27,6 @@ format:
     warning: false
     echo: true
     code-fold: true
+
+execute:
+  freeze: auto  # re-render only when source changes
