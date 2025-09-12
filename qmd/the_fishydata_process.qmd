@@ -1,0 +1,36 @@
+---
+title: "Fishydata - the process"
+---
+
+### Datasource
+
+
+* Landings from Directorate of Fisheries (Fiskistofa)
+  * Information on total landings by trip by date and harbour
+* Logbooks from Directorate of Fisheries (Fiskistofa)
+  * Information on individual catch, location and time of each setting during a fishing trip
+* Vessel positions (STK - Sjálfvirk tilkynningarskylda skipa) from Vegagerðin
+  * Information on vessels time and location (~ approximately every 10 minutes)
+* ASTD vessel positions from [PAME](https://pame.is).
+  * Information on vessel time and locatoin (~ approximaterly every 6 minutes)
+* Auxilary data
+  * Vessel registry (Skipaskrá) from (Samgöngustofa)
+    * Information on length and power of vessels
+  * Vessel call sign and MMSI registry from (Póst- og Fjarskiptastofa)
+    * Information on vessel communication ids
+
+All datasources except those from Póst og Fjarskiptastofa and PAME come as direct feed via API services to institutes databases and are stored in the big database. Data that don't come in automatically are stored in a personal space.
+
+### Preprocessing
+
+The different datasources are not directly link-able and the quality of some is also an issue. Thus prior to efficient usage by scientists at the institute considerable time, effort and computer power is exerted.
+
+* The code used is stored on openly accessable [github](https://github.com/einarhjorleifsson/fishydata)
+* The data products is stored on personal computer space (/home/haf/einarhj/stasi/fishydata) but accessable to everybody within the institutes firewall.
+* A rudimentary project web-page is available at [https://heima.hafro.is/~einarhj/fishydata](https://heima.hafro.is/~einarhj/fishydata)
+
+### Postprocessing
+
+Some examples are provide on the project webpage
+
+

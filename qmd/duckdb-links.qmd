@@ -1,7 +1,0 @@
----
-title: "duckdb links"
----
-
-* [Supercharge your R workflows with DuckDB](https://borkar.substack.com/p/r-workflows-with-duckdb)
-* [Efficient spatial join? #303](https://github.com/duckdb/duckdb-spatial/discussions/303)
-* [Scaling the r-spatial ecosystem for the modern composable data pipeline](https://r-consortium.org/webinars/scaling-the-r-spatial-ecosystem-for-the-modern-composable-data-pipeline.html)
