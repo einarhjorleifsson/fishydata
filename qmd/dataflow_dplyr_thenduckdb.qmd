@@ -1,149 +1,394 @@
 ---
-title: "Dataflow: Going -> dplyr -> duckdb"
+title: "ICES VMS datacall: present -> dplyr -> duckdb"
+code-fold: false
+number-sections: true
+number-depth: 3
 ---
 
-```{r}
-# setup ------------------------------------------------------------------------
-## libraries -------------------------------------------------------------------
+This is a document in the making
+
+TODO:
+
+* Split-among-pings not yet implemented myway
+* Spatial acrobatics - points in polygons (ICES area, harbours, habitat) 
+* duckdb section, save the processed files as partquet and start from there
+
+
+## Preamble
+
+### The history
+
+The ICES VSM datacall code is a legacy that has been build over the years. Various persons have been involved in development of the code each having their own coding style and R-dialect (data.table, tidyverse). Besides functions in the old faithful [{vmstools}](https://nielshintzen.github.io/vmstools) more functions have been added, stored in [R-script files](https://github.com/ices-eg/ICES-VMS-and-Logbook-Data-Call/blob/main/0_global.R), often with little documentation.
+
+Given the long history in the development of the datacall scripts there is understandable a reluctance to revise the whole thing. And any big change has it's own risks. Including that the person that suggests changes may end up with maintenance. But there is also a risk of small incremental changes.
+
+So consider what follows here more like a kind of "an external review" of the process. Say so because I have only used the last datacall code step. Ergo, never really dug deeply into the whole code-flow. And the eflalo dataformat has, until now been totally alien to me.
+
+### My approach
+
+Here I will stick to the dplyr-lingo, but there a gold pot at the end of that rainbow. If one sticks to one framework it will hopefully be agnostic to the input format[^1]:
+
+[^1]: Think data.table lingo is also translatable to SQL via a back-end.
+
+* Dataframes already imported into R memory by the user
+* Connect to tables residing in a classical transactional databases
+* Connect to files using on the on-the-fly in-memory duckdb-database
+
+Why should we think this way:
+
+* If we work with out-of-memory data we stop risking that our clunky laptop catches fire and hangs because moderately sized datasets may bleed available memory
+* We are anticipating higher ping frequency of our current datasource (VMS) with time.
+* We are anticipating supplementary AIS and/or SSF fleet data, expanding likely the volume of data we have to process by an order of magnitude.
+
+Beside the ultimate aim, some code-snippet provided here could be of use for incremental improvement of the current datacall scripts. When it comes to coding my drive has been:
+
+* Use generic data-munging functions already available when possible rather than hide them in functions
+* Improves users ...
+* Simple wrappers of long pipelines specific to a single processing step are though warranted for pipe-flow readability.
+* The goal is ultimately that it works independent of the source data.
+* Generate datetime variable from character date and time only once - right upfront
+* Get rid of the date and time character variables. If needed downstream (should not be), reverse engineer the original variable
+* Implement the bookkeeping of potential filtering of data in the pre-processing step as part of the whole pipeflow
+* Simplifies code maintenance, like if new checks are introduced with time
+* Allows for easy passing certain (or for that matter all) putative errors to the process downstream
+* Should be "translatable" to SQL if source data is a transactional database or duckdb rather than data in R-memory.
+* ... forgot one important point
+* Split the eflalo data format into trips and events upfront
+* ["Tidy datasets are all alike but every messy dataset is messy in its own way"](https://tidyr.tidyverse.org/articles/tidy-data.html). Do not worry, one can easily convert the tidy back to the messy format.
+* This clarifies thinking and makes coding hopefully more understandable to the script-flow users.
+* When adding logbook information to trail pings, do things once. Add trip variables separately from event variables
+
+Downstream we will try to run both the main essence of the 2025 datacall script flow (heading "datacall") and an alternative flow ("myway"). If only to make comparisons as we go along. In the end of the document ...
+
+### Common state
+
+#### Packages and scrips
+
+* Source `trip_assign` function that resides in datacall [global.R script](https://github.com/ices-eg/ICES-VMS-and-Logbook-Data-Call/blob/main/0_global.R), here isolated as a [gist](https://gist.githubusercontent.com/einarhjorleifsson/deee46b493f1f95e95e905c15f1c2432/raw/e2d2a0a8241ac8f9c86c3971de677ff260d7319d/rb_trip_assign.R)
+* Source some functions in my personal {ramb}-package (sort of rather than you installing the whole mess) and then a modified `icesVocab` function, just in case that ... (this is non-reproducable).
+
+```{r libraries-and-scrips}
+library(data.table)  # needed in some datacall functions
 library(vmstools)
 library(tidyverse)
 library(duckdb)
-## ad-hoc functions ------------------------------------------------------------
-### ramb functions
-source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/format.R")
-source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/sum_accross.R")
+
 ### datacall functions - can not source global.R, here a datacall trip_assign as a temporary gist
 source("https://gist.githubusercontent.com/einarhjorleifsson/deee46b493f1f95e95e905c15f1c2432/raw/e2d2a0a8241ac8f9c86c3971de677ff260d7319d/rb_trip_assign.R")
 
-# Data pre-processing-----------------------------------------------------------
-#  Use eflalo and tacsat in the vmstools package as a demo
-#  Only do some minimal stuff here
-## logbooks --------------------------------------------------------------------
+### ramb functions
+# source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/format.R")
+source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/sum_across.R")
+
+rb_getCodeList <- function(code_type, from_web = TRUE) {
+  if(from_web) {
+    icesVocab::getCodeList(code_type)
+  } else {
+    readr::read_rds(paste0(here::here("data/icesVocab"), "/", code_type, ".rds"))
+  }
+}
+```
+
+#### Data
+
+Here we use the {vmstools} inbuilt datasets to run and test the codes. We also read the ices vocabulary tables.
+
+```{r data}
 data(eflalo)
-# consolidate
-eflalop <- 
+eflalo_org <- eflalo  # Make a copy for donwstream comparisons
+data(tacsat)
+
+# Advice to change from_web = FALSE to from_web = TRUE, have temporary problems
+iv_gear <-   rb_getCodeList("GearType", from_web = FALSE)$Key
+iv_target <- rb_getCodeList("TargetAssemblage", from_web = FALSE)$Key
+iv_met6 <-   rb_getCodeList("Metier6_FishingActivity", from_web = FALSE)$Key
+```
+
+## Pre-processing
+
+### Date-time consolidation
+
+Convert upfront the dates and datetimes variables. We also arrange the data and add then a unique row id (used in comparisons downstream).
+
+```{r}
+eflalo <- 
   eflalo |> 
   as_tibble() |>
-  rb_sum_across("LE_KG", remove = TRUE) |> 
-  rb_sum_across("LE_EURO", remove = TRUE) |> 
-  mutate(D_DATIM = rb_create_timestamp(FT_DDAT, FT_DTIME),
-         L_DATIM = rb_create_timestamp(FT_LDAT, FT_LTIME),
-         # LE_CDAT = dmy(LE_CDAT), # should be, but ...
+  rename(LE_MET6 = LE_MET_level6) |> 
+  unite(col = "D_DATIM", FT_DDAT, FT_DTIME, sep = " ") |> 
+  unite(col = "L_DATIM", FT_LDAT, FT_LTIME, sep = " ") |> 
+  mutate(D_DATIM = dmy_hms(D_DATIM, tz = "UTC"),       # Note: {vmstools} used "GMT"
+         L_DATIM = dmy_hms(L_DATIM, tz = "UTC"),
+         LE_CDAT = dmy(LE_CDAT),
          .after = FT_REF) |> 
-  select(-c(FT_DDAT, FT_DTIME, FT_LDAT, FT_LTIME)) |> 
-  rename(LE_MET6 = LE_MET_level6)
-# create a tidy trip table
-#  eflalo is not a tidy structure - can be split into a tidy trip table and then
-#   a detail event table. tverse pipe code flow becomes more succinct downstream
+  arrange(VE_COU, VE_COU, LE_CDAT) |> 
+  mutate(.eid = 1L:n()) |> 
+  select(.eid, VE_COU, VE_REF, VE_LEN, VE_KW, VE_TON, everything()) |> 
+  # for the demo, reduces the clutter
+  rb_sum_across("LE_KG", remove = TRUE) |> 
+  rb_sum_across("LE_EURO", remove = TRUE)
+tacsat <- 
+  tacsat |> 
+  as_tibble() |> 
+  # have to keep SI_DATE, because used in trip_assign
+  unite("SI_DATIM", SI_DATE, SI_TIME, sep = " ", remove = FALSE) |>
+  select(-SI_TIME) |> 
+  # UTC does not recognize "29/02/1801", not a leap year
+  mutate(SI_DATIM = dmy_hms(SI_DATIM, tz = "UTC"),
+         SI_DATE = dmy(SI_DATE)) |> 
+  # hence filter upfront
+  filter(!is.na(SI_DATIM)) |> 
+  arrange(VE_COU, VE_REF, SI_DATIM) |> 
+  # possibly part of the checks, but it is natural to do it upfront
+  distinct(VE_COU, VE_REF, SI_DATIM, .keep_all = TRUE) |> 
+  arrange(VE_COU, VE_COU, SI_DATIM) |> 
+  mutate(.pid = 1L:n(),
+         .before = VE_COU)
+```
+
+### Logbook data
+
+Here bookkeeping of potential filtering of records is part of the pipe-flow process. Additional checks can easily be implemented and then in the end the user can decide what records should be filtered, based on values in "checks".
+
+```{r pre-processing-eflalo}
+eflalo <- 
+  eflalo |> 
+  # only needed if one wants to do additional testing
+  separate(LE_MET6, into = c(".m6gear", ".m6target", ".m6mesh", ".m6rest"), sep = "_", remove = FALSE, extra = "merge") |> 
+  separate(.m6mesh, into = c(".m1", ".m2"), sep = "-", remove = FALSE, fill = "right", convert = TRUE) |> 
+  separate(LE_ID, into = c(".etid", ".egear", ".eir"), sep = "-", remove = FALSE) |> 
+  # TODO: Deal with .m1 or .m2 being characters
+  #mutate(.m2 = case_when(is.na(.m2) & as.character(.m1) == "0" ~ "0",
+  #                       .default = .m2)) |> 
+  mutate(
+    checks = case_when(                                                   # datacall
+      # Catch record outlier - code pending                               # 1.3.2
+      base::duplicated(paste(VE_REF, LE_ID, LE_CDAT)) ~ "01 duplicated events",   # 1.3.3
+      is.na(D_DATIM) | is.na(L_DATIM) ~ "02 impossible time",                       # 1.3.4
+      year(D_DATIM) == (year(L_DATIM) - 1) ~ "03 new years trip",                   # 1.3.5
+      D_DATIM > L_DATIM ~ "04 departure before arrival",                           # 1.3.6
+      # "05 overlapping trips  - code pending                             # 1.3.7
+      !LE_GEAR %in% iv_gear ~ "06 gear (metier 4) invalid",                  # 1.4.1
+      !LE_MET6 %in% iv_met6 ~ "07 metier 6 invalid",                         # 3.5.5
+      # Addendum, needs discussions
+      !between(LE_CDAT, as_date(D_DATIM), as_date(L_DATIM)) ~ "ok - 08 catch date not within trip",
+      # metier level 6 component checks
+      LE_GEAR != .m6gear ~ "ok - 01 met6 gear different from gear",
+      !.m6target %in% iv_target ~ "ok - 10 met6 target invalid",
+      # event id component checks
+      FT_REF != .etid ~ "ok - 11 event id tripid different from tripid",
+      LE_GEAR != .egear ~ "ok - 12 event id gear different from gear",
+      LE_RECT != .eir ~ "ok - 13 event id rectangle different from rectangle",
+      # Pending solution prior to case_when applied
+      #!between(mesh, as.integer(.m1), .m2) ~ "11 mesh size not in the met6 range",
+      .default = "ok")
+  )
+eflalo |> 
+  count(checks) |> 
+  mutate('%' = round(n / sum(n) * 100, 2)) |> 
+  knitr::kable(caption = "Logbooks: All records not starting with 'ok' will be filtered downstream")
+
+eflalo <-
+  eflalo |> 
+  select(-c(.etid, .egear, .eir,
+            .m6gear, .m6target, .m6mesh, .m1, .m2, .m6rest)) |> 
+  # You may want to use another filter
+  filter(str_starts(checks, "ok")) |> 
+  select(-checks)
+```
+
+#### Split eflalo into trips and events
+
+The split is to clarify thinking as well as making "myway" downstream code flow simpler.
+
+```{r split-eflalo}
 trips <-
-  eflalop |> 
+  eflalo |> 
   group_by(VE_COU, VE_REF, FT_REF) |> 
   mutate(weight = sum(LE_KG),
          price = sum(LE_EURO)) |> 
   ungroup() |> 
   select(VE_COU, VE_REF, VE_LEN, VE_KW, VE_TON, FT_REF, D_DATIM, L_DATIM, weight, price) |> 
-  distinct(VE_COU, VE_REF, FT_REF, .keep_all = TRUE)
-duck_trips <- trips |> arrow::to_duckdb()  # for later
-# The detail table, remove vessel and trip variables except those used as keys 
-events <- 
-  eflalop |> 
-  select(VE_COU, VE_REF, FT_REF, starts_with("LE_")) |> 
-  # reduce the clutter for this demo test
-  janitor::remove_empty(which = "cols")
-duck_events <- events |> arrow::to_duckdb() # for later
-
-## trails ----------------------------------------------------------------------
-data(tacsat)
-trails <- 
-  tacsat |> 
-  as_tibble() |> 
-  mutate(SI_DATIM = ramb::rb_create_timestamp(SI_DATE, SI_TIME),
-         .after = VE_REF) |> 
-  # select(-c(SI_DATE, SI_TIME)) |> assign_trip only works if these are available
-  arrange(VE_COU, VE_REF, SI_DATIM) |> 
-  distinct(VE_COU, VE_REF, SI_DATIM, .keep_all = TRUE) |> 
-  mutate(.pid = 1L:n(),
+  distinct(VE_COU, VE_REF, FT_REF, .keep_all = TRUE) |> 
+  mutate(.tid = 1L:n(),
          .before = VE_COU)
-# Analysis ---------------------------------------------------------------------
-## Add trip information to pings -----------------------------------------------
-### datacallway ----------------------------------------------------------------
-tacsatp <- 
-  mergeEflalo2Tacsat(eflalop |> as.data.frame(),
-                     trails |> as.data.frame())
-# NOTE: even information added downstream - separated to clarify thinking
+events <- 
+  eflalo |> 
+  select(.eid, VE_COU, VE_REF, FT_REF, starts_with("LE_")) |> 
+  # reduce the clutter for this demo test only - do not use generic code
+  janitor::remove_empty(which = "cols")
+```
+
+So the trip table contains only these variables:
+
+```{r}
+# TODO: printout with smaller fonts
+trips
+```
+
+As for the event table we have:
+
+```{r}
+# TODO: printout with smaller fonts
+events
+```
+
+### Position data
+
+Nothing done so far, besides the distinct above
+
+```{r pre-tacsat}
+#| eval: false
+#| echo: false
+
+it_min <- 5 * 60 # Interval threshold minimum [units: seconds]
+tacsat <- 
+  tacsat |> 
+  # TODO: There are different ways to skin a cat - here calculating sequential statistics
+  # group_by(cid, vid, time) |> 
+  #  see: 
+  # mutate(dt = as.numeric(difftime(lead(time), time, units = "sec"))) |> 
+  # fill(dt, .direction = "down") |> 
+  # ungroup() |> 
+  mutate(
+    checks =
+      case_when(                                                                            # datacall
+        # will argue that these comes first (now done in 2.3.2)
+        is.na(VE_COU) ~ "00 1 no country id",
+        is.na(VE_REF) ~ "00 2 no vessel id",
+        is.na(SI_DATIM) ~ "00 3 no time",
+        is.na(SI_LONG) ~  "00 4 no lon",
+        is.na(SI_LATI) ~  "00 5 no lat",
+        # Would put question mark to this, one can derive speed
+        is.na(SI_SP) ~ "00 6 no speed",
+        # TODO: Outside ICES area",                                                               # 1.2.1
+        base::duplicated(paste(VE_COU, VE_REF, SI_LONG, SI_LATI, SI_DATIM)) ~ "02 duplicates",                     # 1.2.2
+        # This already inclusive in check 01, should be dropped
+        !between(SI_LONG, -180, 180) | !between(SI_LATI, -90, 90) ~ "03 coordinates out of bound",  # 1.2.3
+        c(it_min, diff(unclass(SI_DATIM))) < it_min ~ "04 time interval exceeds threshhold",            # 1.2.4
+        # TODO: Points in harbour                                                                # 1.2.5
+        .default = "ok")
+  )
+
+
+tacsat |> 
+  count(checks) |> 
+  mutate('%' = round(n / sum(n) * 100, 2)) |> 
+  knitr::kable(caption = "VMS: All records not 'ok' will be filtered downstream")
+
+tacsat <- 
+  tacsat |> 
+  filter(str_starts(checks, "ok")) |>
+  select(-c(checks))
+```
+
+
+
+## Analysis 
+
+
+### Add trip information to pings
+
+First create a copy of the VMS, to be used in "myway" process downstream
+
+```{r}
+trails <- tacsat
+```
+
+::: {.panel-tabset}
+
+#### datacallway
+
+* First we add trip using the legacy `vmstools::mergeEflalo2Tacsat`
+* Then use a loop to add fixed trip related variables, (We do not expect vessel length, power or tonnage to change within a trip)
+
+```{r add-trip_datacalway}
+tacsat <-   # normally called tacsatp in the code flow 
+  mergeEflalo2Tacsat(eflalo |> as.data.frame(),
+                     tacsat |> as.data.frame())
+# NOTE: event information added downstream - separated to clarify thinking
 cols <- c("VE_LEN", "VE_KW")
 for (col in cols) {
-  tacsatp[[col]] <- eflalo[[col]][match(tacsatp$FT_REF, eflalo$FT_REF)]
+  tacsat[[col]] <- eflalo[[col]][match(tacsat$FT_REF, eflalo$FT_REF)]
 }
-### myway ----------------------------------------------------------------------
+```
+
+#### myway
+
+```{r add-trip_myway}
 trails <- 
   trails |> 
   left_join(trips,
             by = join_by(VE_COU, VE_REF, between(SI_DATIM, D_DATIM, L_DATIM)),
             relationship = "many-to-one") |> 
+  # No longer needed
   select(-c(D_DATIM, L_DATIM))
-duck_trails <- trails |> arrow::to_duckdb() # for later
+```
 
-### comparisons ----------------------------------------------------------------
-identical(tacsatp$.pid, trails$.pid)
-identical(tacsatp$FT_REF, replace_na(trails$FT_REF, "0"))
-identical(tacsatp$VE_LEN, trails$VE_LEN)
-identical(tacsatp$VE_KW, trails$VE_KW)
+#### comparison
+
+```{r}
+#| echo: false
+#| eval: false
+
+identical(tacsat$.pid, trails$.pid)
+tacsat <- tacsat |> arrange(.pid)
+identical(tacsat$VE_REF, replace_na(trails$VE_REF, "0")) # not really needed
+identical(tacsat$FT_REF, replace_na(trails$FT_REF, "0")) # not really needed
+# TODO: check these
+identical(tacsat$VE_LEN, trails$VE_LEN)
+identical(tacsat$VE_KW, trails$VE_KW)
 # check non-identicals
-data(eflalo) # reload eflalo
+```
+
+```{r}
 comparison <- 
-  tacsatp |> 
+  tacsat |> 
   as_tibble() |> 
   select(.pid, VE_COU, VE_REF, FT_REF, length_dc = VE_LEN, kw_dc = VE_KW) |> 
   left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, length_mw = VE_LEN, kw_mw = VE_KW)) |> 
   filter(length_dc != length_mw | kw_dc != kw_mw) |> 
   select(-c(.pid, FT_REF)) |> 
   distinct()
-comparison |> 
-  left_join(eflalo |> 
+tacsat |> 
+  as_tibble() |> 
+  select(.pid, VE_COU, VE_REF, FT_REF, length_dc = VE_LEN, kw_dc = VE_KW) |> 
+  left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, length_mw = VE_LEN, kw_mw = VE_KW)) |> 
+  filter(length_dc != length_mw | kw_dc != kw_mw) |> 
+  select(-c(.pid, FT_REF)) |> 
+  distinct() |> 
+  left_join(eflalo_org |> 
               filter(VE_REF %in% unique(comparison$VE_REF)) |> 
               select(VE_REF, VE_LEN, VE_KW) |> 
               distinct()) |> 
   knitr::kable(caption = "Assigning vessel info to pings - discrepancies\n'_dc': datacall, '_mw: myway, original from eflalo\nSeems like myway same as the original")
-# so something to check in the datacall flow
+```
 
-## Add gear, mesh and met6 to pings --------------------------------------------
-#  this is ambiguously called trip assign in the datacall flow
-### datacallway ----------------------------------------------------------------
-# Now add the event info - this step needed so that next step works - could be simplified
-cols <- c("LE_GEAR", "LE_MSZ", "LE_RECT", "LE_MET6")
-for (col in cols) {
-   tacsatp[[col]] <- eflalop[[col]][match(tacsatp$FT_REF, eflalop$FT_REF)]
-}
+Seens myway is correct given the original, so something to check in the datacall flow
 
-library(data.table)  # needed in the trip_assign
+:::
 
-tacsatpa_LE_GEAR <- trip_assign(tacsatp, eflalop, col = "LE_GEAR",  haul_logbook = F)
-# Here and subsequently, replaced %!in% with %in%, moving the ! upfront
-tacsatp <- rbindlist(list(tacsatp[!tacsatp$FT_REF %in% tacsatpa_LE_GEAR$FT_REF,], tacsatpa_LE_GEAR), fill = T)
 
-tacsatpa_LE_MSZ <- trip_assign(tacsatp, eflalop, col = "LE_MSZ",  haul_logbook = F)
-tacsatp <- rbindlist(list(tacsatp[!tacsatp$FT_REF %in% tacsatpa_LE_MSZ$FT_REF,], tacsatpa_LE_MSZ), fill = T)
+### Add event information to pings
 
-tacsatpa_LE_RECT <- trip_assign(tacsatp, eflalop, col = "LE_RECT",  haul_logbook = F)
-tacsatp <- rbindlist(list(tacsatp[!tacsatp$FT_REF %in% tacsatpa_LE_RECT$FT_REF,], tacsatpa_LE_RECT), fill = T)
+I think the intent is of the datacall `trip_assing` function is: 
 
-tacsatpa_LE_MET <- trip_assign(tacsatp, eflalop, col = "LE_MET6",  haul_logbook = F)
-tacsatp <- rbindlist(list(tacsatp[!tacsatp$FT_REF %in% tacsatpa_LE_MET$FT_REF,], tacsatpa_LE_MET), fill = T)
+1. For each fishing day, add the values of gear, mesh and met6 from the highest event catch record within the day (no summation done a priori)
+2. For non-fishing days, add the values of gear, mesh and met6 from the highest trip catches
 
-### myway ----------------------------------------------------------------------
-# 1. For each fishing day, add the values of gear, mesh and met6 from the 
-#    highest event catch record within the day (no summation done a priori)
-# 2. For non-fishing days, add the values of gear, mesh and met6 from the 
-#    highest trip catches
-highest_event_catch_per_day <-
+One way to think about this is by creating two tables, highest event table and highest trip table. We will use these two tables in "myway", that code flowing being thus fully independent of the `assign_trip`-function.
+
+```{r}
+highest_event <-
   events |> 
   arrange(desc(LE_KG)) |> 
   group_by(VE_COU, VE_REF, FT_REF, LE_CDAT) |> 
   slice(1) |> 
   ungroup() |> 
   select(VE_COU, VE_REF, FT_REF, LE_CDAT, LE_GEAR, LE_MSZ, LE_MET6, LE_RECT)
-highest_trip_catches <-
+highest_event
+
+highest_trip <-
   events |> 
   group_by(VE_COU, VE_REF, FT_REF, LE_GEAR, LE_MSZ, LE_MET6, LE_RECT) |> 
   summarise(LE_KG = sum(LE_KG),
@@ -154,13 +399,53 @@ highest_trip_catches <-
   ungroup() |> 
   select(VE_COU, VE_REF, FT_REF, .LE_GEAR = LE_GEAR, .LE_MSZ = LE_MSZ, 
          .LE_MET6 = LE_MET6, .LE_RECT = LE_RECT)
+highest_trip
+```
+
+::: {.panel-tabset}
+
+#### datacallway
+
+```{r}
+## Add gear, mesh and met6 to pings --------------------------------------------
+### datacallway ----------------------------------------------------------------
+# Now add the event info - this step needed so that next step works - could be simplified
+cols <- c("LE_GEAR", "LE_MSZ", "LE_RECT", "LE_MET6")
+for (col in cols) {
+  tacsat[[col]] <- eflalo[[col]][match(tacsat$FT_REF, eflalo$FT_REF)]
+}
+
+tacsat_LE_GEAR <- trip_assign(tacsat, eflalo, col = "LE_GEAR",  haul_logbook = F)
+# Here and subsequently, replaced %!in% with %in%, moving the ! upfront
+tacsat <- rbindlist(list(tacsat[!tacsat$FT_REF %in% tacsat_LE_GEAR$FT_REF,], tacsat_LE_GEAR), fill = T, ignore.attr=TRUE)
+
+tacsat_LE_MSZ <- trip_assign(tacsat, eflalo, col = "LE_MSZ",  haul_logbook = F)
+tacsat <- rbindlist(list(tacsat[!tacsat$FT_REF %in% tacsat_LE_MSZ$FT_REF,], tacsat_LE_MSZ), fill = T)
+
+tacsat_LE_RECT <- trip_assign(tacsat, eflalo, col = "LE_RECT",  haul_logbook = F)
+tacsat <- rbindlist(list(tacsat[!tacsat$FT_REF %in% tacsat_LE_RECT$FT_REF,], tacsat_LE_RECT), fill = T)
+
+tacsat_LE_MET <- trip_assign(tacsat, eflalo, col = "LE_MET6",  haul_logbook = F)
+tacsat <- rbindlist(list(tacsat[!tacsat$FT_REF %in% tacsat_LE_MET$FT_REF,], tacsat_LE_MET), fill = T)
+```
+
+#### myway
+
+Here we use a left join to the trails and the final values consolidated. Take note that the joining is as follows:
+
+```
+1. highest_event (    fishing day): join_by(VE_COU, VE_REF, FT_REF, SI_DATE == LE_CDAT)
+2. highest_trips (non-fishing day): join_by(VE_COU, VE_REF, FT_REF)
+```
+
+```{r}
 trails_copy <- trails
 trails <- 
   trails |> 
-  left_join(highest_event_catch_per_day,
+  left_join(highest_event,
             by = join_by(VE_COU, VE_REF, FT_REF, SI_DATE == LE_CDAT),
             relationship = "many-to-one") |> 
-  left_join(highest_trip_catches,
+  left_join(highest_trip,
             by = join_by(VE_COU, VE_REF, FT_REF),
             relationship = "many-to-one") |> 
   mutate(LE_GEAR = case_when(is.na(LE_GEAR) & !is.na(.LE_GEAR) ~ .LE_GEAR,
@@ -168,29 +453,38 @@ trails <-
          LE_MSZ = case_when(is.na(LE_MSZ) & !is.na(.LE_MSZ) ~ .LE_MSZ,
                             .default = LE_MSZ),
          LE_MET6 = case_when(is.na(LE_MET6) & !is.na(.LE_MET6) ~ .LE_MET6,
-                            .default = LE_MET6),
+                             .default = LE_MET6),
          LE_RECT = case_when(is.na(LE_RECT) & !is.na(.LE_RECT) ~ .LE_RECT,
                              .default = LE_RECT)) |> 
   select(-c(.LE_GEAR, .LE_MSZ, .LE_MET6, .LE_RECT))
-### comparisons ----------------------------------------------------------------        
-identical(tacsatp$.pid, trails$.pid)
-tacsatp <- tacsatp |> arrange(.pid)
-identical(tacsatp$.pid, trails$.pid)
-identical(tacsatp$FT_REF, replace_na(trails$FT_REF, "0"))
-identical(tacsatp$LE_MET6, trails$LE_MET6)
+```
+
+#### comparison
+
+```{r}
+#| echo: false
+#| eval: false
+identical(tacsat$.pid, trails$.pid)
+tacsat <- tacsat |> arrange(.pid)
+identical(tacsat$.pid, trails$.pid)
+identical(tacsat$FT_REF, replace_na(trails$FT_REF, "0"))
+identical(tacsat$LE_MET6, trails$LE_MET6)
 # TODO: check these
 # so some work needed, do not get identical
-identical(tacsatp$LE_GEAR, trails$LE_GEAR)
-identical(tacsatp$LE_MSZ, trails$LE_MSZ)
-identical(tacsatp$LE_RECT, trails$LE_RECT)
+identical(tacsat$LE_GEAR, trails$LE_GEAR)
+identical(tacsat$LE_MSZ, trails$LE_MSZ)
+identical(tacsat$LE_RECT, trails$LE_RECT)
+```
 
+```{r}
 comparison <- 
-  tacsatp |> 
+  tacsat |> 
   as_tibble() |> 
   select(.pid, VE_COU, VE_REF, FT_REF, LE_GEAR, LE_MSZ, LE_MET6, LE_RECT) |> 
   left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, 
                              .LE_GEAR = LE_GEAR, .LE_MSZ = LE_MSZ, 
-                             .LE_MET6 = LE_MET6, .LE_RECT = LE_RECT)) |> 
+                             .LE_MET6 = LE_MET6, .LE_RECT = LE_RECT),
+            by = join_by(.pid, VE_COU, VE_REF, FT_REF)) |> 
   # reorder
   select(.pid, VE_COU, VE_REF, FT_REF, LE_GEAR, .LE_GEAR, LE_MSZ, .LE_MSZ, LE_MET6, .LE_MET6, LE_RECT, .LE_RECT)
 comparison |> 
@@ -221,16 +515,111 @@ problem_events |>
   #distinct(VE_REF, FT_REF, LE_CDAT, SI_DATE, LE_GEAR, LE_RECT, LE_KG, .keep_all = TRUE) |> 
   knitr::kable(caption = "Discrepancies - myway")
 problem_events |> 
-  inner_join(tacsatp) |> 
+  inner_join(tacsat) |> 
   arrange(SI_DATIM) |> 
   select(.pid, SI_DATIM, VE_REF, FT_REF, LE_CDAT, SI_DATE, LE_GEAR, LE_RECT, LE_KG) |> 
   #distinct(VE_REF, FT_REF, LE_CDAT, SI_DATE, LE_GEAR, LE_RECT, LE_KG, .keep_all = TRUE) |> 
   knitr::kable(caption = "Discrepancies - datacall")
 # TODO: Check why something is wrotten in the State of Denmark
-print("There is a pending issue, the ways do not give the same results")
+print("There is a pending issue, the two 'ways' do not give the same results")
+```
+
+:::
+
+### Interval and state
+
+Here I will keep things simple, applying a simple speed filter for both the datacall and myway, also throwing in interval along the way:
+
+```{r}
+speed_criteria <- 
+  tribble(~LE_GEAR, ~s1,  ~s2,
+          "OTB",      1,    6,
+          "OTM",      1,    6,
+          "PTB",      1,    6,
+          "TBB",      1,    6)
+
+tacsat <- 
+  tacsat |>
+  arrange(VE_COU, VE_REF, SI_DATIM) |> 
+  group_by(VE_COU, VE_REF, FT_REF) |> 
+  mutate(INTV = c(NA_real_, diff(unclass(SI_DATIM))) / 60) |> # in minutes
+  fill(INTV, .direction = "up") |> 
+  left_join(speed_criteria) |> 
+  mutate(SI_STATE = case_when(is.na(SI_SP) ~ NA,
+                              between(SI_SP, s1, s2) ~ 1,
+                              !between(SI_SP, s1, s2) ~ 0,
+                              .default = -9999)) |> 
+  select(-c(s1, s2))
+
+trails <- 
+  trails |>
+  arrange(VE_COU, VE_REF, SI_DATIM) |> 
+  group_by(VE_COU, VE_REF, FT_REF) |> 
+  mutate(INTV = c(NA_real_, diff(unclass(SI_DATIM))) / 60) |> # in minutes
+  fill(INTV, .direction = "up") |> 
+  left_join(speed_criteria) |> 
+  mutate(SI_STATE = case_when(is.na(SI_SP) ~ NA,
+                              between(SI_SP, s1, s2) ~ 1,
+                              !between(SI_SP, s1, s2) ~ 0,
+                              .default = -9999)) |> 
+  select(-c(s1, s2))
+```
+
+### Split among pings
+
+Here is the juicy part.
 
 
-# Fireworks - running via duckdb -----------------------------------------------
+::: {.panel-tabset}
+
+#### datacallway
+
+```{r}
+eflalo2 <- 
+  eflalo |> 
+  mutate(FT_DDAT = as.character(as_date(D_DATIM)),
+         FT_DTIME = str_sub(as.character(D_DATIM), 12),
+         FT_LDAT = as.character(as_date(L_DATIM)),
+         FT_LTIME = str_sub(as.character(L_DATIM), 12))
+
+tacsat2 <- tacsat[tacsat$SI_STATE == 1,]
+tacsat2 <-
+  tacsat2 |> 
+  drop_na()
+
+tacsatEflalo <-  splitAmongPings(
+                          tacsat = tacsat2,
+                          eflalo = eflalo2,
+                          variable = "all",
+                          level = c("day", "ICESrectangle", "trip"),
+                          conserve = FALSE, 
+                          by = "INTV")
+```
+
+#### myway
+
+```{r}
+
+```
+
+
+#### comparison
+
+```{r}
+
+```
+
+
+:::
+
+
+
+
+
+
+```{r duckdb}
+#| eval: false
+#| echo: false
 duck_highest_event_catch_per_day <-
   duck_events |> 
   arrange(desc(LE_KG)) |> 
@@ -253,10 +642,10 @@ duck_trails <-
   duck_trails |> 
   left_join(duck_highest_event_catch_per_day,
             by = join_by(VE_COU, VE_REF, FT_REF, SI_DATE == LE_CDAT)) |> 
-            # relationship = "many-to-one") |> 
+  # relationship = "many-to-one") |> 
   left_join(duck_highest_trip_catches,
             by = join_by(VE_COU, VE_REF, FT_REF)) |> 
-            # relationship = "many-to-one") |> 
+  # relationship = "many-to-one") |> 
   mutate(LE_GEAR = case_when(is.na(LE_GEAR) & !is.na(.LE_GEAR) ~ .LE_GEAR,
                              .default = LE_GEAR),
          LE_MSZ = case_when(is.na(LE_MSZ) & !is.na(.LE_MSZ) ~ .LE_MSZ,
@@ -266,10 +655,6 @@ duck_trails <-
          LE_RECT = case_when(is.na(LE_RECT) & !is.na(.LE_RECT) ~ .LE_RECT,
                              .default = LE_RECT)) |> 
   select(-c(.LE_GEAR, .LE_MSZ, .LE_MET6, .LE_RECT))
-```
-
-
-```{r collect}
 # Once we have few more things sorted out, like state and split-among-ping
 #  we would in end sum the stuff, like:
 dx <- dy <- 0.05 # csquare
@@ -282,7 +667,7 @@ final <-
   group_by(year, month, lon, lat, LE_GEAR, LE_MET6) |> 
   summarise(pings = n(),
             .groups = "drop") # |> 
-  # collect() # get an error if not interactive
-  
+# collect() # get an error if not interactive
+
 ```
 
