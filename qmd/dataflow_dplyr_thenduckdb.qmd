@@ -5,80 +5,62 @@ number-sections: true
 number-depth: 3
 ---
 
-This is a document in the making
 
-TODO:
+> **Note:** _This document is actively evolving. Feedback, corrections, and contributions are welcome!_
 
-* Split-among-pings not yet implemented myway
-* Spatial acrobatics - points in polygons (ICES area, harbours, habitat) 
-* duckdb section, save the processed files as partquet and start from there
+# Overview
 
+This document reviews and illustrates the ICES VMS datacall workflow, highlighting both legacy and modern data processing approaches. The goal is to clarify the process, identify opportunities for improvement, and demonstrate how to transition from in-memory R workflows to scalable, database-backed analyses (via `dplyr` and `duckdb`). This is especially relevant as data volumes grow, and reproducibility and maintainability become ever more important.
 
-## Preamble
+## TODO
 
-### The history
+- Implement "split-among-pings" the new way
+- Expand spatial procedures (points-in-polygons for ICES areas, harbours, habitats)
+- DuckDB section: save processed files as Parquet and show how to start from there
 
-The ICES VSM datacall code is a legacy that has been build over the years. Various persons have been involved in development of the code each having their own coding style and R-dialect (data.table, tidyverse). Besides functions in the old faithful [{vmstools}](https://nielshintzen.github.io/vmstools) more functions have been added, stored in [R-script files](https://github.com/ices-eg/ICES-VMS-and-Logbook-Data-Call/blob/main/0_global.R), often with little documentation.
+# Preamble
 
-Given the long history in the development of the datacall scripts there is understandable a reluctance to revise the whole thing. And any big change has it's own risks. Including that the person that suggests changes may end up with maintenance. But there is also a risk of small incremental changes.
+## The Story So Far
 
-So consider what follows here more like a kind of "an external review" of the process. Say so because I have only used the last datacall code step. Ergo, never really dug deeply into the whole code-flow. And the eflalo dataformat has, until now been totally alien to me.
+The ICES VMS datacall codebase is a legacy, shaped by contributions from multiple developers, each with their preferred R dialect (`data.table`, `tidyverse`, etc.). While `{vmstools}` remains foundational, many new functions have accumulated over time—often as standalone scripts with limited documentation.
 
-### My approach
+- **Challenge:** The codebase is heterogeneous and difficult to refactor wholesale. Incremental, undocumented changes can also introduce long-term maintenance risks.
+- **Aim:** This document provides an external review and stepwise modernization, focusing on reproducibility, transparency, and scalability. Note that the author is not a long-time datacall maintainer, but rather a user and reviewer of the latest code version.
 
-Here I will stick to the dplyr-lingo, but there a gold pot at the end of that rainbow. If one sticks to one framework it will hopefully be agnostic to the input format[^1]:
+## Approach
 
-[^1]: Think data.table lingo is also translatable to SQL via a back-end.
+- Use the `dplyr` grammar throughout, to facilitate translation across:
+- in-memory data frames,
+- traditional transactional databases,
+- on-the-fly in-memory databases (e.g., DuckDB).
+- **Rationale:**
+- Out-of-memory workflows help avoid system crashes as data volumes grow (e.g., higher VMS ping frequency, new data sources like AIS/SSF).
+- Anticipate future requirements and enable smooth scaling without major rewrites.
 
-* Dataframes already imported into R memory by the user
-* Connect to tables residing in a classical transactional databases
-* Connect to files using on the on-the-fly in-memory duckdb-database
+- **Coding principles:**
+- Use and expose generic, well-tested `dplyr` functions.
+- Use pipeline for readability
+- Log all data quality checks as part of the pipeline, not in separate object.
+- Minimize redundant date/time variables—generate datetime columns once upfront, and reconstruct character formats only if needed later.
+- Split EFLALO data into "trips" and "events" and use those when assigning events to pings.
 
-Why should we think this way:
+Downstream, compare the "official" 2025 script ("datacall") and a modernized approach ("myway") for validation.
 
-* If we work with out-of-memory data we stop risking that our clunky laptop catches fire and hangs because moderately sized datasets may bleed available memory
-* We are anticipating higher ping frequency of our current datasource (VMS) with time.
-* We are anticipating supplementary AIS and/or SSF fleet data, expanding likely the volume of data we have to process by an order of magnitude.
+## Packages and ad-hoc functions
 
-Beside the ultimate aim, some code-snippet provided here could be of use for incremental improvement of the current datacall scripts. When it comes to coding my drive has been:
+We rely on several packages and external scripts/functions. The list below includes both CRAN and GitHub dependencies.
 
-* Use generic data-munging functions already available when possible rather than hide them in functions
-* Improves users ...
-* Simple wrappers of long pipelines specific to a single processing step are though warranted for pipe-flow readability.
-* The goal is ultimately that it works independent of the source data.
-* Generate datetime variable from character date and time only once - right upfront
-* Get rid of the date and time character variables. If needed downstream (should not be), reverse engineer the original variable
-* Implement the bookkeeping of potential filtering of data in the pre-processing step as part of the whole pipeflow
-* Simplifies code maintenance, like if new checks are introduced with time
-* Allows for easy passing certain (or for that matter all) putative errors to the process downstream
-* Should be "translatable" to SQL if source data is a transactional database or duckdb rather than data in R-memory.
-* ... forgot one important point
-* Split the eflalo data format into trips and events upfront
-* ["Tidy datasets are all alike but every messy dataset is messy in its own way"](https://tidyr.tidyverse.org/articles/tidy-data.html). Do not worry, one can easily convert the tidy back to the messy format.
-* This clarifies thinking and makes coding hopefully more understandable to the script-flow users.
-* When adding logbook information to trail pings, do things once. Add trip variables separately from event variables
-
-Downstream we will try to run both the main essence of the 2025 datacall script flow (heading "datacall") and an alternative flow ("myway"). If only to make comparisons as we go along. In the end of the document ...
-
-### Common state
-
-#### Packages and scrips
-
-* Source `trip_assign` function that resides in datacall [global.R script](https://github.com/ices-eg/ICES-VMS-and-Logbook-Data-Call/blob/main/0_global.R), here isolated as a [gist](https://gist.githubusercontent.com/einarhjorleifsson/deee46b493f1f95e95e905c15f1c2432/raw/e2d2a0a8241ac8f9c86c3971de677ff260d7319d/rb_trip_assign.R)
-* Source some functions in my personal {ramb}-package (sort of rather than you installing the whole mess) and then a modified `icesVocab` function, just in case that ... (this is non-reproducable).
-
-```{r libraries-and-scrips}
-library(data.table)  # needed in some datacall functions
-library(vmstools)
-library(tidyverse)
-library(duckdb)
+```{r packages}
+library(data.table)  # Required for some datacall functions
+library(vmstools)    # Provides foundational VMS/logbook utilities
+library(tidyverse)   # Modern data manipulation and piping
+library(duckdb)      # For scalable, out-of-memory data processing
 
 ### datacall functions - can not source global.R, here a datacall trip_assign as a temporary gist
 source("https://gist.githubusercontent.com/einarhjorleifsson/deee46b493f1f95e95e905c15f1c2432/raw/e2d2a0a8241ac8f9c86c3971de677ff260d7319d/rb_trip_assign.R")
 
 ### ramb functions
-# source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/format.R")
-source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/sum_across.R")
+source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/rb_sum_across.R")
 
 rb_getCodeList <- function(code_type, from_web = TRUE) {
   if(from_web) {
@@ -89,9 +71,9 @@ rb_getCodeList <- function(code_type, from_web = TRUE) {
 }
 ```
 
-#### Data
+## Data
 
-Here we use the {vmstools} inbuilt datasets to run and test the codes. We also read the ices vocabulary tables.
+For illustration, we use the `{vmstools}` built-in datasets and ICES vocabularies.
 
 ```{r data}
 data(eflalo)
@@ -104,19 +86,23 @@ iv_target <- rb_getCodeList("TargetAssemblage", from_web = FALSE)$Key
 iv_met6 <-   rb_getCodeList("Metier6_FishingActivity", from_web = FALSE)$Key
 ```
 
-## Pre-processing
+## Date-time consolidation, sum catch and weight & unique rownumber
 
-### Date-time consolidation
+Convert and consolidate all relevant date and datetime fields up front.
 
-Convert upfront the dates and datetimes variables. We also arrange the data and add then a unique row id (used in comparisons downstream).
+- This reduces clutter and makes downstream processing simpler
 
-```{r}
+- Unique row IDs are generated for easy traceability and comparison checks
+
+```{r consolidate}
+remove <- TRUE  # Decide if you want retain orginal variables if new are created
 eflalo <- 
   eflalo |> 
   as_tibble() |>
   rename(LE_MET6 = LE_MET_level6) |> 
-  unite(col = "D_DATIM", FT_DDAT, FT_DTIME, sep = " ") |> 
-  unite(col = "L_DATIM", FT_LDAT, FT_LTIME, sep = " ") |> 
+  unite(col = "D_DATIM", FT_DDAT, FT_DTIME, sep = " ", remove = remove) |> 
+  unite(col = "L_DATIM", FT_LDAT, FT_LTIME, sep = " ", remove = remove) |> 
+  # should really be FT_DDATIM and FT_LDATIM - that is what splitAmongPings checks for
   mutate(D_DATIM = dmy_hms(D_DATIM, tz = "UTC"),       # Note: {vmstools} used "GMT"
          L_DATIM = dmy_hms(L_DATIM, tz = "UTC"),
          LE_CDAT = dmy(LE_CDAT),
@@ -125,8 +111,8 @@ eflalo <-
   mutate(.eid = 1L:n()) |> 
   select(.eid, VE_COU, VE_REF, VE_LEN, VE_KW, VE_TON, everything()) |> 
   # for the demo, reduces the clutter
-  rb_sum_across("LE_KG", remove = TRUE) |> 
-  rb_sum_across("LE_EURO", remove = TRUE)
+  rb_sum_across("LE_KG", remove = remove) |> 
+  rb_sum_across("LE_EURO", remove = remove)
 tacsat <- 
   tacsat |> 
   as_tibble() |> 
@@ -146,11 +132,14 @@ tacsat <-
          .before = VE_COU)
 ```
 
-### Logbook data
+## Pre-processing
 
+### eflalo: Checks
+
+All records are assessed for potential errors or issues, which are logged in a `checks` column. This makes it easy to review and filter problematic records.
 Here bookkeeping of potential filtering of records is part of the pipe-flow process. Additional checks can easily be implemented and then in the end the user can decide what records should be filtered, based on values in "checks".
 
-```{r pre-processing-eflalo}
+```{r eflalo-checks}
 eflalo <- 
   eflalo |> 
   # only needed if one wants to do additional testing
@@ -197,9 +186,9 @@ eflalo <-
   select(-checks)
 ```
 
-#### Split eflalo into trips and events
+### eflalo: Split eflalo into trip and event table
 
-The split is to clarify thinking as well as making "myway" downstream code flow simpler.
+Splitting the data clarifies intent as well as making "myway" downstream code flow simpler.
 
 ```{r split-eflalo}
 trips <-
@@ -208,6 +197,7 @@ trips <-
   mutate(weight = sum(LE_KG),
          price = sum(LE_EURO)) |> 
   ungroup() |> 
+  # here we could add variables corresponding to the highest trip
   select(VE_COU, VE_REF, VE_LEN, VE_KW, VE_TON, FT_REF, D_DATIM, L_DATIM, weight, price) |> 
   distinct(VE_COU, VE_REF, FT_REF, .keep_all = TRUE) |> 
   mutate(.tid = 1L:n(),
@@ -219,7 +209,6 @@ events <-
   janitor::remove_empty(which = "cols")
 ```
 
-So the trip table contains only these variables:
 
 ```{r}
 # TODO: printout with smaller fonts
@@ -233,152 +222,16 @@ As for the event table we have:
 events
 ```
 
-### Position data
-
-Nothing done so far, besides the distinct above
-
-```{r pre-tacsat}
-#| eval: false
-#| echo: false
-
-it_min <- 5 * 60 # Interval threshold minimum [units: seconds]
-tacsat <- 
-  tacsat |> 
-  # TODO: There are different ways to skin a cat - here calculating sequential statistics
-  # group_by(cid, vid, time) |> 
-  #  see: 
-  # mutate(dt = as.numeric(difftime(lead(time), time, units = "sec"))) |> 
-  # fill(dt, .direction = "down") |> 
-  # ungroup() |> 
-  mutate(
-    checks =
-      case_when(                                                                            # datacall
-        # will argue that these comes first (now done in 2.3.2)
-        is.na(VE_COU) ~ "00 1 no country id",
-        is.na(VE_REF) ~ "00 2 no vessel id",
-        is.na(SI_DATIM) ~ "00 3 no time",
-        is.na(SI_LONG) ~  "00 4 no lon",
-        is.na(SI_LATI) ~  "00 5 no lat",
-        # Would put question mark to this, one can derive speed
-        is.na(SI_SP) ~ "00 6 no speed",
-        # TODO: Outside ICES area",                                                               # 1.2.1
-        base::duplicated(paste(VE_COU, VE_REF, SI_LONG, SI_LATI, SI_DATIM)) ~ "02 duplicates",                     # 1.2.2
-        # This already inclusive in check 01, should be dropped
-        !between(SI_LONG, -180, 180) | !between(SI_LATI, -90, 90) ~ "03 coordinates out of bound",  # 1.2.3
-        c(it_min, diff(unclass(SI_DATIM))) < it_min ~ "04 time interval exceeds threshhold",            # 1.2.4
-        # TODO: Points in harbour                                                                # 1.2.5
-        .default = "ok")
-  )
-
-
-tacsat |> 
-  count(checks) |> 
-  mutate('%' = round(n / sum(n) * 100, 2)) |> 
-  knitr::kable(caption = "VMS: All records not 'ok' will be filtered downstream")
-
-tacsat <- 
-  tacsat |> 
-  filter(str_starts(checks, "ok")) |>
-  select(-c(checks))
-```
-
-
-
-## Analysis 
-
-
-### Add trip information to pings
-
-First create a copy of the VMS, to be used in "myway" process downstream
-
-```{r}
-trails <- tacsat
-```
-
-::: {.panel-tabset}
-
-#### datacallway
-
-* First we add trip using the legacy `vmstools::mergeEflalo2Tacsat`
-* Then use a loop to add fixed trip related variables, (We do not expect vessel length, power or tonnage to change within a trip)
-
-```{r add-trip_datacalway}
-tacsat <-   # normally called tacsatp in the code flow 
-  mergeEflalo2Tacsat(eflalo |> as.data.frame(),
-                     tacsat |> as.data.frame())
-# NOTE: event information added downstream - separated to clarify thinking
-cols <- c("VE_LEN", "VE_KW")
-for (col in cols) {
-  tacsat[[col]] <- eflalo[[col]][match(tacsat$FT_REF, eflalo$FT_REF)]
-}
-```
-
-#### myway
-
-```{r add-trip_myway}
-trails <- 
-  trails |> 
-  left_join(trips,
-            by = join_by(VE_COU, VE_REF, between(SI_DATIM, D_DATIM, L_DATIM)),
-            relationship = "many-to-one") |> 
-  # No longer needed
-  select(-c(D_DATIM, L_DATIM))
-```
-
-#### comparison
-
-```{r}
-#| echo: false
-#| eval: false
-
-identical(tacsat$.pid, trails$.pid)
-tacsat <- tacsat |> arrange(.pid)
-identical(tacsat$VE_REF, replace_na(trails$VE_REF, "0")) # not really needed
-identical(tacsat$FT_REF, replace_na(trails$FT_REF, "0")) # not really needed
-# TODO: check these
-identical(tacsat$VE_LEN, trails$VE_LEN)
-identical(tacsat$VE_KW, trails$VE_KW)
-# check non-identicals
-```
-
-```{r}
-comparison <- 
-  tacsat |> 
-  as_tibble() |> 
-  select(.pid, VE_COU, VE_REF, FT_REF, length_dc = VE_LEN, kw_dc = VE_KW) |> 
-  left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, length_mw = VE_LEN, kw_mw = VE_KW)) |> 
-  filter(length_dc != length_mw | kw_dc != kw_mw) |> 
-  select(-c(.pid, FT_REF)) |> 
-  distinct()
-tacsat |> 
-  as_tibble() |> 
-  select(.pid, VE_COU, VE_REF, FT_REF, length_dc = VE_LEN, kw_dc = VE_KW) |> 
-  left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, length_mw = VE_LEN, kw_mw = VE_KW)) |> 
-  filter(length_dc != length_mw | kw_dc != kw_mw) |> 
-  select(-c(.pid, FT_REF)) |> 
-  distinct() |> 
-  left_join(eflalo_org |> 
-              filter(VE_REF %in% unique(comparison$VE_REF)) |> 
-              select(VE_REF, VE_LEN, VE_KW) |> 
-              distinct()) |> 
-  knitr::kable(caption = "Assigning vessel info to pings - discrepancies\n'_dc': datacall, '_mw: myway, original from eflalo\nSeems like myway same as the original")
-```
-
-Seens myway is correct given the original, so something to check in the datacall flow
-
-:::
-
-
-### Add event information to pings
+### eflalo: Create higest_event and highest trip tables
 
 I think the intent is of the datacall `trip_assing` function is: 
 
 1. For each fishing day, add the values of gear, mesh and met6 from the highest event catch record within the day (no summation done a priori)
 2. For non-fishing days, add the values of gear, mesh and met6 from the highest trip catches
 
-One way to think about this is by creating two tables, highest event table and highest trip table. We will use these two tables in "myway", that code flowing being thus fully independent of the `assign_trip`-function.
+One way to think about this in the `dplyr`-flow is to create two tables, highest event table and highest trip table. We will use these two tables in "myway" flow downstream, that code flow being being fully independent of the `assign_trip`-function.
 
-```{r}
+```{r eflalo-highest}
 highest_event <-
   events |> 
   arrange(desc(LE_KG)) |> 
@@ -402,13 +255,114 @@ highest_trip <-
 highest_trip
 ```
 
+Add test here to illustrate the intent
+
+### tacsat: Checks
+
+```{r tacsat-checks}
+it_min <- 5 * 60 # Interval threshold minimum [units: seconds]
+tacsat <- 
+  tacsat |> 
+  mutate(
+    checks = 
+      case_when(
+        is.na(VE_COU) ~ "00 1 no country id",
+        is.na(VE_REF) ~ "00 2 no vessel id",
+        is.na(SI_DATIM) ~ "00 3 no time",
+        is.na(SI_LONG) ~  "00 4 no lon",
+        is.na(SI_LATI) ~  "00 5 no lat",
+        is.na(SI_SP) ~ "00 6 no speed",
+        base::duplicated(paste(VE_COU, VE_REF, SI_LONG, SI_LATI, SI_DATIM)) ~ "02 duplicates",
+        !between(SI_LONG, -180, 180) | !between(SI_LATI, -90, 90) ~ "03 coordinates out of bound",
+        c(it_min, diff(unclass(SI_DATIM))) < it_min ~ "04 time interval exceeds threshold",
+        .default = "ok")
+  )
+
+tacsat |>
+  count(checks) |>
+  mutate('%' = round(n / sum(n) * 100, 2)) |>
+  knitr::kable(caption = "VMS: All records not 'ok' will be filtered downstream")
+
+tacsat <- 
+  tacsat |> 
+  filter(str_starts(checks, "ok")) |>
+  select(-c(checks))
+trails <- tacsat  # for myway
+```
+
+
+## Analysis 
+
+### Add trip information to pings
+
 ::: {.panel-tabset}
 
-#### datacallway
+#### datacall
 
-```{r}
+* First we add trip using the legacy `vmstools::mergeEflalo2Tacsat`
+* Then use a loop to add fixed trip related variables, (We do not expect vessel length, power or tonnage to change within a trip)
+
+```{r add-trip_datacall}
+tacsat <-   # normally called tacsatp in the code flow 
+  mergeEflalo2Tacsat(eflalo |> as.data.frame(),
+                     tacsat |> as.data.frame())
+# NOTE: event information added downstream - to clarify thinking
+cols <- c("VE_LEN", "VE_KW")
+for (col in cols) {
+  tacsat[[col]] <- eflalo[[col]][match(tacsat$FT_REF, eflalo$FT_REF)]
+}
+```
+
+#### myway
+
+```{r add-trip_myway}
+trails <- 
+  trails |> 
+  left_join(trips,
+            by = join_by(VE_COU, VE_REF, between(SI_DATIM, D_DATIM, L_DATIM)),
+            relationship = "many-to-one") |> 
+  # No longer needed
+  select(-c(D_DATIM, L_DATIM))
+```
+
+#### comparison
+
+```{r add-trip-comparison}
+comparison <- 
+  tacsat |> 
+  as_tibble() |> 
+  select(.pid, VE_COU, VE_REF, FT_REF, length_dc = VE_LEN, kw_dc = VE_KW) |> 
+  left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, length_mw = VE_LEN, kw_mw = VE_KW)) |> 
+  filter(length_dc != length_mw | kw_dc != kw_mw) |> 
+  select(-c(.pid, FT_REF)) |> 
+  distinct()
+tacsat |> 
+  as_tibble() |> 
+  select(.pid, VE_COU, VE_REF, FT_REF, length_dc = VE_LEN, kw_dc = VE_KW) |> 
+  left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, length_mw = VE_LEN, kw_mw = VE_KW)) |> 
+  filter(length_dc != length_mw | kw_dc != kw_mw) |> 
+  select(-c(.pid, FT_REF)) |> 
+  distinct() |> 
+  left_join(eflalo_org |> 
+              filter(VE_REF %in% unique(comparison$VE_REF)) |> 
+              select(VE_REF, VE_LEN, VE_KW) |> 
+              distinct()) |> 
+  knitr::kable(caption = "Assigning vessel info to pings - discrepancies\n'_dc': datacall, '_mw: myway, original from eflalo\nSeems like myway same as the original")
+```
+
+Seems "myway" is correct given the original, so something to check in the datacall flow
+
+:::
+
+### Add event information to pings
+
+::: {.panel-tabset}
+
+#### datacall
+
+```{r add-event-datacall}
 ## Add gear, mesh and met6 to pings --------------------------------------------
-### datacallway ----------------------------------------------------------------
+### datacall ----------------------------------------------------------------
 # Now add the event info - this step needed so that next step works - could be simplified
 cols <- c("LE_GEAR", "LE_MSZ", "LE_RECT", "LE_MET6")
 for (col in cols) {
@@ -438,8 +392,7 @@ Here we use a left join to the trails and the final values consolidated. Take no
 2. highest_trips (non-fishing day): join_by(VE_COU, VE_REF, FT_REF)
 ```
 
-```{r}
-trails_copy <- trails
+```{r add-event-myway}
 trails <- 
   trails |> 
   left_join(highest_event,
@@ -461,22 +414,7 @@ trails <-
 
 #### comparison
 
-```{r}
-#| echo: false
-#| eval: false
-identical(tacsat$.pid, trails$.pid)
-tacsat <- tacsat |> arrange(.pid)
-identical(tacsat$.pid, trails$.pid)
-identical(tacsat$FT_REF, replace_na(trails$FT_REF, "0"))
-identical(tacsat$LE_MET6, trails$LE_MET6)
-# TODO: check these
-# so some work needed, do not get identical
-identical(tacsat$LE_GEAR, trails$LE_GEAR)
-identical(tacsat$LE_MSZ, trails$LE_MSZ)
-identical(tacsat$LE_RECT, trails$LE_RECT)
-```
-
-```{r}
+```{r add-event-comparison}
 comparison <- 
   tacsat |> 
   as_tibble() |> 
@@ -523,7 +461,6 @@ problem_events |>
 # TODO: Check why something is wrotten in the State of Denmark
 print("There is a pending issue, the two 'ways' do not give the same results")
 ```
-
 :::
 
 ### Interval and state
@@ -572,7 +509,7 @@ Here is the juicy part.
 
 ::: {.panel-tabset}
 
-#### datacallway
+#### datacall
 
 ```{r}
 eflalo2 <- 
@@ -588,12 +525,12 @@ tacsat2 <-
   drop_na()
 
 tacsatEflalo <-  splitAmongPings(
-                          tacsat = tacsat2,
-                          eflalo = eflalo2,
-                          variable = "all",
-                          level = c("day", "ICESrectangle", "trip"),
-                          conserve = FALSE, 
-                          by = "INTV")
+  tacsat = tacsat2,
+  eflalo = eflalo2,
+  variable = "all",
+  level = c("day", "ICESrectangle", "trip"),
+  conserve = FALSE, 
+  by = "INTV")
 ```
 
 #### myway
