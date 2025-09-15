@@ -541,7 +541,17 @@ tacsatEflalo <-  splitAmongPings(
 #### myway
 
 ```{r}
-
+tmp <- 
+  trips |> 
+  left_join(events) |> 
+  rename(FT_DDATIM = D_DATIM,
+         FT_LDATIM = L_DATIM) |> 
+  filter(FT_REF == "272058") |> 
+  select(-c(.tid, VE_LEN, VE_KW, VE_TON, weight, price))
+ramb::dc_split_among_pings(
+  trails |> select(-c(VE_LEN, VE_KW, VE_TON, weight, price)) |> filter(FT_REF == "272058"),
+  tmp) |> 
+  glimpse()
 ```
 
 
