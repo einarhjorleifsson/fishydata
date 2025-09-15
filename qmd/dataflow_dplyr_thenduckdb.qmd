@@ -263,6 +263,9 @@ Add test here to illustrate the intent
 it_min <- 5 * 60 # Interval threshold minimum [units: seconds]
 tacsat <- 
   tacsat |> 
+  group_by(VE_COU, VE_REF) |> 
+  mutate(dt = c(it_min, diff(unclass(SI_DATIM)))) |>
+  ungroup() |> 
   mutate(
     checks = 
       case_when(
@@ -274,7 +277,7 @@ tacsat <-
         is.na(SI_SP) ~ "00 6 no speed",
         base::duplicated(paste(VE_COU, VE_REF, SI_LONG, SI_LATI, SI_DATIM)) ~ "02 duplicates",
         !between(SI_LONG, -180, 180) | !between(SI_LATI, -90, 90) ~ "03 coordinates out of bound",
-        c(it_min, diff(unclass(SI_DATIM))) < it_min ~ "04 time interval exceeds threshold",
+        dt < it_min ~ "04 time interval exceeds threshold",
         .default = "ok")
   )
 
@@ -282,7 +285,6 @@ tacsat |>
   count(checks) |>
   mutate('%' = round(n / sum(n) * 100, 2)) |>
   knitr::kable(caption = "VMS: All records not 'ok' will be filtered downstream")
-
 tacsat <- 
   tacsat |> 
   filter(str_starts(checks, "ok")) |>
@@ -332,7 +334,8 @@ comparison <-
   tacsat |> 
   as_tibble() |> 
   select(.pid, VE_COU, VE_REF, FT_REF, length_dc = VE_LEN, kw_dc = VE_KW) |> 
-  left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, length_mw = VE_LEN, kw_mw = VE_KW)) |> 
+  left_join(trails |> select(.pid, VE_COU, VE_REF, FT_REF, length_mw = VE_LEN, kw_mw = VE_KW),
+            by = join_by(.pid, VE_COU, VE_REF, FT_REF)) |> 
   filter(length_dc != length_mw | kw_dc != kw_mw) |> 
   select(-c(.pid, FT_REF)) |> 
   distinct()
@@ -512,6 +515,8 @@ Here is the juicy part.
 #### datacall
 
 ```{r}
+#| eval: false
+#| echo: false
 eflalo2 <- 
   eflalo |> 
   mutate(FT_DDAT = as.character(as_date(D_DATIM)),
@@ -529,7 +534,7 @@ tacsatEflalo <-  splitAmongPings(
   eflalo = eflalo2,
   variable = "all",
   level = c("day", "ICESrectangle", "trip"),
-  conserve = FALSE, 
+  conserve = TRUE, 
   by = "INTV")
 ```
 
