@@ -14,6 +14,7 @@ website:
       - text: On coding
         menu:
           - qmd/dataflow_dplyr_thenduckdb.qmd
+          - qmd/copilot_datacall.qmd
       - ramb-list.qmd # add ramb blog to the navbar
       - icon: github
         href: https://github.com/einarhjorleifsson/fishydata

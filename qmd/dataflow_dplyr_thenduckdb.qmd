@@ -1,6 +1,6 @@
 ---
-title: "ICES VMS datacall: present -> dplyr -> duckdb"
-code-fold: false
+title: "ICES VMS datacall: present -> dplyr (-> duckdb)"
+code-fold: show
 number-sections: true
 number-depth: 3
 ---
@@ -8,9 +8,11 @@ number-depth: 3
 
 > **Note:** _This document is actively evolving. Feedback, corrections, and contributions are welcome!_
 
-# Overview
+# Preamble
 
-This document reviews and illustrates the ICES VMS datacall workflow, highlighting both legacy and modern data processing approaches. The goal is to clarify the process, identify opportunities for improvement, and demonstrate how to transition from in-memory R workflows to scalable, database-backed analyses (via `dplyr` and `duckdb`). This is especially relevant as data volumes grow, and reproducibility and maintainability become ever more important.
+This document illustrates as well as reviews the ICES VMS datacall workflow, highlighting both the legacy and alternative data processing approaches. 
+
+The goal of this exercise was to clarify the process, if only personally for one that resides mostly in the tidyverse environment. Moving to the tidyverse, more specifically using the {dplyr}-verbs is not a goal in itself, but rather a stepping stone towards being able to use backend translation of that type of R code to SQL, via the {dbplyr}-package. Processing the data via in-memory **duckdb** reading from sweeps of files residing on the computer via R script, without importing the whole datasets into R is the ultimate aim.
 
 ## TODO
 
@@ -18,7 +20,6 @@ This document reviews and illustrates the ICES VMS datacall workflow, highlighti
 - Expand spatial procedures (points-in-polygons for ICES areas, harbours, habitats)
 - DuckDB section: save processed files as Parquet and show how to start from there
 
-# Preamble
 
 ## The Story So Far
 
@@ -61,6 +62,7 @@ source("https://gist.githubusercontent.com/einarhjorleifsson/deee46b493f1f95e95e
 
 ### ramb functions
 source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/rb_sum_across.R")
+# source(here::here("R/dc_spread_cash_and_catch_v2.R"))
 
 rb_getCodeList <- function(code_type, from_web = TRUE) {
   if(from_web) {
@@ -132,9 +134,9 @@ tacsat <-
          .before = VE_COU)
 ```
 
-## Pre-processing
+# Pre-processing
 
-### eflalo: Checks
+## eflalo: Checks
 
 All records are assessed for potential errors or issues, which are logged in a `checks` column. This makes it easy to review and filter problematic records.
 Here bookkeeping of potential filtering of records is part of the pipe-flow process. Additional checks can easily be implemented and then in the end the user can decide what records should be filtered, based on values in "checks".
@@ -186,7 +188,7 @@ eflalo <-
   select(-checks)
 ```
 
-### eflalo: Split eflalo into trip and event table
+## eflalo: Split eflalo into trip and event table
 
 Splitting the data clarifies intent as well as making "myway" downstream code flow simpler.
 
@@ -222,7 +224,7 @@ As for the event table we have:
 events
 ```
 
-### eflalo: Create higest_event and highest trip tables
+## eflalo: Create higest_event and highest trip tables
 
 I think the intent is of the datacall `trip_assing` function is: 
 
@@ -257,7 +259,7 @@ highest_trip
 
 Add test here to illustrate the intent
 
-### tacsat: Checks
+## tacsat: Checks
 
 ```{r tacsat-checks}
 it_min <- 5 * 60 # Interval threshold minimum [units: seconds]
@@ -293,13 +295,13 @@ trails <- tacsat  # for myway
 ```
 
 
-## Analysis 
+# Analysis 
 
-### Add trip information to pings
+## Add trip information to pings
 
 ::: {.panel-tabset}
 
-#### datacall
+### datacall
 
 * First we add trip using the legacy `vmstools::mergeEflalo2Tacsat`
 * Then use a loop to add fixed trip related variables, (We do not expect vessel length, power or tonnage to change within a trip)
@@ -315,7 +317,7 @@ for (col in cols) {
 }
 ```
 
-#### myway
+### myway
 
 ```{r add-trip_myway}
 trails <- 
@@ -327,7 +329,7 @@ trails <-
   select(-c(D_DATIM, L_DATIM))
 ```
 
-#### comparison
+### comparison
 
 ```{r add-trip-comparison}
 comparison <- 
@@ -357,11 +359,13 @@ Seems "myway" is correct given the original, so something to check in the dataca
 
 :::
 
-### Add event information to pings
+## Add event information to pings
+
+This step is is not a precursor to the next step - consider rearranging ...
 
 ::: {.panel-tabset}
 
-#### datacall
+### datacall
 
 ```{r add-event-datacall}
 ## Add gear, mesh and met6 to pings --------------------------------------------
@@ -386,7 +390,7 @@ tacsat_LE_MET <- trip_assign(tacsat, eflalo, col = "LE_MET6",  haul_logbook = F)
 tacsat <- rbindlist(list(tacsat[!tacsat$FT_REF %in% tacsat_LE_MET$FT_REF,], tacsat_LE_MET), fill = T)
 ```
 
-#### myway
+### myway
 
 Here we use a left join to the trails and the final values consolidated. Take note that the joining is as follows:
 
@@ -415,7 +419,7 @@ trails <-
   select(-c(.LE_GEAR, .LE_MSZ, .LE_MET6, .LE_RECT))
 ```
 
-#### comparison
+### comparison
 
 ```{r add-event-comparison}
 comparison <- 
@@ -466,13 +470,15 @@ print("There is a pending issue, the two 'ways' do not give the same results")
 ```
 :::
 
-### Interval and state
+## Interval and state
 
 Here I will keep things simple, applying a simple speed filter for both the datacall and myway, also throwing in interval along the way:
 
 ```{r}
 speed_criteria <- 
   tribble(~LE_GEAR, ~s1,  ~s2,
+          "GN",       1,    6,
+          "GNS",      1,    6,
           "OTB",      1,    6,
           "OTM",      1,    6,
           "PTB",      1,    6,
@@ -484,6 +490,7 @@ tacsat <-
   group_by(VE_COU, VE_REF, FT_REF) |> 
   mutate(INTV = c(NA_real_, diff(unclass(SI_DATIM))) / 60) |> # in minutes
   fill(INTV, .direction = "up") |> 
+  ungroup() |> 
   left_join(speed_criteria) |> 
   mutate(SI_STATE = case_when(is.na(SI_SP) ~ NA,
                               between(SI_SP, s1, s2) ~ 1,
@@ -497,6 +504,7 @@ trails <-
   group_by(VE_COU, VE_REF, FT_REF) |> 
   mutate(INTV = c(NA_real_, diff(unclass(SI_DATIM))) / 60) |> # in minutes
   fill(INTV, .direction = "up") |> 
+  ungroup() |> 
   left_join(speed_criteria) |> 
   mutate(SI_STATE = case_when(is.na(SI_SP) ~ NA,
                               between(SI_SP, s1, s2) ~ 1,
@@ -505,67 +513,126 @@ trails <-
   select(-c(s1, s2))
 ```
 
-### Split among pings
+interval checks (do a proper one, should also check for negative intverals)
 
-Here is the juicy part.
+```{r}
+table(tacsat$INTV == 0, useNA = "ifany")
+table(trails$INTV == 0, useNA = "ifany")
+```
 
+
+Speed checks:
+```{r}
+tacsat |> 
+  mutate(in_eflalo = ifelse(FT_REF %in% unique(eflalo$FT_REF), "yes", "no")) |>  
+  count(in_eflalo, SI_STATE)
+trails |> 
+  mutate(in_eflalo = ifelse(FT_REF %in% unique(eflalo$FT_REF), "yes", "no")) |>  
+  count(in_eflalo, SI_STATE)
+trails |> 
+  mutate(in_eflalo = ifelse(FT_REF %in% unique(eflalo$FT_REF), "yes", "no")) |> 
+  filter(SI_STATE >= 0) |> 
+  count(in_eflalo, SI_STATE, LE_GEAR)
+```
+
+For now remove the records where there is not LE_GEAR assigned to trips and SI_STATE is -9999
+```{r}
+tacsat <- tacsat |> filter(!is.na(LE_GEAR), INTV > 0)
+trails <- trails |> filter(!is.na(LE_GEAR), INTV > 0)
+```
+
+
+## Split among pings
 
 ::: {.panel-tabset}
 
-#### datacall
+### datacall
 
 ```{r}
-#| eval: false
-#| echo: false
 eflalo2 <- 
   eflalo |> 
+  #filter(FT_REF == TRIP) |> 
+  # vmstools::splitAmongPings checks if trips cross newyear and stops if any
+  #  hence need these (Note: not in d/m/y format, may cause trouble)
   mutate(FT_DDAT = as.character(as_date(D_DATIM)),
          FT_DTIME = str_sub(as.character(D_DATIM), 12),
          FT_LDAT = as.character(as_date(L_DATIM)),
          FT_LTIME = str_sub(as.character(L_DATIM), 12))
 
-tacsat2 <- tacsat[tacsat$SI_STATE == 1,]
 tacsat2 <-
-  tacsat2 |> 
-  drop_na()
+  tacsat |> 
+  #filter(FT_REF == TRIP) |> 
+  select(-LE_RECT)
 
 tacsatEflalo <-  splitAmongPings(
-  tacsat = tacsat2,
-  eflalo = eflalo2,
+  # create an issue in [vmstools}
+  tacsat = tacsat2 |> as.data.frame(),
+  eflalo = eflalo2 |> as.data.frame(),
   variable = "all",
-  level = c("day", "ICESrectangle", "trip"),
-  conserve = TRUE, 
-  by = "INTV")
+  level = c("trip", "ICESrectangle", "day"),
+  conserve = FALSE 
+  #, by = "INTV"
+) |> 
+  as_tibble()
 ```
 
-#### myway
+### myway
 
 ```{r}
-tmp <- 
-  trips |> 
-  left_join(events) |> 
-  rename(FT_DDATIM = D_DATIM,
-         FT_LDATIM = L_DATIM) |> 
-  filter(FT_REF == "272058") |> 
-  select(-c(.tid, VE_LEN, VE_KW, VE_TON, weight, price))
-ramb::dc_split_among_pings(
-  trails |> select(-c(VE_LEN, VE_KW, VE_TON, weight, price)) |> filter(FT_REF == "272058"),
-  tmp) |> 
-  glimpse()
+# Fix variable names upstream, idea is to make a distinction between
+#  Standard TACSAT and EFLALO variable names and types and 
+#  derived or external variables
+trails2 <- 
+  trails |> 
+  select(-LE_RECT) |> 
+  rename(time = SI_DATIM,
+         state = SI_STATE) |> 
+  mutate(ir = ramb::rb_d2ir(SI_LONG, SI_LATI),
+         state = as.integer(state))
+events2 <- 
+  events |> 
+  rename(e_date = LE_CDAT) |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_RECT, e_date) |> 
+  summarise(LE_KG = sum(LE_KG, na.rm = TRUE),
+            LE_EURO = sum(LE_EURO, na.rm = TRUE),
+            .groups = "drop") |> 
+  mutate(.eid = as.integer(1:n()),
+         .before = VE_COU)
+trails_spread2 <- 
+  ramb::dc_spread_cash_and_catch(
+    trails = trails2,
+    events = events2,
+    remove_diagnostic = FALSE
+  )
 ```
 
-
-#### comparison
+### comparison
 
 ```{r}
-
+comp <-
+  tacsatEflalo |> 
+  select(FT_REF, .pid, dc = LE_KG) |> 
+  full_join(trails_spread2 |> 
+              select(.pid, rb = LE_KG, .how, ir))
+comp |> 
+  group_by(FT_REF) |> 
+  summarise(dc = sum(dc, na.rm = TRUE),
+            rb = sum(rb, na.rm = TRUE)) |> 
+  filter(!near(dc, rb)) |> 
+  knitr::kable(caption = "List of FT_REFs that are not the same")
+comp |> 
+  ggplot(aes(dc / 1e3, rb / 1e3)) +
+  theme_bw() +
+  geom_abline(linewidth = 2, colour = "pink") +
+  geom_point(size = 0.5) +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(title = "Comparison of catch spread",
+       x = "datacall", y = "myway",
+       caption = "Guess there is more than one way to skin a cat")
 ```
-
 
 :::
-
-
-
 
 
 
@@ -623,3 +690,520 @@ final <-
 
 ```
 
+
+## Appendix
+
+**Copilot contronts the datacall scripts**
+
+This workflow provides a reproducible, quality-controlled process to prepare, link, and summarize Vessel Monitoring System (VMS) and logbook (EFLALO) data for submission to the ICES VMS and Logbook Data Call. The process is organized into three main sections, each with clear substeps and quality control.
+
+---
+
+## 1. Pre-processing and Cleaning
+
+- **Static Data Preparation:**  
+  - Load static reference datasets such as harbours and ICES statistical areas.
+  - Prepare harbour polygons (with buffer) and standardize coordinate encodings.
+
+- **Yearly Loop:**  
+  For each year:
+  - **Data Loading:**  
+    - Load and format raw TACSAT (VMS) and EFLALO (logbook) data.
+  - **TACSAT Cleaning:**  
+    - Remove records outside ICES areas, with impossible coordinates, duplicates, pseudo-duplicates, and records within harbours.
+    - Track and log record exclusions at each stage.
+    - Save cleaned TACSAT data.
+  - **EFLALO Cleaning:**  
+    - Remove duplicate trips, invalid or missing dates, trips outside the year, and arrival-before-departure errors.
+    - Detect and remove overlapping trips.
+    - Check gear and metier codes against ICES vocabularies.
+    - Save cleaned EFLALO data and exclusion statistics.
+
+---
+
+## 2. Linking, Spatial Enrichment, and Effort Calculation
+
+- **Spatial Data Setup:**  
+  - Load and prepare habitat and bathymetry layers for spatial joins.
+
+- **Yearly Loop:**  
+  For each year:
+  - **Trip Assignment:**  
+    - Link VMS records to logbook trips by matching date/time windows.
+    - Save unmatched records for quality control.
+    - Merge trip and vessel attributes (gear, mesh size, vessel length, etc.) to VMS records.
+  - **Advanced Assignment:**  
+    - Refine assignment for trips with multiple gears or ICES rectangles using event-level data.
+  - **Effort and Activity Status:**  
+    - Calculate and cap time intervals between VMS points.
+    - Remove incomplete records.
+    - Classify vessel positions as fishing or steaming (using speed-based methods).
+    - Retain only valid metier codes.
+    - Distribute logbook landings among VMS pings based on fishing effort (interval).
+  - **Spatial and Effort Enrichment:**  
+    - Join habitat and bathymetry data to VMS points.
+    - Assign C-square codes, year, and month.
+    - Compute kilowatt-hour and swept area metrics.
+    - Assign gear width (using either models or lookup rules).
+    - Save enriched datasets.
+
+---
+
+## 3. Construction and Output of Summary Tables
+
+- **Yearly Table Construction:**  
+  For each year:
+  - **Table 1:**  
+    - VMS-level records with spatial, temporal, effort, vessel, and gear information.
+  - **Table 2:**  
+    - Logbook-level records with trip-level effort, catch, and VMS-link status.
+
+- **Postprocessing:**  
+  - Merge tables across years.
+  - Anonymize vessel IDs and assign vessel length classes using ICES vocabulary.
+  - Aggregate and summarize by key groupings (e.g., C-square, metier, vessel length, habitat).
+  - Compute summary statistics like effort, catch, swept area, and vessel counts.
+  - Generate field type and NA summaries for QC.
+
+- **Vocabulary and QC Checks:**  
+  - Check all key fields against ICES DATSU vocabularies (metiers, gear, vessel length, ICES rectangles, country codes, etc.).
+  - Filter out or correct invalid/missing values and log exclusions.
+
+- **Final Output:**  
+  - Save tables in ICES-ready CSV format for submission.
+  - Provide in-script reporting and intermediate files for transparency and troubleshooting.
+
+---
+
+## Key Points
+
+- **Transparency and Traceability:** Every major step and QC point is traceable, with annotation and data snapshots for review and troubleshooting.
+- **Reproducibility and Standards Compliance:** All processing follows ICES data standards and is reproducible.
+- **Comprehensive Data Preparation:** The workflow ensures harmonized, linked, and spatially enriched data, ready for robust aggregation and ICES submission.
+
+---
+
+
+## Appendix - the datacall code, the short version
+
+```
+#'------------------------------------------------------------------------------
+#
+# Script: Extract and process VMS and logbook data for ICES VMS data call
+# Sections:
+#   1. Pre-process and clean TACSAT and EFLALO data
+#   2. Link TACSAT and EFLALO, add spatial and effort info
+#   3. Construct and output summary tables
+#
+#'------------------------------------------------------------------------------
+
+# Section 1: Pre-process and clean TACSAT and EFLALO data ----------------------
+
+library(icesVocab)
+library(vmstools)
+library(data.table)
+library(tidyverse)
+library(sf)
+source("0_global_functions.R")
+source("0_global_settings.R")
+
+# 1.1 Load and prepare static data ---------------------------------------------
+data(harbours)
+data(ICESareas)
+
+harbours_alt <- 
+  harbours |>
+  dplyr::mutate(harbour = iconv(harbour, from = "latin1", to = "UTF-8")) |>
+  as_tibble() |>
+  sf::st_as_sf(coords = c("lon", "lat"), crs = 4326) |>
+  sf::st_transform(crs = 3857) |>
+  sf::st_buffer(dist = 3000) |>
+  sf::st_transform(crs = 4326) |>
+  dplyr::select(harbour)
+
+# 1.2 Loop through years to process data ---------------------------------------
+for (year in yearsToSubmit) {
+  print(paste0("Start loop for year ", year))
+  
+  # 1.2.1 Load TACSAT and EFLALO -----------------------------------------------
+  tacsat_name <- load(file.path(dataPath, paste0("tacsat_", year, ".RData")))
+  eflalo_name <- load(file.path(dataPath, paste0("eflalo_", year, ".RData")))
+  tacsat <- data.frame(get(tacsat_name))
+  eflalo <- data.frame(get(eflalo_name))
+  tacsat <- formatTacsat(tacsat)
+  eflalo <- formatEflalo(eflalo)
+  
+  # 1.2.2 Clean TACSAT ---------------------------------------------------------
+  remrecsTacsat <- matrix(
+    NA, nrow = 6, ncol = 2,
+    dimnames = list(
+      c("total", "outsideICESarea", "duplicates", "notPossible", "pseudoDuplicates", "harbour"),
+      c("rows", "percentage"))
+  )
+  remrecsTacsat["total", ] <- c(nrow(tacsat), "100%")
+  ia <- transform_to_sf(ICESareas, coords = c("SI_LONG", "SI_LATI"))
+  tacsat <- transform_to_sf(tacsat, coords = c("SI_LONG", "SI_LATI"))
+  ia <- ia %>% sf::st_make_valid() %>% sf::st_transform(4326) |> sf::st_zm()
+  overs <- sf::st_intersects(tacsat, ia)
+  tacsat <- tacsat[lengths(overs) > 0, ]
+  percentage_remaining <- round(nrow(tacsat) / as.numeric(remrecsTacsat["total", 1]) * 100, 2)
+  remrecsTacsat["outsideICESarea", ] <- c(nrow(tacsat), percentage_remaining)
+  tacsat$SI_DATIM <- as.POSIXct(paste(tacsat$SI_DATE, tacsat$SI_TIME), tz = "GMT", format = "%d/%m/%Y  %H:%M")
+  tacsat$unique_id <- paste(tacsat$VE_REF, tacsat$SI_LATI, tacsat$SI_LONG, tacsat$SI_DATIM)
+  tacsat <- tacsat[!duplicated(tacsat$unique_id), ]
+  percentage_remaining <- round(nrow(tacsat) / as.numeric(remrecsTacsat["total", 1]) * 100, 2)
+  remrecsTacsat["duplicates", ] <- c(nrow(tacsat), percentage_remaining)
+  coords <- st_coordinates(tacsat)
+  invalid_positions <- which(coords[,2] > 90 | coords[,2] < -90 | coords[,1] > 180 | coords[,1] < -180)
+  if (length(invalid_positions) > 0) tacsat <- tacsat[-invalid_positions, ]
+  percentage_remaining <- round(nrow(tacsat) / as.numeric(remrecsTacsat["total", 1]) * 100, 2)
+  remrecsTacsat["notPossible", ] <- c(nrow(tacsat), percentage_remaining)
+  tacsat <- sfsortTacsat(tacsat)
+  tacsat$INTV <- intervalTacsat(as.data.frame(tacsat), level = "vessel", fill.na = TRUE)$INTV
+  tacsat <- tacsat[tacsat$INTV >= intThres, ]
+  percentage_remaining <- round(nrow(tacsat) / as.numeric(remrecsTacsat["total", 1]) * 100, 2)
+  remrecsTacsat["pseudoDuplicates", ] <- c(nrow(tacsat), percentage_remaining)
+  tacsat$INTV <- NULL
+  overs <- sf::st_intersects(tacsat, harbours_alt)
+  tacsat <- tacsat[!(lengths(overs) > 0), ]
+  percentage_remaining <- round(nrow(tacsat) / as.numeric(remrecsTacsat["total", 1]) * 100, 2)
+  remrecsTacsat["harbour", ] <- c(nrow(tacsat), percentage_remaining)
+  save(remrecsTacsat, file = file.path(outPath, paste0("remrecsTacsat", year, ".RData")))
+  tacsat <- as.data.frame(tacsat) %>% dplyr::select(-geometry, -unique_id)
+  save(tacsat, file = file.path(outPath, paste("cleanTacsat", year, ".RData", sep = "")))
+  message("Cleaning tacsat completed for year ", year)
+  print(remrecsTacsat)
+  
+  # 1.2.3 Clean EFLALO ---------------------------------------------------------
+  remrecsEflalo <- matrix(
+    NA, nrow = 8, ncol = 2,
+    dimnames = list(
+      c("total", "duplicated", "impossible time", "before 1st Jan", "departArrival", "overlappingTrips", "MetierL4_LE_GEAR", "MetierL6_LE_MET"),
+      c("rows", "percentage"))
+  )
+  remrecsEflalo["total", ] <- c(nrow(eflalo), "100%")
+  trip_id <- create_trip_id(eflalo)
+  eflalo <- eflalo[!duplicated(trip_id), ]
+  num_records <- nrow(eflalo)
+  percent_removed <- round((num_records - as.numeric(remrecsEflalo["total", 1])) / as.numeric(remrecsEflalo["total", 1]) * 100, 2)
+  remrecsEflalo["duplicated", ] <- c(num_records, 100 + percent_removed)
+  eflalo$FT_DDATIM <- convert_to_datetime(eflalo$FT_DDAT, eflalo$FT_DTIME)
+  eflalo$FT_LDATIM <- convert_to_datetime(eflalo$FT_LDAT, eflalo$FT_LTIME)
+  eflalo <- eflalo[!is.na(eflalo$FT_DDATIM) & !is.na(eflalo$FT_LDATIM), ]
+  num_records <- nrow(eflalo)
+  percent_removed <- round((num_records - as.numeric(remrecsEflalo["total", 1])) / as.numeric(remrecsEflalo["total", 1]) * 100, 2)
+  remrecsEflalo["impossible time", ] <- c(num_records, 100 + percent_removed)
+  eflalo <- remove_before_jan(eflalo, year)
+  num_records <- nrow(eflalo)
+  percent_removed <- round((num_records - as.numeric(remrecsEflalo["total", 1])) / as.numeric(remrecsEflalo["total", 1]) * 100, 2)
+  remrecsEflalo["before 1st Jan", ] <- c(num_records, 100 + percent_removed)
+  idx <- which(eflalo$FT_LDATIM >= eflalo$FT_DDATIM)
+  eflalo <- eflalo[idx, ]
+  remrecsEflalo["departArrival", ] <- c(
+    nrow(eflalo),
+    100 + round((nrow(eflalo) - as.numeric(remrecsEflalo["total", 1])) / as.numeric(remrecsEflalo["total", 1]) * 100, 2)
+  )
+  eflalo <- orderBy(~ VE_COU + VE_REF + FT_DDATIM + FT_LDATIM, data = eflalo)
+  dt1 <- data.table(eflalo)[, .(VE_REF, FT_REF, FT_DDATIM, FT_LDATIM)]
+  dt1 <- unique(dt1, by = c("VE_REF", "FT_REF"))
+  setkey(dt1, VE_REF, FT_DDATIM, FT_LDATIM)
+  dt2 <- dt1[, ref := .N > 1, by = key(dt1)][ref == TRUE]
+  dt3 <- dt2[, .(FT_REF_NEW = FT_REF[1]), by = .(VE_REF, FT_DDATIM, FT_LDATIM)]
+  dt4 <- merge(dt2, dt3)
+  eflalo2 <- merge(data.table(eflalo), dt4, all.x = TRUE)
+  eflalo2[!is.na(FT_REF_NEW), FT_REF := FT_REF_NEW]
+  eflalo2[, FT_REF_NEW := NULL]
+  eflalo <- data.frame(eflalo2)
+  eflalo <- eflalo %>% dplyr::select(-ref)
+  dt1 <- data.table(ID = eflalo$VE_REF, FT = eflalo$FT_REF,
+                    startdate = eflalo$FT_DDATIM,
+                    enddate = eflalo$FT_LDATIM)
+  dt1 <- dt1[!duplicated(paste(dt1$ID, dt1$FT)), ]
+  setkey(dt1, ID, startdate, enddate)
+  result <- foverlaps(dt1, dt1, by.x = c("ID", "startdate", "enddate"),
+                      by.y = c("ID", "startdate", "enddate"))
+  overlapping.trips <- subset(result, startdate < i.enddate & enddate > i.startdate & FT != i.FT)
+  if (nrow(overlapping.trips) > 0) {
+    eflalo <- eflalo[!eflalo$FT_REF %in% overlapping.trips$FT, ]
+    save(overlapping.trips, file = file.path(outPath, paste0("overlappingTrips", year, ".RData")))
+  }
+  num_records <- nrow(eflalo)
+  percent_removed <- round((num_records - as.numeric(remrecsEflalo["total", 1])) / as.numeric(remrecsEflalo["total", 1]) * 100, 2)
+  remrecsEflalo["overlappingTrips", ] <- c(num_records, 100 + percent_removed)
+  m4_ices <- getCodeList("GearType")
+  eflalo <- eflalo %>% filter(LE_GEAR %in% m4_ices$Key)
+  remrecsEflalo["MetierL4_LE_GEAR", ] <- c(nrow(eflalo), round(nrow(eflalo) / as.numeric(remrecsEflalo["total", 1]) * 100, 2))
+  m6_ices <- getCodeList("Metier6_FishingActivity")
+  eflalo <- eflalo %>% filter(LE_MET %in% m6_ices$Key)
+  remrecsEflalo["MetierL6_LE_MET", ] <- c(nrow(eflalo), round(nrow(eflalo) / as.numeric(remrecsEflalo["total", 1]) * 100, 2))
+  save(remrecsEflalo, file = file.path(outPath, paste0("remrecsEflalo", year, ".RData")))
+  save(eflalo, file = file.path(outPath, paste0("cleanEflalo", year, ".RData")))
+  message("Cleaning eflalo completed for year ", year)
+  print(remrecsEflalo)
+}
+
+rm(harbours, harbours_alt, ICESareas, tacsat_name, eflalo_name, tacsat, eflalo, remrecsTacsat, remrecsEflalo,
+   ia, overs, coords, invalid_positions, trip_id, percent_removed, num_records, idx, dt1, result, overlapping.trips)
+rm(list = ls(pattern = "_20"))
+
+# Section 2: Link TACSAT and EFLALO, add spatial and effort info ---------------
+
+library(sf)
+sf::sf_use_s2(FALSE)
+eusm <- readRDS(paste0(dataPath, "eusm.rds")) %>% st_transform(4326)
+bathy <- readRDS(paste0(dataPath, "ICES_GEBCO.rds")) %>% st_set_crs(4326)
+
+for (year in yearsToSubmit) {
+  print(paste0("Start loop for year ", year))
+  load(file = paste0(outPath, "/cleanEflalo", year, ".RData"))
+  load(file = paste0(outPath, "/cleanTacsat", year, ".RData"))
+  tacsat$geometry <- NULL
+  
+  # 2.1 Merge EFLALO trip info to TACSAT ---------------------------------------
+  tacsatp <- mergeEflalo2Tacsat(eflalo, tacsat)
+  tacsatp <- data.frame(tacsatp)
+  tacsatpmin <- subset(tacsatp, FT_REF == 0)
+  cat(sprintf("%.2f%% of tacsat data did not merge\n", (nrow(tacsatpmin) / nrow(tacsatp)) * 100))
+  save(tacsatpmin, file = file.path(outPath, paste0("tacsatNotMerged", year, ".RData")))
+  tacsatp <- subset(tacsatp, FT_REF != 0)
+  cols <- c("LE_GEAR", "LE_MSZ", "VE_LEN", "VE_KW", "LE_RECT", "LE_MET", "LE_WIDTH", "VE_FLT", "VE_COU")
+  for (col in cols) {
+    tacsatp[[col]] <- eflalo[[col]][match(tacsatp$FT_REF, eflalo$FT_REF)]
+  }
+  for (col in c("LE_GEAR","LE_MSZ","LE_RECT","LE_MET")) {
+    tripinfo <- trip_assign(tacsatp, eflalo, col = col, haul_logbook = FALSE)
+    tacsatp <- rbindlist(list(tacsatp[tacsatp$FT_REF %!in% tripinfo$FT_REF,], tripinfo), fill = TRUE)
+  }
+  if ("LE_WIDTH" %in% names(eflalo)) {
+    tripinfo <- trip_assign(tacsatp, eflalo, col = "LE_WIDTH", haul_logbook = FALSE)
+    tacsatp <- rbindlist(list(tacsatp[tacsatp$FT_REF %!in% tripinfo$FT_REF,], tripinfo), fill = TRUE)
+  }
+  tacsatp <- as.data.frame(tacsatp)
+  save(tacsatp, file = file.path(outPath, paste0("tacsatMerged", year, ".RData")))
+  
+  # 2.2 Calculate time interval, quality control, assign activity, merge landings ----
+  tacsatp <- intvTacsat(tacsatp, level = "trip", fill.na = TRUE)
+  tacsatp$INTV[tacsatp$INTV > intvThres] <- 2 * intvThres
+  tacsatp$INTV[is.na(tacsatp$INTV)] <- intvThres
+  idx <- which(is.na(tacsatp$VE_REF) | is.na(tacsatp$SI_LONG) | is.na(tacsatp$SI_LATI) |
+                 is.na(tacsatp$SI_DATIM) | is.na(tacsatp$SI_SP))
+  if (length(idx) > 0) tacsatp <- tacsatp[-idx, ]
+  # [activity state assignment block omitted for brevity]
+  save(tacsatp, file = file.path(outPath, paste0("tacsatActivity", year, ".RData")))
+  kept <- nrow(tacsatp)
+  removed <- nrow(tacsatp %>% filter(LE_MET %!in% valid_metiers))
+  tacsatp <- tacsatp %>% filter(LE_MET %in% valid_metiers)
+  cat(sprintf("%.2f%% of tacsatp removed due to invalid metier l6\n", (removed / (removed + kept) * 100)))
+  idx_kg <- grep("LE_KG_", colnames(eflalo)[colnames(eflalo) %!in% c("LE_KG_TOT")])
+  idx_euro <- grep("LE_EURO_", colnames(eflalo)[colnames(eflalo) %!in% c("LE_EURO_TOT")])
+  if ("LE_KG_TOT" %!in% names(eflalo)) eflalo$LE_KG_TOT <- rowSums(eflalo[, idx_kg], na.rm = TRUE)
+  if ("LE_EURO_TOT" %!in% names(eflalo)) eflalo$LE_EURO_TOT <- rowSums(eflalo[, idx_euro], na.rm = TRUE)
+  eflalo <- eflalo[, -c(idx_kg, idx_euro)]
+  eflaloM <- subset(eflalo, FT_REF %in% unique(tacsatp$FT_REF))
+  eflaloNM <- subset(eflalo, !FT_REF %in% unique(tacsatp$FT_REF))
+  message(sprintf("%.2f%% of the eflalo data not in tacsat\n", (nrow(eflaloNM) / (nrow(eflaloNM) + nrow(eflaloM)) * 100)))
+  tacsatp$SI_STATE <- ifelse(tacsatp$SI_STATE == "f", 1, 0)
+  tacsatp <- tacsatp[tacsatp$SI_STATE == 1 & !is.na(tacsatp$INTV), ]
+  if ((sum(tacsatp$INTV == 0) > 0) || (sum(is.na(tacsatp$INTV)) > 0)) {
+    message(sprintf("%.2f%% of intervals in tacsatp contain NA or zeros and have been discarded.\n", 
+                    (sum(tacsatp$INTV == 0) + sum(is.na(tacsatp$INTV))) / nrow(tacsatp) * 100))
+    tacsatp <- tacsatp %>% filter(!is.na(INTV) & INTV > 0)
+  }
+  tacsatEflalo <- splitAmongPings(
+    tacsat = tacsatp,
+    eflalo = eflaloM,
+    variable = "all",
+    level = c("day", "ICESrectangle", "trip"),
+    conserve = TRUE, 
+    by = "INTV"
+  )
+  eflalo$tripInTacsat <- ifelse(eflalo$FT_REF %in% tacsatEflalo$FT_REF, "Y", "N")
+  save(tacsatEflalo, file = file.path(outPath, paste0("tacsatEflalo", year, ".RData")))
+  save(eflalo, file = file.path(outPath, paste0("/processedEflalo", year, ".RData")))
+  print("Dispatching landings completed")
+}
+
+# 2.3 Add habitat, depth, and effort refinements -------------------------------
+for (year in yearsToSubmit) {
+  print(paste0("Start loop for year ", year))
+  load(file = paste0(outPath, "tacsatEflalo", year, ".RData"))
+  tacsatEflalo <- tacsatEflalo |> 
+    sf::st_as_sf(coords = c("SI_LONG", "SI_LATI"), remove = FALSE) |> 
+    sf::st_set_crs(4326) |> 
+    st_join(eusm, join = st_intersects) |> 
+    st_join(bathy, join = st_intersects) |> 
+    mutate(geometry = NULL) |> 
+    data.frame()
+  tacsatEflalo$Csquare <- CSquare(tacsatEflalo$SI_LONG, tacsatEflalo$SI_LATI, degrees = 0.05)
+  tacsatEflalo$Year <- year(tacsatEflalo$SI_DATIM)
+  tacsatEflalo$Month <- month(tacsatEflalo$SI_DATIM)
+  tacsatEflalo$kwHour <- tacsatEflalo$VE_KW * tacsatEflalo$INTV / 60
+  tacsatEflalo$INTV <- tacsatEflalo$INTV / 60
+  tacsatEflalo$GEARWIDTHKM <- add_gearwidth(tacsatEflalo)
+  tacsatEflalo$SA_KM2 <- tacsatEflalo$GEARWIDTHKM * tacsatEflalo$INTV * tacsatEflalo$SI_SP * 1.852
+  tacsatEflalo[, .(min = min(GEARWIDTHKM), max = max(GEARWIDTHKM)), by = .(LE_MET)]
+  save(tacsatEflalo, file = file.path(outPath, paste0("tacsatEflalo", year, ".RData")))
+}
+
+rm(speedarr, tacsatp, tacsatEflalo, eflalo, eflaloM, eflaloNM)
+
+# Section 3: Construct and output summary tables -------------------------------
+
+library(glue)
+library(gt)
+
+for (year in yearsToSubmit) {
+  load(file = paste0(outPath, "/processedEflalo", year, ".RData"))
+  load(file = paste0(outPath, "/tacsatEflalo", year, ".RData"))
+  
+  # 3.1 Table 2: Logbook records -----------------------------------------------
+  eflalo$Year <- year(eflalo$FT_LDATIM)
+  eflalo$Month <- month(eflalo$FT_LDATIM)
+  eflalo$INTV <- 1
+  eflalo$record <- 1
+  res <- aggregate(
+    eflalo$record,
+    by = as.list(eflalo[, c("VE_COU", "VE_REF", "LE_CDAT")]),
+    FUN = sum,
+    na.rm = TRUE
+  )
+  colnames(res) <- c("VE_COU", "VE_REF", "LE_CDAT", "nrRecords")
+  eflalo <- merge(eflalo, res, by = c("VE_COU", "VE_REF", "LE_CDAT"))
+  eflalo$INTV <- eflalo$INTV / eflalo$nrRecords
+  eflalo$kwDays <- eflalo$VE_KW * eflalo$INTV
+  eflalo$tripInTacsat <- ifelse(eflalo$FT_REF %in% tacsatEflalo$FT_REF, "Y", "N")
+  RecordType <- "LE"
+  cols <- c(
+    "VE_REF", "VE_COU", "Year", "Month", "LE_RECT", "LE_GEAR", "LE_MET",
+    "VE_LEN", "tripInTacsat", "INTV", "kwDays", "LE_KG_TOT", "LE_EURO_TOT"
+  )
+  if (year == yearsToSubmit[1]) {
+    table2 <- cbind(RT = RecordType, eflalo[, cols])
+  } else {
+    table2 <- rbind(table2, cbind(RT = RecordType, eflalo[, cols]))
+  }
+  save(table2, file = file.path(outPath, "table2.RData"))
+  message(glue("Table 2 for year {year} is completed"))
+  
+  # 3.2 Table 1: VMS with assigned logbook info --------------------------------
+  tacsatEflalo <- data.frame(tacsatEflalo)
+  RecordType <- "VE"
+  cols <- c(
+    "VE_REF", "VE_COU", "Year", "Month", "Csquare", "MSFD_BBHT", "depth", "LE_GEAR",
+    "LE_MET", "SI_SP", "INTV", "VE_LEN", "kwHour", "VE_KW", "LE_KG_TOT", "LE_EURO_TOT",
+    "GEARWIDTHKM", "SA_KM2"
+  )
+  if (year == yearsToSubmit[1]) {
+    table1 <- cbind(RT = RecordType, tacsatEflalo[, cols])
+  } else {
+    table1 <- rbind(table1, cbind(RT = RecordType, tacsatEflalo[, cols]))
+  }
+  save(table1, file = file.path(outPath, "table1.RData"))
+  message(glue("Table 1 for year {year} is completed"))
+}
+
+table(table1$INTV > 0)
+table(table2$INTV > 0)
+
+# 3.3 Prepare and anonymize vessel IDs -----------------------------------------
+load(file = paste0(outPath, "/table1.RData"))
+load(file = paste0(outPath, "/table2.RData"))
+VE_lut <- data.frame(VE_REF = unique(c(table1$VE_REF, table2$VE_REF)))
+fmt <- paste0("%0", floor(log10(nrow(VE_lut))) + 1, "d")
+VE_lut$VE_ID <- paste0(table1$VE_COU[1], sprintf(fmt, 1:nrow(VE_lut)))
+table1 <- left_join(table1, VE_lut)
+table2 <- left_join(table2, VE_lut)
+
+# 3.4 Add vessel length categories from ICES DATSU vocab -----------------------
+vlen_ices <- getCodeList("VesselLengthClass")
+vlen_icesc <- vlen_ices %>%
+  filter(Key %in% c("VL0006", "VL0608", "VL0810", "VL1012", "VL1215", "VL1518", "VL1824", "VL2440", "VL40XX")) %>%
+  dplyr::select(Key) %>%
+  dplyr::arrange(Key)
+table1$LENGTHCAT <- table1$VE_LEN %>% cut(
+  breaks = c(0, 6, 8, 10, 12, 15, 18, 24, 40, Inf),
+  right = FALSE, include.lowest = TRUE, labels = vlen_icesc$Key
+)
+table2$LENGTHCAT <- table2$VE_LEN %>% cut(
+  breaks = c(0, 6, 8, 10, 12, 15, 18, 24, 40, Inf),
+  right = FALSE, include.lowest = TRUE, labels = vlen_icesc$Key
+)
+
+# 3.5 Aggregate and summarize tables -------------------------------------------
+table1Save <- table1 %>%
+  separate(col = LE_MET, c("MetierL4", "MetierL5"), sep = '_', extra = "drop", remove = FALSE) %>%
+  group_by(RecordType = RT, CountryCode = VE_COU, Year, Month, Csquare, MetierL4, MetierL5, MetierL6 = LE_MET, VesselLengthRange = LENGTHCAT, Habitat = MSFD_BBHT, Depth = depth) %>%
+  summarise(
+    No_Records = n(),
+    AverageFishingSpeed = mean(SI_SP),
+    FishingHour = sum(INTV, na.rm = TRUE),
+    AverageInterval = mean(INTV, na.rm = TRUE),
+    AverageVesselLength = mean(VE_LEN, na.rm = TRUE),
+    AveragekW = mean(VE_KW, na.rm = TRUE),
+    kWFishingHour = sum(kwHour, na.rm = TRUE),
+    SweptArea = sum(SA_KM2, na.rm = TRUE),
+    TotWeight = sum(LE_KG_TOT, na.rm = TRUE),
+    TotValue = sum(LE_EURO_TOT, na.rm = TRUE),
+    NoDistinctVessels = n_distinct(VE_ID, na.rm = TRUE),
+    AnonymizedVesselID = ifelse(n_distinct(VE_ID) < 3, paste(unique(VE_ID), collapse = ";"), 'not_required'),
+    AverageGearWidth = mean(GEARWIDTHKM, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  relocate(NoDistinctVessels, AnonymizedVesselID, .before = Csquare) %>%
+  as.data.frame()
+table2Save <- table2 %>%
+  separate(col = LE_MET, c("MetierL4", "MetierL5"), sep = '_', remove = FALSE) %>%
+  group_by(RecordType = RT, CountryCode = VE_COU, Year, Month, ICESrectangle = LE_RECT, MetierL4, MetierL5, MetierL6 = LE_MET, VesselLengthRange = LENGTHCAT, VMSEnabled = tripInTacsat) %>%
+  summarise(
+    FishingDays = sum(INTV, na.rm = TRUE),
+    kWFishingDays = sum(kwDays, na.rm = TRUE),
+    TotWeight = sum(LE_KG_TOT, na.rm = TRUE),
+    TotValue = sum(LE_EURO_TOT, na.rm = TRUE),
+    NoDistinctVessels = n_distinct(VE_ID, na.rm = TRUE),
+    AnonymizedVesselID = ifelse(n_distinct(VE_ID) < 3, paste(unique(VE_ID), collapse = ";"), 'not_required'),
+    .groups = "drop"
+  ) %>%
+  relocate(NoDistinctVessels, AnonymizedVesselID, .before = ICESrectangle) %>%
+  as.data.frame()
+saveRDS(table1Save, paste0(outPath, "table1Save.rds"))
+saveRDS(table2Save, paste0(outPath, "table2Save.rds"))
+
+# 3.6 Field NA/format summaries (optional) -------------------------------------
+table_nas <- NULL
+for (nn in colnames(table1Save)) {
+  table_na <- table(is.na(table1Save[, nn]))
+  row <- c(field = nn, is_na =  ifelse(is.na(table_na['TRUE']), 0, table_na['TRUE'] ), total_records = length(table1Save[, nn]), field_type = class(table1Save[, nn]))
+  table_nas <- rbind(table_nas, row)
+}
+gt(
+  as_tibble(table_nas),
+  rowname_col = 'field'
+) %>%
+  tab_header(title = md('Summary of **Table 1**  number of NA and records types'))
+table_nas <- NULL
+for (nn in colnames(table2Save)) {
+  table_na <- table(is.na(table2Save[, nn]))
+  row <- c(field = nn, is_na =  ifelse(is.na(table_na['TRUE']), 0, table_na['TRUE'] ), total_records = length(table2Save[, nn]), field_type = class(table2Save[, nn]))
+  table_nas <- rbind(table_nas, row)
+}
+gt(
+  as_tibble(table_nas),
+  rowname_col = 'field'
+) %>%
+  tab_header(title = md('Summary of **Table 2**  number of NA and records types'))
+
+table(table1$INTV > 0)
+table(table2$INTV > 0)
+
+# 3.7 Save as ICES-ready CSV ---------------------------------------------------
+colnames(table1Save)[which(colnames(table1Save) == "Csquare")] <- "C-square"
+colnames(table1Save)[which(colnames(table1Save) == "Habitat")] <- "HabitatType"
+colnames(table1Save)[which(colnames(table1Save) == "Depth")] <- "DepthRange"
+colnames(table1Save)[which(colnames(table1Save) == "No_Records")] <- "NumberOfRecords"
+write.table(table1Save, file.path(outPath, "table1Save.csv"), na = "", row.names = FALSE, col.names = TRUE, sep = ",", quote = FALSE)
+write.table(table2Save, file.path(outPath, "table2Save.csv"), na = "", row.names = FALSE, col.names = TRUE, sep = ",", quote = FALSE)
+
+#'------------------------------------------------------------------------------
+# End of script
+#'------------------------------------------------------------------------------
+```

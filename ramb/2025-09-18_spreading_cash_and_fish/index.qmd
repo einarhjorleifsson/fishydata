@@ -1,0 +1,253 @@
+---
+title: "Spreading cash and fish"
+author: Einar Hjörleifsson
+description: "Here I dig a little bit into the split-among-ping process, with focus on understanding what `{vmstool::splitAmongPings}` does and does not do. Comparison is made using an alternative function, `dc_spread_cash_and_catch` that I belived is closer to the intent, at least by the current SFD members. The discrepanices revieled here may be examples of 'corner cases' so the overall impact may not be that large. I let the code speak a little for itself, so there is not much text to read beyond this header."
+
+date: "2025-09-18"
+categories: [code, rtip]
+echo: true
+draft: false
+---
+
+Here I run a bunch of test dataset cases and within each of them I do three tests:
+
+* `splitAmongPings` with conserve = FALSE
+* `splitAmongPings` with conserve = TRUE
+* Use a homemade function `dc_spread_cash_and_catch`
+  * This function does not have any argument that implements the conserve logic.
+
+Link to the documentation and script for [dc_spread_cash_and_catch.R](https://github.com/einarhjorleifsson/ramb/blob/main/R/dc_spread_cash_and_catch.R)
+
+
+```{r}
+library(vmstools)
+library(tidyverse)
+source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/dc_spread_cash_and_catch.R")
+# helpers to convert tacsat-eflalo speak to spread speak
+to_trails <- function(tacsat) {
+  tacsat |> 
+    unite(col = "time", SI_DATE, SI_TIME, sep = " ") |> 
+    mutate(time = dmy_hm(time, tz = "UTC")) |> 
+    rename(ir = LE_RECT,
+           state = SI_STATE) |> 
+    as_tibble()
+}
+to_trails_noir <- function(tacsat) {
+  tz(tacsat$SI_DATIM) <- "UTC"
+  tacsat$LE_RECT <- vmstools::ICESrectangle(tacsat)
+  tacsat |> 
+    rename(time = SI_DATIM) |> 
+    #unite(col = "time", SI_DATE, SI_TIME, sep = " ") |> 
+    #mutate(time = dmy_hm(time, tz = "UTC")) |> 
+    rename(ir = LE_RECT,
+           state = SI_STATE) |> 
+    as_tibble()
+}
+to_events <- function(eflalo) {
+  eflalo |> 
+    select(-c(FT_DDAT, FT_DTIME, FT_LDAT, FT_LTIME)) |> 
+    rename(date = LE_CDAT) |> 
+    mutate(date = dmy(date)) |> 
+    as_tibble()
+}
+# helpers for the output printout
+lh <- function(d) {
+  d |> 
+    select(.pid, FT_REF:SI_STATE, SI_DATIM, LE_KG)
+}
+lh2 <- function(d) {
+  d |> 
+    select(.pid, FT_REF:LE_KG, .how)
+}
+```
+
+
+## Some artifical data
+
+```{r example2}
+time = seq(from = as.POSIXct("2025-01-01 09:00:00", tz="UTC"), 
+           to   = as.POSIXct("2025-01-01 16:00:00", tz="UTC"), 
+           by = "hour")
+N <- length(time)
+tacsat <- 
+  tibble(.pid = 1:N,
+         VE_COU = rep("IS", N),
+         VE_REF = rep("A", N),
+         FT_REF = rep("trip1", N),
+         LE_RECT = c("A1", "A1", "A1", "A2", "A2", "A3", "A3", "A3"),
+         SI_STATE = c(1, 1, 0, 1, 1, 0 , 1, 1),
+         time = time) |> 
+  mutate(SI_STATE = as.integer(SI_STATE)) |> 
+  mutate(SI_DATE = format(as_date(time), "%d/%m/%Y"),
+         SI_TIME = str_sub(as.character(time), 12, 16)) |> 
+  #select(-time) |> 
+  as.data.frame()
+N <- 5
+eflalo <- 
+  tibble(.eid = 1:N,
+         VE_COU = rep("IS",N),
+         VE_REF = rep("A", N),
+         FT_REF = c(rep("trip1", N - 1), "trip1"),
+         LE_CDAT = c("01/01/2025", "01/01/2025", NA, NA, "01/01/2025"),
+         LE_RECT = c("A1", "A1", "A2", NA, "B1"),
+         LE_KG = c(133, 100, 2333, 12, 10000)) |> 
+  mutate(.eid = as.integer(.eid),
+         LE_EURO = LE_KG * 1.3) |> 
+  mutate(T1 = min(tacsat$time),
+         T2 = max(tacsat$time),
+         FT_DDAT = format(as_date(T1), "%d/%m/%Y"),
+         FT_DTIME = str_sub(as.character(T2), 12, 16),
+         FT_LDAT = format(as_date(T2), "%d/%m/%Y"),
+         FT_LTIME = str_sub(as.character(T2), 12, 16)) |> 
+  select(-c(T1, T2)) |> 
+  as.data.frame()
+tacsat <- tacsat |> select(-time)
+```
+
+## Data view
+
+```{r}
+eflalo |> select(.eid:LE_KG)
+tacsat |> 
+  mutate(
+    how = case_when(.pid %in% 1:2 ~ "trip-rect-day",
+                    .pid %in% 4:5 ~ "trip_rect",
+                    .pid %in% 7:8 ~ "trip",
+                    .default = ""),
+    eflalo_id = case_when(.pid %in% 1:2 ~ "1, 2",
+                          .pid %in% 4:5 ~ "3",
+                          .pid %in% 7:8 ~ "4",
+                          .default = "")) |> 
+  select(.pid, FT_REF:eflalo_id)
+```
+
+The eflalo_id is my expectation of how eflalo data will be assigned to pings. Will not repeat this process downstream, make your own inference.
+
+## Test 1
+
+```{r}
+splitAmongPings(tacsat, eflalo, conserve = FALSE, returnAll = TRUE) |> lh()
+splitAmongPings(tacsat, eflalo, conserve = TRUE,  returnAll = TRUE) |> lh()
+test1 <- dc_spread_cash_and_catch(to_trails(tacsat), to_events(eflalo))
+test1 |> lh2()
+near(sum(test1$LE_KG, na.rm = TRUE), sum(eflalo$LE_KG))
+```
+
+## Test 2
+
+```{r}
+# Lets change rectangle of the last trail
+tacsat$LE_RECT[8] <- "B1"
+splitAmongPings(tacsat, eflalo, conserve = FALSE, returnAll = TRUE) |> lh()
+splitAmongPings(tacsat, eflalo, conserve = TRUE,  returnAll = TRUE) |> lh()
+test2 <- dc_spread_cash_and_catch(to_trails(tacsat), to_events(eflalo))
+test2 |> lh2()
+near(sum(test2$LE_KG, na.rm = TRUE), sum(eflalo$LE_KG))
+```
+
+## Test 3
+
+```{r}
+# Now lets make the last eflalo record a separate trip
+eflalo$FT_REF[5] <- "trip2"
+splitAmongPings(tacsat, eflalo, conserve = FALSE, returnAll = TRUE) |> lh()
+splitAmongPings(tacsat, eflalo, conserve = TRUE,  returnAll = TRUE) |> lh()
+test3 <- dc_spread_cash_and_catch(to_trails(tacsat), to_events(eflalo))
+test3 |> lh2()
+near(sum(test3$LE_KG, na.rm = TRUE), sum(eflalo$LE_KG))
+```
+
+## Test 4
+
+```{r}
+# Now lets make the last tacsat record a separate trip
+tacsat$FT_REF[8] <- "trip2"
+splitAmongPings(tacsat, eflalo, conserve = FALSE, returnAll = TRUE) |> lh()
+splitAmongPings(tacsat, eflalo, conserve = TRUE,  returnAll = TRUE) |> lh()
+test4 <- dc_spread_cash_and_catch(to_trails(tacsat), to_events(eflalo))
+test4 |> lh2()
+near(sum(test4$LE_KG, na.rm = TRUE), sum(eflalo$LE_KG))
+```
+
+## Test 5
+
+### Prepare {vmstools} demo datasets
+
+```{r}
+data(eflalo)
+
+idx_kg <- grep("LE_KG_", colnames(eflalo)[!colnames(eflalo) %in% c("LE_KG_TOT")])
+idx_euro <- grep("LE_EURO_", colnames(eflalo)[!colnames(eflalo) %in% c("LE_EURO_TOT")])
+# Calculate the total KG and EURO for each row
+if(!"LE_KG_TOT" %in% names(eflalo)) eflalo$LE_KG_TOT <- rowSums(eflalo[, idx_kg], na.rm = TRUE)
+if(!"LE_EURO_TOT" %in% names(eflalo)) eflalo$LE_EURO_TOT <- rowSums(eflalo[, idx_euro], na.rm = TRUE)
+# Remove the columns used for the total calculation
+eflalo <- eflalo[, -c(idx_kg, idx_euro)]
+
+eflalo <- 
+  eflalo |> 
+  select(VE_COU, VE_REF, FT_REF, FT_DDAT, FT_DTIME, FT_LDAT, FT_LTIME, LE_CDAT, LE_RECT, LE_KG_TOT, LE_EURO_TOT)
+
+data(tacsat)
+tacsat <- tacsat |> filter(!is.na(SI_SP))
+tacsatp <- 
+  mergeEflalo2Tacsat(eflalo,tacsat) |> 
+  filter(FT_REF != "0") |> 
+  filter(!is.na(SI_SP)) |> 
+  mutate(SI_STATE = case_when(between(SI_SP, 0.5, 6) ~ 1L,
+                              !between(SI_SP, 0.5, 6) ~ 0L,
+                              .default = NA_integer_))
+eflalo <- 
+  eflalo |> 
+  filter(FT_REF %in% unique(tacsatp$FT_REF))
+trails <- 
+  tacsatp |> 
+  to_trails_noir() |> 
+  mutate(.pid = 1:n(),
+         .pid = as.integer(.pid)) 
+events <- 
+  eflalo |> 
+  rename(LE_KG = LE_KG_TOT, LE_EURO = LE_EURO_TOT) |> 
+  to_events() |> 
+  mutate(.eid = 1:n())
+```
+
+### Run the spreads
+
+```{r}
+test_vmstools1 <- splitAmongPings(tacsatp, eflalo, conserve = FALSE, returnAll = TRUE)
+test_vmstools2 <- splitAmongPings(tacsatp, eflalo, conserve = TRUE, returnAll = TRUE)
+myway <- dc_spread_cash_and_catch(trails, events)
+
+comp <- 
+  tibble(
+    what = c("eflalo", "splitting 1, conserve = FALSE", 
+             "splitting 2, conserve = TRUE", "spead"),
+    mass = c(sum(eflalo$LE_KG_TOT) / 1e6,
+             sum(test_vmstools1$LE_KG_TOT, na.rm = TRUE) / 1e6,
+             sum(test_vmstools2$LE_KG_TOT, na.rm = TRUE) / 1e6,
+             sum(myway$LE_KG, na.rm = TRUE) / 1e6))
+comp |> 
+  knitr::kable(
+    caption = "Catch total - comparisons of split methods and settings")
+```
+
+### Trips where mass is not conserved during spreading
+
+Here I will only list the non-mass balance trip cases for the spread-process, for the split-process it would just be too long:
+
+```{r}
+events |> 
+  group_by(FT_REF) |> 
+  summarise(pre = sum(LE_KG) / 1e3) |> 
+  left_join(myway |> 
+              group_by(FT_REF) |> 
+              summarise(post = sum(LE_KG, na.rm = TRUE) / 1e3,
+                        pings = n(),
+                        n_fishing = sum(state))) |> 
+  mutate(near = near(pre, post)) |> 
+  filter(!near) |> 
+  knitr::kable(caption = "Trips with only partial or no spreadings")
+```
+
+... so guess some little more work may we warranted, after some group discussion.
