@@ -1,5 +1,5 @@
 ---
-title: "ICES VMS datacall: present -> dplyr -> duckdb"
+title: "ICES VMS datacall: present -> dplyr (-> duckdb)"
 code-fold: false
 number-sections: true
 number-depth: 3
@@ -8,9 +8,11 @@ number-depth: 3
 
 > **Note:** _This document is actively evolving. Feedback, corrections, and contributions are welcome!_
 
-# Overview
+# Preamble
 
-This document reviews and illustrates the ICES VMS datacall workflow, highlighting both legacy and modern data processing approaches. The goal is to clarify the process, identify opportunities for improvement, and demonstrate how to transition from in-memory R workflows to scalable, database-backed analyses (via `dplyr` and `duckdb`). This is especially relevant as data volumes grow, and reproducibility and maintainability become ever more important.
+This document illustrates as well as reviews the ICES VMS datacall workflow, highlighting both the legacy and alternative data processing approaches. 
+
+The goal of this exercise was to clarify the process, if only personally for one that resides mostly in the tidyverse environment. Moving to the tidyverse, more specifically using the {dplyr}-verbs is not a goal in itself, but rather a stepping stone towards being able to use backend translation of that type of R code to SQL, via the {dbplyr}-package. Processing the data via in-memory **duckdb** reading from sweeps of files residing on the computer via R script, without importing the whole datasets into R is the ultimate aim.
 
 ## TODO
 
@@ -18,7 +20,6 @@ This document reviews and illustrates the ICES VMS datacall workflow, highlighti
 - Expand spatial procedures (points-in-polygons for ICES areas, harbours, habitats)
 - DuckDB section: save processed files as Parquet and show how to start from there
 
-# Preamble
 
 ## The Story So Far
 
@@ -61,6 +62,7 @@ source("https://gist.githubusercontent.com/einarhjorleifsson/deee46b493f1f95e95e
 
 ### ramb functions
 source("https://raw.githubusercontent.com/einarhjorleifsson/ramb/refs/heads/main/R/rb_sum_across.R")
+# source(here::here("R/dc_spread_cash_and_catch_v2.R"))
 
 rb_getCodeList <- function(code_type, from_web = TRUE) {
   if(from_web) {
@@ -132,9 +134,9 @@ tacsat <-
          .before = VE_COU)
 ```
 
-## Pre-processing
+# Pre-processing
 
-### eflalo: Checks
+## eflalo: Checks
 
 All records are assessed for potential errors or issues, which are logged in a `checks` column. This makes it easy to review and filter problematic records.
 Here bookkeeping of potential filtering of records is part of the pipe-flow process. Additional checks can easily be implemented and then in the end the user can decide what records should be filtered, based on values in "checks".
@@ -186,7 +188,7 @@ eflalo <-
   select(-checks)
 ```
 
-### eflalo: Split eflalo into trip and event table
+## eflalo: Split eflalo into trip and event table
 
 Splitting the data clarifies intent as well as making "myway" downstream code flow simpler.
 
@@ -222,7 +224,7 @@ As for the event table we have:
 events
 ```
 
-### eflalo: Create higest_event and highest trip tables
+## eflalo: Create higest_event and highest trip tables
 
 I think the intent is of the datacall `trip_assing` function is: 
 
@@ -257,7 +259,7 @@ highest_trip
 
 Add test here to illustrate the intent
 
-### tacsat: Checks
+## tacsat: Checks
 
 ```{r tacsat-checks}
 it_min <- 5 * 60 # Interval threshold minimum [units: seconds]
@@ -293,13 +295,13 @@ trails <- tacsat  # for myway
 ```
 
 
-## Analysis 
+# Analysis 
 
-### Add trip information to pings
+## Add trip information to pings
 
 ::: {.panel-tabset}
 
-#### datacall
+### datacall
 
 * First we add trip using the legacy `vmstools::mergeEflalo2Tacsat`
 * Then use a loop to add fixed trip related variables, (We do not expect vessel length, power or tonnage to change within a trip)
@@ -315,7 +317,7 @@ for (col in cols) {
 }
 ```
 
-#### myway
+### myway
 
 ```{r add-trip_myway}
 trails <- 
@@ -327,7 +329,7 @@ trails <-
   select(-c(D_DATIM, L_DATIM))
 ```
 
-#### comparison
+### comparison
 
 ```{r add-trip-comparison}
 comparison <- 
@@ -357,11 +359,13 @@ Seems "myway" is correct given the original, so something to check in the dataca
 
 :::
 
-### Add event information to pings
+## Add event information to pings
+
+This step is is not a precursor to the next step - consider rearranging ...
 
 ::: {.panel-tabset}
 
-#### datacall
+### datacall
 
 ```{r add-event-datacall}
 ## Add gear, mesh and met6 to pings --------------------------------------------
@@ -386,7 +390,7 @@ tacsat_LE_MET <- trip_assign(tacsat, eflalo, col = "LE_MET6",  haul_logbook = F)
 tacsat <- rbindlist(list(tacsat[!tacsat$FT_REF %in% tacsat_LE_MET$FT_REF,], tacsat_LE_MET), fill = T)
 ```
 
-#### myway
+### myway
 
 Here we use a left join to the trails and the final values consolidated. Take note that the joining is as follows:
 
@@ -415,7 +419,7 @@ trails <-
   select(-c(.LE_GEAR, .LE_MSZ, .LE_MET6, .LE_RECT))
 ```
 
-#### comparison
+### comparison
 
 ```{r add-event-comparison}
 comparison <- 
@@ -466,13 +470,15 @@ print("There is a pending issue, the two 'ways' do not give the same results")
 ```
 :::
 
-### Interval and state
+## Interval and state
 
 Here I will keep things simple, applying a simple speed filter for both the datacall and myway, also throwing in interval along the way:
 
 ```{r}
 speed_criteria <- 
   tribble(~LE_GEAR, ~s1,  ~s2,
+          "GN",       1,    6,
+          "GNS",      1,    6,
           "OTB",      1,    6,
           "OTM",      1,    6,
           "PTB",      1,    6,
@@ -484,6 +490,7 @@ tacsat <-
   group_by(VE_COU, VE_REF, FT_REF) |> 
   mutate(INTV = c(NA_real_, diff(unclass(SI_DATIM))) / 60) |> # in minutes
   fill(INTV, .direction = "up") |> 
+  ungroup() |> 
   left_join(speed_criteria) |> 
   mutate(SI_STATE = case_when(is.na(SI_SP) ~ NA,
                               between(SI_SP, s1, s2) ~ 1,
@@ -497,6 +504,7 @@ trails <-
   group_by(VE_COU, VE_REF, FT_REF) |> 
   mutate(INTV = c(NA_real_, diff(unclass(SI_DATIM))) / 60) |> # in minutes
   fill(INTV, .direction = "up") |> 
+  ungroup() |> 
   left_join(speed_criteria) |> 
   mutate(SI_STATE = case_when(is.na(SI_SP) ~ NA,
                               between(SI_SP, s1, s2) ~ 1,
@@ -505,67 +513,126 @@ trails <-
   select(-c(s1, s2))
 ```
 
-### Split among pings
+interval checks (do a proper one, should also check for negative intverals)
 
-Here is the juicy part.
+```{r}
+table(tacsat$INTV == 0, useNA = "ifany")
+table(trails$INTV == 0, useNA = "ifany")
+```
 
+
+Speed checks:
+```{r}
+tacsat |> 
+  mutate(in_eflalo = ifelse(FT_REF %in% unique(eflalo$FT_REF), "yes", "no")) |>  
+  count(in_eflalo, SI_STATE)
+trails |> 
+  mutate(in_eflalo = ifelse(FT_REF %in% unique(eflalo$FT_REF), "yes", "no")) |>  
+  count(in_eflalo, SI_STATE)
+trails |> 
+  mutate(in_eflalo = ifelse(FT_REF %in% unique(eflalo$FT_REF), "yes", "no")) |> 
+  filter(SI_STATE >= 0) |> 
+  count(in_eflalo, SI_STATE, LE_GEAR)
+```
+
+For now remove the records where there is not LE_GEAR assigned to trips and SI_STATE is -9999
+```{r}
+tacsat <- tacsat |> filter(!is.na(LE_GEAR), INTV > 0)
+trails <- trails |> filter(!is.na(LE_GEAR), INTV > 0)
+```
+
+
+## Split among pings
 
 ::: {.panel-tabset}
 
-#### datacall
+### datacall
 
 ```{r}
-#| eval: false
-#| echo: false
 eflalo2 <- 
   eflalo |> 
+  #filter(FT_REF == TRIP) |> 
+  # vmstools::splitAmongPings checks if trips cross newyear and stops if any
+  #  hence need these (Note: not in d/m/y format, may cause trouble)
   mutate(FT_DDAT = as.character(as_date(D_DATIM)),
          FT_DTIME = str_sub(as.character(D_DATIM), 12),
          FT_LDAT = as.character(as_date(L_DATIM)),
          FT_LTIME = str_sub(as.character(L_DATIM), 12))
 
-tacsat2 <- tacsat[tacsat$SI_STATE == 1,]
 tacsat2 <-
-  tacsat2 |> 
-  drop_na()
+  tacsat |> 
+  #filter(FT_REF == TRIP) |> 
+  select(-LE_RECT)
 
 tacsatEflalo <-  splitAmongPings(
-  tacsat = tacsat2,
-  eflalo = eflalo2,
+  # create an issue in [vmstools}
+  tacsat = tacsat2 |> as.data.frame(),
+  eflalo = eflalo2 |> as.data.frame(),
   variable = "all",
-  level = c("day", "ICESrectangle", "trip"),
-  conserve = TRUE, 
-  by = "INTV")
+  level = c("trip", "ICESrectangle", "day"),
+  conserve = FALSE 
+  #, by = "INTV"
+) |> 
+  as_tibble()
 ```
 
-#### myway
+### myway
 
 ```{r}
-tmp <- 
-  trips |> 
-  left_join(events) |> 
-  rename(FT_DDATIM = D_DATIM,
-         FT_LDATIM = L_DATIM) |> 
-  filter(FT_REF == "272058") |> 
-  select(-c(.tid, VE_LEN, VE_KW, VE_TON, weight, price))
-ramb::dc_split_among_pings(
-  trails |> select(-c(VE_LEN, VE_KW, VE_TON, weight, price)) |> filter(FT_REF == "272058"),
-  tmp) |> 
-  glimpse()
+# Fix variable names upstream, idea is to make a distinction between
+#  Standard TACSAT and EFLALO variable names and types and 
+#  derived or external variables
+trails2 <- 
+  trails |> 
+  select(-LE_RECT) |> 
+  rename(time = SI_DATIM,
+         state = SI_STATE) |> 
+  mutate(ir = ramb::rb_d2ir(SI_LONG, SI_LATI),
+         state = as.integer(state))
+events2 <- 
+  events |> 
+  rename(e_date = LE_CDAT) |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_RECT, e_date) |> 
+  summarise(LE_KG = sum(LE_KG, na.rm = TRUE),
+            LE_EURO = sum(LE_EURO, na.rm = TRUE),
+            .groups = "drop") |> 
+  mutate(.eid = as.integer(1:n()),
+         .before = VE_COU)
+trails_spread2 <- 
+  ramb::dc_spread_cash_and_catch(
+    trails = trails2,
+    events = events2,
+    remove_diagnostic = FALSE
+  )
 ```
 
-
-#### comparison
+### comparison
 
 ```{r}
-
+comp <-
+  tacsatEflalo |> 
+  select(FT_REF, .pid, dc = LE_KG) |> 
+  full_join(trails_spread2 |> 
+              select(.pid, rb = LE_KG, .how, ir))
+comp |> 
+  group_by(FT_REF) |> 
+  summarise(dc = sum(dc, na.rm = TRUE),
+            rb = sum(rb, na.rm = TRUE)) |> 
+  filter(!near(dc, rb)) |> 
+  knitr::kable(caption = "List of FT_REFs that are not the same")
+comp |> 
+  ggplot(aes(dc / 1e3, rb / 1e3)) +
+  theme_bw() +
+  geom_abline(linewidth = 2, colour = "pink") +
+  geom_point(size = 0.5) +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(title = "Comparison of catch spread",
+       x = "datacall", y = "myway",
+       caption = "Guess there is more than one way to skin a cat")
 ```
-
 
 :::
-
-
-
 
 
 
