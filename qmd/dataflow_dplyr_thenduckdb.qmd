@@ -590,8 +590,8 @@ trails2 <-
          state = as.integer(state))
 events2 <- 
   events |> 
-  rename(e_date = LE_CDAT) |> 
-  group_by(VE_COU, VE_REF, FT_REF, LE_RECT, e_date) |> 
+  rename(date = LE_CDAT) |> 
+  group_by(VE_COU, VE_REF, FT_REF, LE_RECT, date) |> 
   summarise(LE_KG = sum(LE_KG, na.rm = TRUE),
             LE_EURO = sum(LE_EURO, na.rm = TRUE),
             .groups = "drop") |> 
