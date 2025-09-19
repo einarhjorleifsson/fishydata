@@ -541,7 +541,6 @@ tacsat <- tacsat |> filter(!is.na(LE_GEAR), INTV > 0)
 trails <- trails |> filter(!is.na(LE_GEAR), INTV > 0)
 ```
 
-
 ## Split among pings
 
 ::: {.panel-tabset}
