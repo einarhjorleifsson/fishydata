@@ -1,7 +1,8 @@
 # https://www.fiskeridir.no/statistikk-tall-og-analyse/data-og-statistikk-om-yrkesfiske/apne-data-fangstdata-seddel-koblet-med-fartoydata
 # see data-raw/norway/fangstdata
 
-library(arrow)
+library(duckdb)
+library(duckdbfs)
 library(tidyverse)
 
 fil <- dir("data-raw/norway/fangstdata", full.names = TRUE, pattern = "*.zip")
@@ -12,6 +13,7 @@ for(i in 1:length(fil)) {
 }
 files <-
   tibble(fil = dir(tdir, full.names = TRUE)) |>
+  filter(str_ends(fil, ".csv")) |> 
   mutate(year = str_replace_all(basename(fil), "\\D", ""),
          year = as.integer(year),
          out = paste0("data/landings/norway")) |>
@@ -42,7 +44,6 @@ for(i in 1:nrow(files)) {
                  str_sub(oppdateringstidspunkt, 5),
                  " 00:00:00"))
   }
-  # bind_rows(res)
 }
 
 names(res) <- files$year
@@ -52,7 +53,6 @@ d <-
   mutate(year = as.integer(year)) |> 
   mutate(dokument_salgsdato = dmy(dokument_salgsdato),
          dokument_versjonstidspunkt = dmy(dokument_versjonstidspunkt))
-         
 d |>
-  arrow::write_parquet("data/landings/fangstdata.parquet")
+  duckdbfs::write_dataset("data/landings/fangstdata.parquet")
 
