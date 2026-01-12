@@ -1,0 +1,21 @@
+This directory uses symlink folders
+They were created by
+ln -s /u3/geo/fishydata/data data
+ln -s /u3/geo/fishydata/data-raw data-raw
+
+So the directory looks something like
+hafbjarmi/heima/einarhj/stasi/fishydata [527] ls -l
+total 48
+lrwxrwxrwx  1 einarhj haf   22 jan 12 22:00 data -> /u3/geo/fishydata/data
+lrwxrwxrwx  1 einarhj haf   26 jan 12 22:06 data-raw -> /u3/geo/fishydata/data-raw
+-rw-r--r--  1 einarhj haf  233 jan 12 21:58 fishydata.Rproj
+drwxr-xr-x  3 einarhj haf 4096 jan 12 21:58 ices-datacall
+-rw-r--r--  1 einarhj haf 6110 jan 12 21:58 index.qmd
+drwxr-xr-x  3 einarhj haf 4096 jan 12 21:58 qmd
+-rw-r--r--  1 einarhj haf  751 jan 12 21:58 _quarto.yml
+drwxr-xr-x  2 einarhj haf 4096 jan 12 21:58 R
+drwxr-xr-x 24 einarhj haf 4096 jan 12 21:58 ramb
+-rw-r--r--  1 einarhj haf  112 jan 12 21:58 ramb-list.qmd
+-rw-r--r--  1 einarhj haf    4 jan 12 21:58 README.md
+drwxr-xr-x  4 einarhj haf 4096 jan 12 21:58 scripts
+-rw-r--r--  1 einarhj haf   17 jan 12 21:58 styles.css
