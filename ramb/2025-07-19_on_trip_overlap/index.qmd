@@ -9,6 +9,7 @@ echo: true
 
 ```{r}
 library(tidyverse)
+library(here)
 library(data.table)
 eflalo_org <- 
   tibble(FT_DDATIM = seq(ymd_hms("2024-05-01 00:04:00"),
@@ -101,8 +102,10 @@ An alternative would be to try to do some kind of a correction, in this specific
 Lastly, let's do a quick check on the vmstools inbuilt dataset:
 
 ```{r}
+library(vmstools)
+data("eflalo")
 lb <- 
-  ramb::eflalo |> 
+  eflalo |> 
   mutate(FT_DDATIM = dmy_hms(paste0(FT_DDAT, " ", FT_DTIME)),
          FT_LDATIM = dmy_hms(paste0(FT_LDAT, " ", FT_LTIME))) |> 
   select(VE_COU, VE_REF, FT_REF, FT_DDATIM, FT_LDATIM) |> 

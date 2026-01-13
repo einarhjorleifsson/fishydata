@@ -10,6 +10,7 @@ code-fold: true
 
 ```{r}
 library(tidyverse)
+library(here)
 library(patchwork)
 library(arrow)
 library(duckdb)
@@ -24,7 +25,7 @@ rb_cap <- function(x, Q = 0.975) {
 dx <- 0.005
 dy <- dx / 2   # grid resolution approximately 275 x 275 meters
 g <- 
-  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  open_dataset(here("data//ais/trail")) |> 
   # Not in harbour
   filter(.cid > 0,                           # .cid positive -> not in harbour
          (whack == FALSE | is.na(whack))) |> # need to fix this

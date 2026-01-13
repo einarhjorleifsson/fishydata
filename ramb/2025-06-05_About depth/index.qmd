@@ -12,6 +12,7 @@ library(terra)
 library(tidyterra)
 library(sf)
 library(tidyverse)
+library(here)
 library(patchwork)
 ```
 
@@ -27,7 +28,7 @@ To answer the question we use three different data sources:
 #| fig-height: 2
 # Data -------------------------------------------------------------------------
 # Gebco data obtained from: https://download.gebco.net
-r <- rast(here::here("data-raw/depth/GEBCO_05_Jun_2025_14e882e0ff28/gebco_2024_n73.3887_s51.2402_w-36.8262_e-1.8457.tif"))
+r <- rast(here("data-raw/depth/GEBCO_05_Jun_2025_14e882e0ff28/gebco_2024_n73.3887_s51.2402_w-36.8262_e-1.8457.tif"))
 iceland <-
   read_sf("ftp://ftp.hafro.is/pub/data/shapes/iceland_coastline.gpkg") %>% 
   st_transform(crs = 4326)

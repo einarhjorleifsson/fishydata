@@ -10,7 +10,7 @@ format:
     code-fold: true
 ---
 
-```{r}
+```{r one}
 library(mar)
 library(tidyverse)
 library(duckdbfs)
@@ -29,7 +29,7 @@ mobile <-
 
 A quick spatial view:
 
-```{r}
+```{r two}
 dx <- 0.05
 dy <- dx / 2
 open_dataset(here::here("data/ais/stk-raw")) |> 
@@ -58,7 +58,7 @@ Basically we get:
 
 The variables in the trail table:
 
-```{r}
+```{r three}
 trail |> glimpse()
 ```
 

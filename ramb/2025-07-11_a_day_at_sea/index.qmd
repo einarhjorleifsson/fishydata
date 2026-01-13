@@ -12,6 +12,7 @@ format:
 
 ```{r}
 library(tidyverse)
+library(here)
 library(omar)
 library(sf)
 library(ramb)
@@ -20,15 +21,16 @@ harbours <-
   read_rds("~/cronjobs/skipasjo/harbours.rds") |> 
   select(hid = hid)
 island <- 
-  read_sf("~/stasi/gis/AIS_TRAIL/data-raw/island.gpkg")
+  read_sf("/home/haf/einarhj/stasi/gis/AIS_TRAIL/data-raw/island.gpkg")
 lnd <- 
-  nanoparquet::read_parquet("~/stasi/fishydata/data/landings/agf_stations.parquet") |> 
+  nanoparquet::read_parquet(here("data/landings/agf_stations.parquet")) |> 
   filter(between(date, ymd("2025-05-05"), ymd("2025-07-30"))) |> 
   filter(gid == 14)
 VID <- lnd$vid
 mid_vid <- 
   #tbl_mar(con, "ops$einarhj.mobile_vid") |> 
-  nanoparquet::read_parquet("~/stasi/fishydata/data/vessels/stk_vessel_match.parquet") |> 
+  nanoparquet::read_parquet("/home/haf/einarhj/stasi/fishydata/data/vessels/stk_vessel_match.parquet")  |>
+  #nanoparquet::read_parquet(here("data/vessels/stk_vessel_match.parquet")) |> 
   filter(vid %in% VID) |> 
   select(mid, vid) |> 
   distinct()

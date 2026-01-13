@@ -6,11 +6,12 @@ title: "Concept"
 
 ```{r}
 library(tidyverse)
+library(here)
 library(patchwork)
 library(arrow)
 library(duckdb)
 ais <- 
-  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  open_dataset(here("data/ais/trail")) |> 
   # Not in harbour
   filter(.cid > 0,                           # .cid positive -> not in harbour
          (whack == FALSE | is.na(whack))) |> # need to fix this
@@ -182,7 +183,7 @@ tm_shape(s) +
 ## Let's do the whole thing over all in one go, now for longlines
 
 ```{r}
-open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+open_dataset(here("data/ais/trail")) |> 
   # Not in harbour
   filter(.cid > 0,                           # .cid positive -> not in harbour
          (whack == FALSE | is.na(whack))) |> # need to fix this

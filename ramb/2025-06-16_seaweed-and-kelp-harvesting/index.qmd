@@ -11,11 +11,12 @@ echo: true
 ```{r}
 library(duckdbfs)
 library(tidyverse)
+library(here)
 library(mapdeck)
 
 # Potential vessels
 ais <- 
-  open_dataset("/home/haf/einarhj/stasi/fishydata/data/ais/trail") |> 
+  open_dataset(here("data/ais/trail")) |> 
   filter(.cid > 0,
          vid %in% c(9846, 9847, 9057, 9848, 9850, 9851, 9852))
 zoom <- 9L

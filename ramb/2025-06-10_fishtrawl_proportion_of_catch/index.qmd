@@ -9,6 +9,7 @@ echo: true
 
 ```{r}
 library(tidyverse)
+library(here)
 library(arrow)
 library(duckdb)
 library(leaflet)
@@ -26,7 +27,7 @@ rb_cap <- function(x, Q = 0.975) {
 
 
 ais <- 
-  open_dataset("/home/haf/einarhj/stasi/fishydata/data//ais/trail") |> 
+  open_dataset(here("data/ais/trail")) |> 
   # Not in harbour
   filter(.cid > 0,                            # .cid positive -> not in harbour
          (whack == FALSE | is.na(whack)),   # need to fix this
@@ -38,7 +39,7 @@ ais <-
          gid_trip == 6) |>                    # bottom trawl 
   select(.cid, vid, time, speed, lon, lat, t1, t2, agf_gid, gid_trip, dd, dt, .sid)
 # catch
-catch <- open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
+catch <- open_dataset(here("data/logbooks/catch-for-ais.parquet"))
 
 # home made grid ----------------------------------------------------------
 g <- 
