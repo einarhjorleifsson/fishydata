@@ -1,0 +1,366 @@
+---
+title: "Af áhrifum svæðalokana á afla"
+author: Einar Hjörleifsson
+echo: false
+message: false
+warning: false
+format:
+  html:
+    embed-resources: true
+---
+
+
+## Ráðgjafartexti
+
+Til að meta áhrif svæðalokunar á afla var notast við upplýsingar úr afladagbókum ásamt staðsetningu byggða á sjálfvirkum tilkynningsskildum skipa. Hlutdeild ársafla í botnvörpu, línu og þorskfiskanetum innan svæðisins var reiknaður annars vegar miðað við heildarafla á Íslandsmiðum og hinsvegar afla sunnann 64 gráðu norður.
+
+Tillaga A
+
+Á síðustu 10 árum er afli:
+
+* í botnvörpu innan svæðis er miðgildi ársafla um 0.5% af heildarafla á Íslandsmiðum og um 2% af afla sunnan 64 gráðu. Aflinn hefur að mestu verið tekinn á Kötluhrygg og í Skeiðarárdjúpi. Miðgildi á fjölda skipa er sóttu í svæðið er 21, sóknin þó óveruleg í flestum skipum.
+* á línu innan svæðis er miðgildi ársafla um 0% af heildarafla á Íslandsmiðum og um 0.3% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er um 4.
+* í net innan svæði er miðgildi ársafla um 0.1% af heildarafla á Íslandsmiðum og um 0.7% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er 3.
+
+Tillaga B
+
+Á síðustu 10 árum er afli:
+
+* í botnvörpu innan svæðis er miðgildi ársafla um 0.1% af heildarafla á Íslandsmiðum og um 0.2% af afla sunnan 64 gráðu. Miðgildi á fjölda skipa er 19.
+* á línu innan svæðis er miðgildi ársafla 0% af heildarafla á Íslandsmiðum og um 0.1% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er um 4.
+* í net innan svæði er miðgildi ársafla um 0.1% af heildarafla á Íslandsmiðum og um 0.2% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er 2.
+
+Tillaga C
+
+Á síðustu 10 árum er afli:
+
+* í botnvörpu innan svæðis er miðgildi ársafla um 0.3% af heildarafla á Íslandsmiðum og um 1.2% af afla sunnan 64 gráðu. Miðgildi á fjölda skipa er 19.
+* á línu innan svæðis er miðgildi ársafla 0% af heildarafla á Íslandsmiðum og um 0.1% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er um 4.
+* í net innan svæði er miðgildi ársafla um 0.1% af heildarafla á Íslandsmiðum og um 0.2% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er 2.
+
+Almennt séð, þegar horft er til miðgildis á ársafla á Íslandsmiðum í heild sinni er eru áhrifin af mismunandi lokunum óveruleg fyrir línu og net (innan við 0.2%) en fyrir botnvörpu er miðgildi ársafla innan við 0.5%, hæst fyrir svæði A en lægst fyrir svæði B.
+
+```{r}
+library(leaflet)
+library(duckdbfs)
+library(tidyverse)
+library(sf)
+library(here)
+library(patchwork)
+
+# data-raw ---------------------------------------------------------------------
+## Tillögur --------------------------------------------------------------------
+# Read and combine - save so they can be read in as duckdb
+if(FALSE) {
+  t1 <- 
+    read_sf("data-raw/TillagaA.gpkg") |> 
+    mutate(tillaga = "A") |> 
+    select(tillaga)
+  t2 <- 
+    read_sf("data-raw/tillaga1b.gpkg", layer = "tillaga_1b") |> 
+    mutate(tillaga = "B") |> 
+    select(tillaga)
+  t3 <- 
+    read_sf("data-raw/tillaga1c.gpkg") |> 
+    mutate(tillaga = "C") |> 
+    select(tillaga)
+  t <- bind_rows(t1, t2, t3)
+  t |> write_sf("data/sa_kantur_tillogur.gpkg")
+}
+## Leaflet map object ----------------------------------------------------------
+
+
+
+# Import -----------------------------------------------------------------------
+tillaga <- open_dataset("data/sa_kantur_tillogur.gpkg")
+
+
+
+## Map overview ----------------------------------------------------------------
+l <- read_rds("data/shapes/LEAFLET_SA_abc.rds")
+
+## Auxillary --------------------------------------------------------------------------
+gear <- 
+  open_dataset("/u3/geo/fishydata/data/gear/gear_mapping.parquet") |> 
+  #open_dataset(here("~/stasi/fishydata/data/gear/gear_mapping.parquet")) |> 
+  select(gid_trip = agf_gid, veiðarfæri)
+species <- 
+  open_dataset("/home/haf/einarhj/stasi/fishydata/data/auxillary/agf_species.parquet") |> 
+  #open_dataset(here("~/stasi/fishydata/data/auxillary/agf_species.parquet")) |> 
+  select(sid, tegund) |> 
+  collect()
+tr <- open_dataset("/u3/geo/fishydata/data/ais/trail")
+ca <- open_dataset("/home/haf/einarhj/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
+#ca <- open_dataset("~/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
+
+# Functions --------------------------------------------------------------------
+# tillaga a --------------------------------------------------------------------
+lh <- function(Svaedi = "a", Sunnan = FALSE) {
+  q <- 
+    tr |> 
+    filter(.cid > 0,                           # .cid positive -> not in harbour
+           whack == FALSE,
+           between(year, 2009, 2024),
+           between(speed, s1, s2),
+           between(time, t1, t2)) |> 
+    filter(between(lon, -30, -5)) |> 
+    dplyr::mutate(geom = ST_POINT(lon, lat)) |> 
+    duckdbfs::spatial_join(tillaga |> filter(tillaga == Svaedi), by = "st_intersects", join = "left") |> 
+    mutate(tillaga = ifelse(is.na(tillaga), "utan", tillaga))
+  if(Sunnan == TRUE) {
+    q <-
+      q |> 
+      filter(lat < 64)
+  }
+  out <-  
+    q |> 
+    group_by(year, vid, .cid, .sid) |>
+    # catch spread onto pings
+    mutate(catch = catch_total / n()) |> 
+    ungroup() |> 
+    # if less than 2 hours operation in a year, are, exclude data
+    #  consider this as noise
+    #group_by(vid, year, tillaga) |> 
+    #mutate(total = sum(dt, na.rm = TRUE) / (60*60)) |> 
+    #ungroup() |> 
+    #filter(total >= 2) |> 
+    group_by(year, gid_trip, tillaga) |> 
+    summarise(n_vid = n_distinct(vid),
+              dt = sum(dt, na.rm = TRUE) / (60 * 60),    # effort as time - hours
+              catch = sum(catch, na.rm = TRUE) / 1e3,  #catch in tonnes
+              .groups = "drop") |> 
+    left_join(gear) |> 
+    collect() |> 
+    filter(veiðarfæri %in% c("Botnvarpa", "Lína", "Þorskfisknet")) |> 
+    group_by(year, veiðarfæri) |> 
+    mutate(p = catch / sum(catch) * 100) |> 
+    ungroup()
+  
+  return(out)
+  
+}
+
+# Calculations -----------------------------------------------------------------
+ta_A <- lh(Svaedi = "a", Sunnan = FALSE) |> mutate(what = "a_A")
+ta_S <-  lh(Svaedi = "a", Sunnan = TRUE) |>  mutate(what = "a_S")
+tb_A <- lh(Svaedi = "b", Sunnan = FALSE) |> mutate(what = "b_A")
+tb_S <-  lh(Svaedi = "b", Sunnan = TRUE) |>  mutate(what = "b_S")
+tc_A <- lh(Svaedi = "c", Sunnan = FALSE) |> mutate(what = "c_A")
+tc_S <-  lh(Svaedi = "c", Sunnan = TRUE) |>  mutate(what = "c_S")
+
+d <- 
+  bind_rows(ta_A, ta_S, tb_A, tb_S, tc_A, tc_S) |> 
+  separate(what, into = c("Tillaga", "Svæði"), sep = "_")
+d |> write_rds("tmp.rds")
+d2 <-
+  d |> 
+  filter(year >= 2015, 
+         tillaga != "utan") |> 
+  group_by(Tillaga, Svæði, veiðarfæri) |> 
+  summarise(min_togtimi = round(min(dt)),
+            max_togtimi = round(max(dt)),
+            med_togtimi = round(median(dt)),
+            min_p = round(min(p), 1),
+            max_p = round(max(p), 1),
+            med_p = round(median(p), 1),
+            min_v = min(n_vid),
+            max_v = max(n_vid),
+            med_v = round(median(n_vid)),
+            .groups = "drop")
+d2 |> 
+  filter(Svæði == "A") |> 
+  mutate(timi = med_togtimi / med_v) |> 
+  arrange(veiðarfæri, Tillaga) |> 
+  select(-Svæði) |> 
+  mutate(Hlutfall_afla = paste0(med_p, " (", min_p, "-", max_p, ")"),
+         Fjöldi_báta = paste0(med_v, " (", min_v, "-", max_v, ")"),
+         Tími_miðgildi_per_bát_klst = timi) |> 
+  select(veiðarfæri, Tillaga, Hlutfall_afla, Fjöldi_báta) |> 
+  knitr::kable(caption = "Íslandsmið 2015-2025. Hlutfall ársafla og fjöldi báta - miðgildi (og lágmark-hámark).")
+d2 |> 
+  filter(Svæði == "S") |> 
+  mutate(timi = med_togtimi / med_v) |> 
+  arrange(veiðarfæri, Tillaga) |> 
+  select(-Svæði) |> 
+  mutate(Hlutfall_afla = paste0(med_p, " (", min_p, "-", max_p, ")"),
+         Fjöldi_báta = paste0(med_v, " (", min_v, "-", max_v, ")"),
+         Tími_miðgildi_per_bát_klst = timi) |> 
+  select(veiðarfæri, Tillaga, Hlutfall_afla, Fjöldi_báta) |> 
+  knitr::kable(caption = "Afli sunnan 64 gráðu: 2015-2025. Hlutfall ársafla og fjöldi báta - miðgildi (og lágmark-hámark).")
+```
+
+## Tækniskýrsla
+
+### Inngangur
+
+Til að meta áhrif svæðalokunar á afla var notast við upplýsingar úr afladagbókum ásamt staðsetningu byggða á sjálfvirkum tilkynningsskildum skipa. Hlutdeild ársafla í botnvörpu, línu og þorskfiskanetum innan svæðisins var reiknaður annars vegar miðað við heildarafla á Íslandsmiðum og hinsvegar afla sunnann 64 gráðu norður.
+
+### Árleg þróun
+
+Tillaga A
+
+* Hlutdeild afla í botnvörpu og línu sem veiddur hefur verið innan fyrirhugaðs verndarsvæðis A hefur farið lækkandi á árabilinum 2009 til 2024, en afli í netum hefur verið breytilegur. 
+* Á síðustu 10 árum er afli í botnvörpu innan verndarsvæðis almennt um 0.5-1.0% af heildarafla og um 1.5-3.0% af afla sunnan 64 gráðu norður. Aflinn hefur að mestu verið tekinn á Kötluhrygg og í Skeiðarárdjúpi.
+
+Tillaga B
+
+* Hlutdeild afla á línu og í þorksfisknet á síðustu 10 árum hefur verið óverulegur hvort sem litið er á heildarafla á Íslandsmiðum eða afla sunnan 64 gráðu. Hlutdeild í fiskibotnvörpu er 0.25-0.50% af heildarafla á Íslandmiðum en um 1.5% af afla sunnan 64 gráðu.
+
+Tillaga C
+
+* Hlutdeild afla í öll þrjú veiðarfærin hefur verið óverulegur hvort sem litið er á heildarafla á Íslandsmiðum eða afla sunnan 64 gráðu.
+
+
+```{r}
+#| fig-cap: "Hlutfall veiða innan verndarsvæðis eftir veiðarfærum."
+p_allt <- 
+  d |> 
+  filter(tillaga != "utan",
+         Svæði == "A") |> 
+  ggplot(aes(year, p, colour = Tillaga)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ veiðarfæri) +
+  scale_color_brewer(palette = "Set1") +
+  labs(x = NULL, y = "Hlutfall afla innan tillögu [%]",
+       caption = "Íslandsmið")
+p_sunnan64 <- 
+  d |> 
+  filter(tillaga != "utan",
+         Svæði == "S") |> 
+  ggplot(aes(year, p, colour = Tillaga)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ veiðarfæri) +
+  scale_color_brewer(palette = "Set1") +
+  labs(x = NULL, y = "Hlutfall afla innan tillögu [%]",
+       caption = "Sunnan 64 S")
+
+p_allt + p_sunnan64 + plot_layout(ncol = 1, guides = "collect")
+```
+
+### Miðgildi, lágmark og hámark síðustu 10 ár
+
+Tillaga A
+
+* í botnvörpu innan svæðis er miðgildi ársafla um 0.5% af heildarafla á Íslandsmiðum og um 2% af afla sunnan 64 gráðu. Aflinn hefur að mestu verið tekinn á Kötluhrygg og í Skeiðarárdjúpi. Miðgildi á fjölda skipa er sóttu í svæðið er 21, sóknin þó óveruleg í flestum skipum.
+* á línu innan svæðis er miðgildi ársafla um 0% af heildarafla á Íslandsmiðum og um 0.3% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er um 4.
+* í net innan svæði er miðgildi ársafla um 0.1% af heildarafla á Íslandsmiðum og um 0.7% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er 3.
+
+Tillaga B
+
+Á síðustu 10 árum er afli:
+
+* í botnvörpu innan svæðis er miðgildi ársafla um 0.1% af heildarafla á Íslandsmiðum og um 0.2% af afla sunnan 64 gráðu. Miðgildi á fjölda skipa er 19.
+* á línu innan svæðis er miðgildi ársafla 0% af heildarafla á Íslandsmiðum og um 0.1% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er um 4.
+* í net innan svæði er miðgildi ársafla um 0.1% af heildarafla á Íslandsmiðum og um 0.2% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er 2.
+
+Tillaga C
+
+Á síðustu 10 árum er afli:
+
+* í botnvörpu innan svæðis er miðgildi ársafla um 0.3% af heildarafla á Íslandsmiðum og um 1.2% af afla sunnan 64 gráðu. Miðgildi á fjölda skipa er 19.
+* á línu innan svæðis er miðgildi ársafla 0% af heildarafla á Íslandsmiðum og um 0.1% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er um 4.
+* í net innan svæði er miðgildi ársafla um 0.1% af heildarafla á Íslandsmiðum og um 0.2% af afla sunnan 64 gráðu. Miðgildi á fjölda báta er 2.
+
+Almennt séð, þegar horft er til miðgildis á ársafla á Íslandsmiðum í heild sinni er eru áhrifin af mismunandi lokunum óveruleg fyrir línu og net (innan við 0.2%) en fyrir botnvörpu er miðgildi ársafla innan við 0.5%, hæst fyrir svæði A en lægst fyrir svæði B.
+
+```{r}
+d2 <-
+  d |> 
+  filter(year >= 2015, 
+         tillaga != "utan") |> 
+  group_by(Tillaga, Svæði, veiðarfæri) |> 
+  summarise(min_togtimi = round(min(dt)),
+            max_togtimi = round(max(dt)),
+            med_togtimi = round(median(dt)),
+            min_p = round(min(p), 1),
+            max_p = round(max(p), 1),
+            med_p = round(median(p), 1),
+            min_v = min(n_vid),
+            max_v = max(n_vid),
+            med_v = round(median(n_vid)),
+            .groups = "drop")
+d2 |> 
+  filter(Svæði == "A") |> 
+  mutate(timi = med_togtimi / med_v) |> 
+  arrange(veiðarfæri, Tillaga) |> 
+  select(-Svæði) |> 
+  mutate(Hlutfall_afla = paste0(med_p, " (", min_p, "-", max_p, ")"),
+         Fjöldi_báta = paste0(med_v, " (", min_v, "-", max_v, ")"),
+         Tími_miðgildi_per_bát_klst = timi) |> 
+  select(veiðarfæri, Tillaga, Hlutfall_afla, Fjöldi_báta) |> 
+  knitr::kable(caption = "Íslandsmið 2015-2025. Hlutfall ársafla og fjöldi báta - miðgildi (og lágmark-hámark).")
+d2 |> 
+  filter(Svæði == "S") |> 
+  mutate(timi = med_togtimi / med_v) |> 
+  arrange(veiðarfæri, Tillaga) |> 
+  select(-Svæði) |> 
+  mutate(Hlutfall_afla = paste0(med_p, " (", min_p, "-", max_p, ")"),
+         Fjöldi_báta = paste0(med_v, " (", min_v, "-", max_v, ")"),
+         Tími_miðgildi_per_bát_klst = timi) |> 
+  select(veiðarfæri, Tillaga, Hlutfall_afla, Fjöldi_báta) |> 
+  knitr::kable(caption = "Afli sunnan 64 gráðu: 2015-2025. Hlutfall ársafla og fjöldi báta - miðgildi (og lágmark-hámark).")
+```
+
+### Yfirlitsmynd
+
+```{r}
+l |> setView(-17, 63.25, zoom = 7)
+```
+
+### Einstakar tegundir
+
+[sjá töflu hér](https://heima.hafro.is/~einarhj/vernd_sa_text.html)
+
+
+```{r, eval = FALSE}
+catch <- 
+  tr |> 
+  left_join(gear) |> 
+  filter(veiðarfæri %in% c("Botnvarpa", "Lína", "Þorskfisknet")) |> 
+  #filter(svaedi != "outside") |> 
+  select(.rid, .cid, vid, year, lat, .sid, lb_base, gid_trip, veiðarfæri, svaedi) |> 
+  group_by(year, vid, .cid, .sid) |> 
+  mutate(pings = n()) |> 
+  ungroup() |> 
+  left_join(ca) |> 
+  group_by(year, vid, .cid, .sid, sid) |>
+  mutate(catch22 = catch / pings) |> 
+  ungroup() |> 
+  group_by(year, svaedi, veiðarfæri, sid) |> 
+  summarise(catch22 = sum(catch22, na.rm = TRUE) / 1e3,
+            .groups = "drop") |> 
+  collect() |> 
+  left_join(species)
+if(FALSE) {    # Sanity test
+  catch |> 
+    filter(tegund == "Þorskur") |> 
+    ggplot(aes(year, catch22 / 1e3)) +
+    geom_col()
+}
+
+catch |> 
+  filter(between(year, 2015, 2024)) |> 
+  filter(!veiðarfæri %in% c("Flotvarpa")) |> 
+  filter(!is.na(tegund)) |> 
+  #mutate(svaedi = case_when(svaedi == "outside" ~ "utan",
+  #                          .default = "innan")) |> 
+  group_by(tegund, svaedi) |> 
+  reframe(catch22 = sum(catch22)) |> 
+  group_by(tegund) |> 
+  mutate(Ársafli = sum(catch22, na.rm = TRUE) / 10,
+         catch22 = catch22 / sum(catch22, na.rm = TRUE) * 100) |> 
+  ungroup() |> 
+  spread(svaedi, catch22, fill = 0) |> 
+  select(tegund, Ársafli, Utan = outside, Háfadjúp, Kötluhryggur, Skeiðarárdjup, Annað) |> 
+  mutate(p = Háfadjúp + Kötluhryggur + Skeiðarárdjup + Annað) |> 
+  arrange(desc(p)) |> 
+  filter(p >= 1) |> 
+  filter(Ársafli >= 1) |> 
+  knitr::kable(digits = 0,
+               caption = "Meðalársafli og hlutdeild afla [%] eftir tegundum byggt á gögnum frá 2015-2024. Tegund einungis tilgreind ef aflahlutdeild innan verndarsvæðis er meira en 1%. Öll veiðarfæri nema Flotvarpa.")
+```
+
+Það sem einkennir tegundir sem að skráðar eru í veiði á verndarsvæðinu er að í flestum tilfellum er landaður afli lítill (um og innan við 150 tonna ársafli) og / eða að ekki er veitt ráðgjöf fyrir tegundina. Tegundir sem telja mætti til hefðbundinna nytjastofna þar sem heildarársafli er meira en 100 tonn og þar sem aflahluteild innan verndarsvæðis er meiri en 5% af heildarafla eru Stórkjafta (27% aflans innan svæðis), Gulllax (14% innan svæðis), Blálanga (13% innan svæðis) og Djúpkarfi (5% innan svæðis). Fyrir þessar tegundir vegur Kötluhryggur almennt þyngst og svo Skeiðarárdjúp. Vægi Háfadjúps í veiðum er almennt lítið eða um og innan við 1% af heildarafla.
+

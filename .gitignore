@@ -8,6 +8,10 @@
 *.csv
 *.pdf
 *.tif
+*.gpkg
+*.xlsx
+*.Rproj
+
 
 scripts/older
 
