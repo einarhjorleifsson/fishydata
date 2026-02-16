@@ -39,6 +39,7 @@ lubridate::now()
 #       are not the same.
 YEARS <- 2026:2001
 
+
 library(sf)
 library(tidyverse)
 library(here)
@@ -137,20 +138,20 @@ CA <-
 ## Save stuff ------------------------------------------------------------------
 LN |>
   arrange(vid, date) |>
-  write_parquet(here("data/landings/agf_stations.parquet"))
+  write_parquet("/heima/einarhj/stasi/fishydata/data/landings/agf_stations.parquet")
 CA |>
-  write_parquet(here("data/landings/agf_catch.parquet"))
+  write_parquet("/heima/einarhj/stasi/fishydata/data/landings/agf_catch.parquet")
 
 
 # Last landings record - used in a shiny
 tmp_gear <-
-  nanoparquet::read_parquet(here("data/gear/gear_mapping.parquet")) |>
+  nanoparquet::read_parquet("/heima/einarhj/stasi/fishydata/data/gear/gear_mapping.parquet") |>
   select(gid = agf_gid, veiðarfæri) |>
   mutate(gear = paste(str_pad(gid, width = 2, pad = "0"), veiðarfæri)) |>
   select(-veiðarfæri)
 
 tmp_ports <-
-  read_sf(here("data/ports/ports.gpkg"))|>
+  read_sf("/heima/einarhj/stasi/fishydata/data/ports/ports.gpkg") |>
   st_drop_geometry() |>
   select(hid, port) |>
   mutate(port = case_when(!is.na(hid) ~ paste(str_pad(hid, width = 3, pad = "0"), port),
@@ -166,7 +167,7 @@ LN |>
             by = join_by(hid)) |>
   select(vid, date,
          gear, port, sid, wt) |>
-  write_parquet(here("data/landings/agf_last_landing.parquet"))
+  write_parquet("/heima/einarhj/stasi/fishydata/data/landings/agf_last_landing.parquet")
 
 # LODS landings ----------------------------------------------------------------
 ## Get data --------------------------------------------------------------------
@@ -264,9 +265,9 @@ CA2 <-
 ## Save stuff ------------------------------------------------------------------
 LN2 |>
   arrange(vid, date) |>
-  write_parquet(here("data/landings/lods_stations.parquet"))
+  write_parquet("/heima/einarhj/stasi/fishydata/data/landings/lods_stations.parquet")
 CA2 |>
-  write_parquet(here("data/landings/lods_catch.parquet"))
+  write_parquet("/heima/einarhj/stasi/fishydata/data/landings/lods_catch.parquet")
 
 # AGF-LODS crosschecks ---------------------------------------------------------
 # Note that the record numbers from AGF and LODS are different

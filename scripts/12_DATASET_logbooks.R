@@ -5,8 +5,10 @@
 # run this as:
 #  nohup R < scripts/52_DATASET_logbooks.R --vanilla > scripts/log/52_DATASET_logbooks_2024-11-22.log &
 
+## 2026-02-13
+# * No longer exclude foreign vessels
 ## 2024-12-16
-# * attempt to add grasleppa
+# * attempt to add grasleppa - not completed
 ## 2024-05-30
 # * incorporated 02-2_logbooks-landings-coupling.R into this script
 ## 2024-05-29
@@ -95,21 +97,22 @@ if(FALSE) {
     select(gid, veidarfaeri, gclass, m4, m5)
 }
 # Only Icelandic vessels
+# 2026-02-13 No longer limited to icelandic vessels
 q_vessels_icelandic <-
   omar::tbl_mar(con, "vessel.vessel_v") |>
   select(vid = registration_no) |>
-  filter(!vid %in% c(0, 1, 3:5, 9999)) %>%
-  filter(!between(vid, 3700, 4999))
+  filter(!vid %in% c(0, 1, 3:5, 9999)) #%>%
+  #filter(!between(vid, 3700, 4999))
 
 # Read in landings data
 LODS <-
-  open_dataset(here("data/landings/lods_stations.parquet")) |>
+  open_dataset("/heima/einarhj/stasi/fishydata/data/landings/lods_stations.parquet") |>
   collect() |>
   rename(datel = date,
          gid_ln = gid,
          hid_ln = hid)
 AGF <-
-  open_dataset(here("data/landings/agf_stations.parquet")) |>
+  open_dataset("/heima/einarhj/stasi/fishydata/data/landings/agf_stations.parquet") |>
   collect() |>
   rename(datel = date,
          gid_ln = gid,
@@ -266,13 +269,13 @@ if(FALSE) {
     mutate(no_effort = is.na(effort)) |>
     count(gid, no_effort) |>
     spread(no_effort, n) |>
-    knitr::kable()
+    knitr::kable(caption = "Missing effort records")
 
   LGS_old   |> write_parquet(here("data/logbooks/old/LGS_old.parquet"))
   CATCH_old |> write_parquet(here("data/logbooks/old/CATCH_old.parquet"))
 } else {
-  LGS_old <-   read_parquet(here("data/logbooks/old/LGS_old.parquet"))
-  CATCH_old <- read_parquet(here("data/logbooks/old/CATCH_old.parquet"))
+  LGS_old <-   read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/old/LGS_old.parquet")
+  CATCH_old <- read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/old/CATCH_old.parquet")
 }
 # 2 New logbooks ---------------------------------------------------------------
 # The new logbooks are in principle a total mess that need to be fixed upstream
