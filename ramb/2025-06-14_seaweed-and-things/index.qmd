@@ -75,7 +75,7 @@ thari <-
 dx <- 0.005
 dy <- dx / 2
 g <- 
-  open_dataset("~/stasi/fishydata/data/ais/trail") |>
+  open_dataset("/u3/geo/fishydata/data/ais/trail") |>
   filter(between(speed, 0.1, 2),
          between(lon, -30, -10),
          between(lat, 63, 68)) |> 

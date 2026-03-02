@@ -504,8 +504,8 @@ CATCH_new <-
   # filter(station_id %in% BASE_new$station_id) |>
   select(.sid = station_id, sid, catch, in.old)
 
-LGS_new |> write_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/new/LGS_new.parquet")
-CATCH_new |> write_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/new/CATCH_new.parquet")
+LGS_new |> write_parquet(here("data/logbooks/new/LGS_new.parquet"))
+CATCH_new |> write_parquet(here("data/logbooks/new/CATCH_new.parquet"))
 
 LGS_new <-
   LGS_new |>
@@ -754,7 +754,7 @@ CATCH |> arrow::write_parquet(here("data/logbooks/catch.parquet"))
 # We should cap the effort "a priori", check this:
 
 lgs <-
-  read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/stations.parquet")
+  read_parquet(here("data/logbooks/stations.parquet"))
 lgs |>
   filter(between(year(date), 2009, 2025)) |>
   mutate(dt = difftime(t2, t1, units = "mins"),
@@ -769,11 +769,11 @@ lgs |>
 
 # 8. For ais -------------------------------------------------------------------
 lb <-
-  read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/stations.parquet") |>
+  read_parquet(here("data/logbooks/stations.parquet")) |>
   filter(year(date) >= 2008,
          vid > 5) |>
   filter(!vid %in% 3700:4999)
-ca <- read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/catch.parquet")
+ca <- read_parquet(here("data/logbooks/catch.parquet"))
 
 
 ## 8.1 median efort if missing and cap effort ----------------------------------
@@ -906,10 +906,10 @@ lb <-
   filter(!is.na(lon)) |>
   filter(!is.na(lat))
 lb |>
-  write_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/station-for-ais.parquet")
+  write_parquet(here("data/logbooks/station-for-ais.parquet"))
 ca |>
   inner_join(lb |> select(.sid, lb_base)) |>
-  write_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
+  write_parquet(here("data/logbooks/catch-for-ais.parquet"))
 
 
 # 8. Info ----------------------------------------------------------------------

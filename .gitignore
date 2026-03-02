@@ -12,8 +12,7 @@
 *.xlsx
 *.Rproj
 
-
-scripts/older
+older
 
 data
 data-raw/depth

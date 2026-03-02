@@ -6,12 +6,12 @@ title: "Concept"
 
 ```{r}
 library(tidyverse)
-library(here)
 library(patchwork)
 library(arrow)
 library(duckdb)
+library(ocon)
 ais <- 
-  open_dataset(here("data/ais/trail")) |> 
+  ocon:::con_trail() |> 
   # Not in harbour
   filter(.cid > 0,                           # .cid positive -> not in harbour
          (whack == FALSE | is.na(whack))) |> # need to fix this
@@ -103,6 +103,7 @@ p2 <-
   g |> 
   filter(between(x, -30, -20),
          between(y, 64.5, 67)) |> 
+  drop_na() |>  
   mutate(dt = rb_cap(dt)) |> 
   ggplot(aes(x, y, fill = dt)) +
   theme_dark() +
@@ -183,7 +184,7 @@ tm_shape(s) +
 ## Let's do the whole thing over all in one go, now for longlines
 
 ```{r}
-open_dataset(here("data/ais/trail")) |> 
+ocon:::con_trail() |> 
   # Not in harbour
   filter(.cid > 0,                           # .cid positive -> not in harbour
          (whack == FALSE | is.na(whack))) |> # need to fix this

@@ -16,7 +16,7 @@ library(mapdeck)
 
 # Potential vessels
 ais <- 
-  open_dataset(here("data/ais/trail")) |> 
+  open_dataset("/u3/geo/fishydata/data/ais/trail") |> 
   filter(.cid > 0,
          vid %in% c(9846, 9847, 9057, 9848, 9850, 9851, 9852))
 zoom <- 9L

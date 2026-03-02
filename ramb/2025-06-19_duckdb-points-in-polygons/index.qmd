@@ -5,7 +5,7 @@ description: "Point-in-polygon analysis solves the question if a given point in 
 date: "2025-06-19"
 categories: [code, rtip]
 echo: true
-eval: false
+eval: true
 ---
 
 
@@ -32,7 +32,7 @@ In addition we will use the eusm sediment spatial dataset, the same as used in t
 We will be using a number of packages but instead of loading them we will call each functions directly within the script, just to limit ambiguity. We start off by turning the google s2geometry.io library off, because otherwise the conventional spatial join will not work, given that the eusm has non-valid geometries (see above).
 
 ```{r seed}
-sf::sf_use_s2(FALSE)
+# sf::sf_use_s2(FALSE)
 ```
 
 ## duckdb
@@ -40,25 +40,24 @@ sf::sf_use_s2(FALSE)
 In this section the data is not loaded into R-memory, rather a temporary duckdb database is generated with a pointer to the dataset on the disk. The process used is the same as before, except here we run the test using up to 100 million ais points. And the data is only imported into R at the end of the join process.
 
 ```{r via_duckdb}
-eusm <-
+fao <-
   duckdbfs::open_dataset(here::here("data/auxillary/ICESareas.gpkg")) |> 
   dplyr::select(area = Area_Full, geom)
 ais <- 
   duckdbfs::open_dataset(here::here("data/test/test_dataset.parquet"))
 
 
-o <- seq(4, 8, by = 0.2)
+o <- seq(4, 6.4, by = 0.2)
 N <- 10^o
 tictoc::tic.clearlog()
 for(i in 1:length(N)) {
-  print(i)
   tictoc::tic()
   X <- N[i]
   ais_join <- 
     ais |> 
     dplyr::filter(.id <= X) |> 
     dplyr::mutate(geom = ST_POINT(lon, lat)) |> 
-    duckdbfs::spatial_join(eusm, by = "st_intersects", join = "left") |> 
+    duckdbfs::spatial_join(fao, by = "st_intersects", join = "left") |> 
     dplyr::select(-geom_1) |> 
     dplyr::collect()
   tictoc::toc(log = TRUE, quiet = TRUE)
@@ -66,11 +65,9 @@ for(i in 1:length(N)) {
 log.lst <- tictoc::tic.log(format = FALSE)
 tictoc::tic.clearlog()
 timings <- unlist(lapply(log.lst, function(x) x$toc - x$tic))
-timings
-duckdb_eusm <- 
+duckdb_fao <- 
   tibble::tibble(n = N / 1e6,
                  timing = timings |> as.vector())
-duckdb_eusm |> readr::write_csv("test_duckdbfs.csv")
 ```
 
 ## The conventional way
@@ -86,7 +83,7 @@ In this section we are going to read the data into memory. And because of the li
 
 ```{r via_dplyr}
 # Here read data into memory
-eusm <-
+fao <-
   sf::read_sf(here::here("data/auxillary/ICESareas.gpkg")) |> 
   dplyr::select(fao = Area_Full)
 ais <- 
@@ -94,7 +91,7 @@ ais <-
   # Let's just limit the case to 1 million records,
   #  is enough to get the point across
   dplyr::filter(.id <= 1e7)
-o <- seq(4, 7, by = 0.2)
+o <- seq(4, 6.4, by = 0.2)
 N <- 10^o
 tictoc::tic.clearlog()
 for(i in 1:length(N)) {
@@ -106,14 +103,13 @@ for(i in 1:length(N)) {
     sf::st_as_sf(coords = c("lon", "lat"),
                  crs = 4326,
                  remove = FALSE) |> 
-    sf::st_join(eusm, join = sf::st_intersects, left = TRUE)
+    sf::st_join(fao, join = sf::st_intersects, left = TRUE)
   tictoc::toc(log = TRUE, quiet = TRUE)
 }
 log.lst <- tictoc::tic.log(format = FALSE)
 tictoc::tic.clearlog()
 timings <- unlist(lapply(log.lst, function(x) x$toc - x$tic))
-timings
-dplyr_eusm <- 
+dplyr_fao <- 
   tibble::tibble(n = N / 1e6,
                  timing = timings |> as.vector()) 
 ```
@@ -122,13 +118,13 @@ dplyr_eusm <-
 ## Comparison
 
 ```{r comparison}
-dplyr::bind_rows(duckdb_eusm |> dplyr::mutate(method = "duckdb"),
-                 dplyr_eusm  |> dplyr::mutate(method = "dplyr")) |> 
+dplyr::bind_rows(duckdb_fao |> dplyr::mutate(method = "duckdb"),
+                 dplyr_fao  |> dplyr::mutate(method = "dplyr")) |> 
   ggplot2::ggplot(ggplot2::aes(n, timing / 60, colour = method)) +
   ggplot2::geom_point() +
   ggplot2::labs(x = "Millions of pings",
                 y = "Timing [minutes]",
-                colour = "Method") |> 
+                colour = "Method") +
   ggplot2::scale_colour_brewer(palette = "Set1")
 ```
 
