@@ -49,7 +49,8 @@ lubridate::now()
 # 1991 generates an error
 YEARS <- c(2026:1973)
 
-library(arrow)
+# library(arrow)
+library(duckdbfs)
 library(data.table)
 library(tidyverse)
 library(lubridate)
@@ -274,8 +275,8 @@ if(FALSE) {
   LGS_old   |> write_parquet(here("data/logbooks/old/LGS_old.parquet"))
   CATCH_old |> write_parquet(here("data/logbooks/old/CATCH_old.parquet"))
 } else {
-  LGS_old <-   read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/old/LGS_old.parquet")
-  CATCH_old <- read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/old/CATCH_old.parquet")
+  LGS_old <-   open_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/old/LGS_old.parquet") |> collect()
+  CATCH_old <- open_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/old/CATCH_old.parquet") |> collect()
 }
 # 2 New logbooks ---------------------------------------------------------------
 # The new logbooks are in principle a total mess that need to be fixed upstream
@@ -504,8 +505,8 @@ CATCH_new <-
   # filter(station_id %in% BASE_new$station_id) |>
   select(.sid = station_id, sid, catch, in.old)
 
-LGS_new |> write_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/new/LGS_new.parquet")
-CATCH_new |> write_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/new/CATCH_new.parquet")
+LGS_new |> write_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/new/LGS_new.parquet")
+CATCH_new |> write_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/new/CATCH_new.parquet")
 
 LGS_new <-
   LGS_new |>
@@ -640,11 +641,11 @@ LGS <-
   rename(date_ln = date.ln)
 n_after_nearest_match <- nrow(LGS)
 print(c(n_before_nearest_match, n_after_nearest_match))
-LGS <-
-  LGS |>
-  rename(date_lods = date_ln,
-         gid_lods = gid_ln,
-         .lid_lods = .lid)
+#LGS <-
+#  LGS |>
+#  rename(date_lods = date_ln,
+#         gid_lods = gid_ln,
+#         .lid_lods = .lid)
 ### Checks ---------------------------------------------------------------------
 LGS |>
   mutate(has.lid = !is.na(.lid_lods)) |>
@@ -663,7 +664,8 @@ LGS |>
   knitr::kable(caption = "Difference in matched logbook and landings dates")
 
 v <-
-  read_parquet("~/stasi/fishydata/data/vessels/vessels_iceland.parquet") |>
+  open_dataset("~/stasi/fishydata/data/vessels/vessels_iceland.parquet") |>
+  collect() |>
   select(vid, mmsi, mmsi_t1, mmsi_t2) |>
   filter(!is.na(mmsi)) |>
   mutate(mmsi = as.integer(mmsi))
@@ -746,15 +748,16 @@ CATCH <-
 
 # 6. Save the stuff ------------------------------------------------------------
 
-LGS   |> arrow::write_parquet(here("data/logbooks/stations.parquet"))
-CATCH |> arrow::write_parquet(here("data/logbooks/catch.parquet"))
+LGS   |> write_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/stations.parquet")
+CATCH |> write_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/catch.parquet")
 
 
 # 7. Issues --------------------------------------------------------------------
 # We should cap the effort "a priori", check this:
 
 lgs <-
-  read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/stations.parquet")
+  open_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/stations.parquet") |>
+  collect()
 lgs |>
   filter(between(year(date), 2009, 2025)) |>
   mutate(dt = difftime(t2, t1, units = "mins"),
@@ -769,11 +772,14 @@ lgs |>
 
 # 8. For ais -------------------------------------------------------------------
 lb <-
-  read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/stations.parquet") |>
+  open_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/stations.parquet") |>
+  collect() |>
   filter(year(date) >= 2008,
          vid > 5) |>
   filter(!vid %in% 3700:4999)
-ca <- read_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/catch.parquet")
+ca <-
+  open_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/catch.parquet") |>
+  collect()
 
 
 ## 8.1 median efort if missing and cap effort ----------------------------------
@@ -906,10 +912,10 @@ lb <-
   filter(!is.na(lon)) |>
   filter(!is.na(lat))
 lb |>
-  write_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/station-for-ais.parquet")
+  write_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/station-for-ais.parquet")
 ca |>
   inner_join(lb |> select(.sid, lb_base)) |>
-  write_parquet("/heima/einarhj/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
+  write_dataset("/heima/einarhj/stasi/fishydata/data/logbooks/catch-for-ais.parquet")
 
 
 # 8. Info ----------------------------------------------------------------------
