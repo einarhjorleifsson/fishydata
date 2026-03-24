@@ -31,7 +31,7 @@ schema_sniff_file <- "data-raw/ais/astd_schema_sniff.rds"
 canonical_file    <- "data-raw/ais/astd_canonical_schema.rds"
 
 if (!file.exists(canonical_file))
-  stop("Canonical schema not found — run SNIFF_astd_schema.R first.\n  Expected: ",
+  stop("Canonical schema not found — run scripts/00_DATASET_ais_astd-zip_sniff-schema.R first.\n  Expected: ",
        canonical_file)
 
 canonical  <- readRDS(canonical_file)   # one row per column: column_name, canonical_type, ...

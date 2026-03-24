@@ -7,6 +7,24 @@ into analysis-ready hive-partitioned Parquet datasets. Multiple data sources are
 processed by dedicated `data-raw/` scripts. A `targets`-based pipeline may be
 introduced later to orchestrate the full sweep.
 
+## About "running" the project
+
+The project is either run on:
+
+* Desctop MacBook
+* Linux server
+
+Directories "data" and "data-raw" are gitignored, primarily because they contain
+large amount of data-files.
+
+On the Linux server the
+directories are actually pointers to a different location, while on the MacBook
+the directories are in place. A synch maintainance of these two is a bit of a hassle for
+now, done manually with some risks. One of the problem is that the MacBook does not
+understand the path stated in the pointer.
+
+Posit Assistant: Could you suggest a way to make the above life a little easier?
+
 ## General note / instructions
 
 ### In scripts only use a single dash line for sectioning
