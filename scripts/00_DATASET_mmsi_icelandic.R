@@ -1,3 +1,64 @@
+# General comments for Posit Assistant
+#. mmsi numbers are generally associated with a certain vessel
+#   if associated with a vessel the first three digits are country codes
+#.  if acessories to a vessel (lifeboats, buyous, ... then first three
+#.   digits not country code
+#.  sometimes mmsi numbers are given to reciever stations
+#
+#. Main objective is to link mmsi to a vessel id (vid)
+#   In general mmsi numbers are not recycled to another vessel
+#.   that is though not always true
+#. Hence we need to set time start (t1) and emd (t2), values indicating
+#.  when a mmsi was used by a particular vessel
+#. The idea is that once we have a mmsi-vid table with t1 and t2
+#.  we can join the mmsi-table to e.g. the ASTD table via:
+#.  left_join(astd, mmsi, by = join_by(mmsi, between(time, t1, t2))
+#.
+# Aassistant suggestion
+
+# 00_DATASET_vessels_iceland-mmsi.R
+# Run only to rebuild the archive; for new fjarskiptastofa data use a separate script.
+
+library(tidyverse)
+library(arrow)
+library(here)
+library(mar)
+source("R/ramb_functions.R")
+
+con <- connect_mar()
+
+# Constants --------------------------------------------------------------------
+MMSI_T1 <- ymd("2007-06-01")   # Start of STK
+MMSI_T2 <- ymd("2028-12-24")   # Max working lifespan
+
+# Helpers ----------------------------------------------------------------------
+read_fjarskiptastofa <- function(path) { ... }
+check_mmsi_dupes     <- function(d, caption) { ... }
+
+# 1. Load sources --------------------------------------------------------------
+#    1a. Oracle database snapshot
+#    1b. Fjarskiptastofa xlsx files (newest-first, distinct on mmsi)
+#    1c. Historical Oracle archives (hist1–hist4)
+
+# 2. Combine & correct ---------------------------------------------------------
+#    - Fix known typos in mmsi
+#    - Manual additions
+#    - Vessel-specific resolutions (2988, 7236)
+
+# 3. MMSI takeovers ------------------------------------------------------------
+#    - Read from CSV
+#    - Set validity periods for non-takeover vessels
+#    - Overlap check
+
+# 4. Classify & annotate -------------------------------------------------------
+#    - rb_mmsi_category()
+#    - Extract note_date, note_fate
+
+# 5. Save ----------------------------------------------------------------------
+data |> arrange(mmsi_cat, mmsi) |>
+  nanoparquet::write_parquet("data/vessels/mmsi_iceland_archieves.parquet")
+
+
 # Historical mmsi datasets
 #
 # I expect that this script should not be rerun unless some bug is found or
@@ -92,7 +153,7 @@ current2 <-
   rename(note = athugasemdir)
 # more new
 tmpfile3 <- "data-raw/vessels/ISL/mmsi-iceland_fjarskiptastofa_2025-04-10.xlsx"
-current3 <- 
+current3 <-
   readxl::read_excel(tmpfile3) |>
   janitor::clean_names() |>
   select(mmsi = mmsi_nr,
@@ -101,8 +162,8 @@ current3 <-
          everything()) |>
   rename(note = athugasemdir)
 # combine the two
-current <- 
-  bind_rows(current3, current2, current) |> 
+current <-
+  bind_rows(current3, current2, current) |>
   # because order above, below means we retain the newest
   distinct(mmsi, .keep_all = TRUE)
 current <-
@@ -111,7 +172,7 @@ current <-
   mutate(mmsi = ifelse(mmsi == "261860840", "251860840", mmsi)) |>
   # keyboarding gone amok
   mutate(skip = case_when(mmsi == "251860940" ~ str_sub(skip, 1, 11),
-                          .default = skip)) |> 
+                          .default = skip)) |>
   # belti og axlabönd
   distinct(mmsi, .keep_all = TRUE)
 # TEST - is mmsi unique?
@@ -365,7 +426,7 @@ mmsi_takeovers <-
           2608, 251764110, "2007-06-01", "2016-12-31", 1,
           7873, 251764110, "2017-01-01", "2028-12-24", 2,
           7769, 251846940, "2007-06-01", "2014-12-31", 1,
-          7764, 251846940, "2015-01-01", "2028-12-24", 2) |> 
+          7764, 251846940, "2015-01-01", "2028-12-24", 2) |>
           # WRONG
           # 1351, 251079000, "2007-06-01", "2019-12-31", 1,     # added 2024-12-11
           # 3018, 251534000, "2024-01-01", "2028-12-24", 2) |>  #   ditto
@@ -563,15 +624,15 @@ mt
 astd_missing |>
   left_join(mt)
 
-data |> 
+data |>
   filter(mmsi == "251857270")
-data |> 
-  filter(is.na(sknr)) |> 
-  filter(mmsi_cat == "vessel") |> 
+data |>
+  filter(is.na(sknr)) |>
+  filter(mmsi_cat == "vessel") |>
   knitr::kable()
-mt |> 
-  filter(!mmsi %in% data$mmsi) |> 
+mt |>
+  filter(!mmsi %in% data$mmsi) |>
   filter(flag == "Iceland")
-mt |> 
+mt |>
   filter(str_starts(name, "S"))
 
