@@ -47,7 +47,7 @@ not like:
 
 ### Stick with dplyr code as much as possible
 
-* parquet files are the base storage format
+* parquet files are the base storage format in the data-directory
 * Those files are either imported fully into R or a connection is made to a temporary duckdb-database
 * In cases of a connection one most often would use duckdbfs::open_dataset
 * Because sometime one works with imported tables sometimes a duckdb-connection the dplyr syntax is prefered
@@ -78,6 +78,7 @@ in `data-raw/`; cleaned/processed outputs go to `data/`.
 | `00_DATASET_vessel-scrape_FRO.R` | Web-scraped Faroese registry | Faroese vessel reference | Faroe Islands vessel registrations |
 | `00_DATASET_vessels_iceland.R` | Multiple Icelandic registries + MMSI data | `data/vessels/vessels_iceland.parquet` | Comprehensive Icelandic vessel registry |
 | `00_DATASET_vessels_iceland-mmsi.R` | MMSI source data | MMSI lookup | Icelandic vessel MMSI assignments |
+| `00_DATASET_mmsi_icelandic.R` | Historical parquet + fjarskiptastofa XLSX | `data-raw/mmsi/mmsi_iceland_YYYY-MM-DD.parquet` | Merges fjarskiptastofa updates into historical MMSI archive |
 | `00_DATASET_ais_astd-zip_sniff-schema.R` | ASTD ZIPs | `data-raw/ais/astd_canonical_schema.rds` | Schema discovery for ASTD monthly ZIPs |
 | `00_DATASET_ais_astd_zip-to-parquet.R` | ASTD ZIPs + canonical schema | `data/ais/astd/` hive parquet | Converts ASTD ZIPs to hive-partitioned Parquet via DuckDB |
 | `00_DATASET_ais_stk_oracle-to-parquet.R` | Oracle `stk.trail` (via `mar`) | `data-raw/ais/stk/year=YYYY/` | Raw STK trail extraction; feeds `05_DATASET_ais_stk-to-parquet.R` |
@@ -452,6 +453,84 @@ library(dplyr)
 
 ds <- duckdbfs::open_dataset("data-raw/ais/stk") |>
   mutate(year = as.integer(year))
+```
+
+---
+
+---
+
+## Dataset: Icelandic MMSI archive
+
+**Script:** `scripts/00_DATASET_mmsi_icelandic.R`
+**Depends on:** none
+**Feeds into:** vessel registry matching, AIS trail joins
+
+### Purpose
+
+Maintains a dated, cumulative archive of Icelandic MMSI numbers linking `mmsi`
+to vessel ID (`sknr`) with time-validity windows (`mmsi_t1`, `mmsi_t2`). The
+archive is designed for temporal joins, e.g.:
+
+```r
+left_join(astd, mmsi, by = join_by(mmsi, between(time, mmsi_t1, mmsi_t2)))
+```
+
+### Source files
+
+| File | Role |
+|------|------|
+| `data-raw/mmsi/mmsi_iceland_YYYY-MM-DD.parquet` | Historical archive (input) |
+| `data-raw/mmsi/mmsi-iceland_fjarskiptastofa_YYYY-MM-DD.xlsx` | New fjarskiptastofa export (update) |
+
+### Output
+
+`data-raw/mmsi/mmsi_iceland_YYYY-MM-DD.parquet` — dated file named with today's
+date. **Latest file as of 2026-03-25:** `mmsi_iceland_2026-03-25.parquet`
+(4,077 rows).
+
+### Schema
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `mmsi` | chr | MMSI number |
+| `mmsi_cat` | chr | Category: `vessel`, `Child vessel`, `Navigational aid`, `coast station`, `testing`, etc. |
+| `sknr` | chr | Ship registration number |
+| `cs` | chr | Call sign |
+| `nafn` | chr | Vessel name |
+| `note` | chr | Free-text note from fjarskiptastofa |
+| `note_date` | date | Date parsed from note text |
+| `note_fate` | chr | Parsed fate: `Niðurrif`, `Seldur`, `Afskráður`, `Úr rekstri` |
+| `source` | dbl | Source version number (incremented each fjarskiptastofa update) |
+| `mmsi_t1` | date | Start of validity window |
+| `mmsi_t2` | date | End of validity window |
+| `zombie_no` | dbl | 1 for first assignment; incremented when mmsi migrates to a new sknr |
+
+**Constants:**
+- `MMSI_T1 = 2007-06-01` (start of STK)
+- `MMSI_T2 = 2028-12-24` (nominal far-future end)
+
+### Merge logic (four cases)
+
+Each time a new fjarskiptastofa XLSX is processed, rows are classified:
+
+| Case | Condition | Action |
+|------|-----------|--------|
+| A | `mmsi + sknr` exists in both | Keep historical record unchanged |
+| B | `mmsi` not in historical at all | Append; `zombie_no = 1`, `mmsi_t1 = MMSI_T1`, `mmsi_t2 = MMSI_T2` |
+| C | `mmsi` in both but different `sknr` | Close old record (`mmsi_t2 = TODAY - 1`); append new (`mmsi_t1 = TODAY`, `zombie_no = old + 1`) |
+| D | `mmsi` only in historical | Kept automatically as base of `bind_rows` |
+
+**Column alignment:** extra xlsx columns (`ja_nei`, `standard_c`, `selcall`,
+`aukanumer`, `eigandi`, `stadur`) are dropped before merging; output schema
+matches the historical file.
+
+**Closing date for Case C:** uses `note_date` from the update row if available,
+otherwise falls back to `TODAY - 1`.
+
+### Reading the archive
+
+```r
+mmsi <- nanoparquet::read_parquet("data-raw/mmsi/mmsi_iceland_2026-03-25.parquet")
 ```
 
 ---
