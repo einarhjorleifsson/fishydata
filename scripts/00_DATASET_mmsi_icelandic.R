@@ -131,3 +131,56 @@ cat("  New (Case B):   ", nrow(case_b_new), "\n")
 cat("  Migrations (C): ", length(case_c_mmsi), "\n")
 cat("  Output rows:    ", nrow(mmsi_updated), "\n")
 cat("  Written to:     ", out_path, "\n")
+
+# 6. Diagnostics — duality issues ----------------------------------------------
+
+# --- 6a. mmsi with overlapping time windows -----------------------------------
+# Each mmsi should have non-overlapping t1/t2 per zombie_no.
+# An overlap means a temporal join (between(time, mmsi_t1, mmsi_t2)) would
+# return duplicate rows for the same AIS ping.
+overlaps <-
+  mmsi_updated |>
+  filter(mmsi_cat == "vessel") |>
+  group_by(mmsi) |>
+  filter(n() > 1) |>
+  arrange(mmsi, zombie_no) |>
+  mutate(prev_t2 = lag(mmsi_t2)) |>
+  filter(!is.na(prev_t2), mmsi_t1 <= prev_t2) |>
+  ungroup()
+
+if (nrow(overlaps) > 0) {
+  cat("\n!! WARNING: mmsi with OVERLAPPING time windows (will cause duplicate join rows):\n")
+  overlaps |>
+    select(mmsi, sknr, nafn, zombie_no, mmsi_t1, mmsi_t2) |>
+    print(n = Inf)
+} else {
+  cat("\n   OK: no overlapping mmsi time windows.\n")
+}
+
+# --- 6b. sknr (vessel) with multiple simultaneously active mmsi ---------------
+# A vessel should not hold two live MMSI numbers at the same time.
+# These rows will cause fan-out on any join to AIS data.
+sknr_multi_mmsi <-
+  mmsi_updated |>
+  filter(mmsi_cat == "vessel", !is.na(sknr), mmsi_t2 >= TODAY) |>
+  group_by(sknr) |>
+  filter(n() > 1) |>
+  ungroup() |>
+  arrange(sknr, mmsi_t1)
+
+if (nrow(sknr_multi_mmsi) > 0) {
+  cat("\n!! WARNING: sknr with multiple currently active mmsi (fan-out risk on AIS join):\n")
+  sknr_multi_mmsi |>
+    select(sknr, nafn, mmsi, mmsi_t1, mmsi_t2, zombie_no) |>
+    print(n = Inf)
+} else {
+  cat("   OK: no vessel holds more than one active mmsi.\n")
+}
+
+# --- 6c. All known mmsi migrations (zombie_no > 1) for reference --------------
+cat("\nAll mmsi migrations in the updated archive (zombie_no > 1):\n")
+mmsi_updated |>
+  filter(mmsi %in% (mmsi_updated |> filter(zombie_no > 1) |> pull(mmsi))) |>
+  arrange(mmsi, zombie_no) |>
+  select(mmsi, sknr, nafn, mmsi_t1, mmsi_t2, zombie_no) |>
+  print(n = Inf)

@@ -33,7 +33,7 @@ current_year <- max(year(T1))
 
 for(i in 1:length(T1)) {
 
-  path <- "data-raw/ais/stk"
+  path <- "data-raw/ais/stk/stk_trail"
 
   t1 <- T1[i]
   t2 <- T2[i]
@@ -55,3 +55,13 @@ for(i in 1:length(T1)) {
                               partitioning = c("year"))
   }
 }
+
+# Additional lookup table
+# run on hafbjarmi, moved via
+# mv /Volumes/fishydata/data-raw/ais/stk_mobile.parquet .
+tbl(con, dbplyr::in_schema("STK", "MOBILE")) |>
+  select(mid = MOBILEID, loid = LOCALID, glid = GLOBALID) |>
+  collect() |>
+  nanoparquet::write_parquet("data-raw/ais/stk/stk_mobile.parquet")
+
+
