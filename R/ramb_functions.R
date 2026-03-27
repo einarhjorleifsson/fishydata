@@ -224,3 +224,155 @@ rb_cap_value <- function(x, q = 0.975) {
   ifelse(x > Q, Q, x)
 }
 
+
+#' Not In Operator
+#'
+#' Negation of the %in% operator for convenience
+#'
+#' @param x vector or NULL: the values to be matched
+#' @param table vector or NULL: the values to be matched against
+#'
+#' @return A logical vector indicating if there is no match for each element of x
+#' @export
+#'
+`%!in%` <- function(x, table) {
+  !(x %in% table)
+}
+
+
+#' Split Catch and Value Among VMS Pings (Version 2)
+#' 
+#' Distributes catch (in kg) and value (in euros) from logbook data (eflalo) 
+#' among VMS ping records (tacsatp) based on time intervals. The function uses 
+#' a hierarchical matching approach to allocate catches to pings, trying to 
+#' match by trip, fishing method and date first, then progressively relaxing 
+#' the matching criteria.
+#' 
+#' @details
+#' The function performs a three-level hierarchical allocation:
+#' 
+#' 1. **Level 1**: Match by FT_REF (trip), LE_MET (fishing method), and SI_DATE
+#'    - Finds logbook records matching trip, method and date
+#'    - Distributes catch/value proportionally by time interval (INTV)
+#' 
+#' 2. **Level 2**: Match by FT_REF and LE_MET only
+#'    - For remaining unallocated logbook records
+#'    - Distributes among pings matching trip and method
+#' 
+#' 3. **Level 3**: Match by FT_REF only
+#'    - For any remaining unallocated logbook records
+#'    - Distributes among all pings in the same trip
+#' 
+#' The function filters to only fishing pings (SI_STATE == 1) and requires 
+#' all pings to have valid time intervals (INTV). The distribution weight for 
+#' each ping is calculated as its interval divided by the total interval within 
+#' each matching group.
+#' 
+#' All columns in the eflalo data with "KG" or "EURO" in their names are 
+#' treated as catch/value columns and are distributed accordingly.
+#'
+#' @param tacsatp A data.frame or data.table containing VMS ping data with at least:
+#'   - FT_REF: Trip reference/identifier
+#'   - LE_MET: Fishing method/metier
+#'   - SI_STATE: Ping state (1 = fishing, 0 = non-fishing)
+#'   - INTV: Time interval associated with each ping (in hours or minutes)
+#'   - SI_DATE: Date of the ping (used for matching)
+#' @param eflalo A data.frame or data.table containing logbook event data with at least:
+#'   - FT_REF: Trip reference/identifier (matching tacsatp)
+#'   - LE_MET: Fishing method/metier
+#'   - LE_CDAT: Catch date
+#'   - Columns with "KG" or "EURO" in the name containing catch weights and values
+#'
+#' @return A data.frame with the same structure as tacsatp but with catch (KG) 
+#'   and value (EURO) columns added/updated. Each ping receives a proportion 
+#'   of the catch/value based on the hierarchical matching and time interval 
+#'   weighting scheme.
+#'   
+#' @section Warning:
+#' The function will stop with an error if any NA values are found in the INTV 
+#' column of tacsatp. All pings must have valid time intervals before calling 
+#' this function.
+#' 
+#' @section Requirements:
+#' The function requires the data.table package.
+#'
+#' @examples
+#' \dontrun{
+#' # Assuming tacsatp and eflalo are properly formatted:
+#' result <- splitAmongPings2(tacsatp, eflalo)
+#' 
+#' # Check total catch is preserved (approximately)
+#' sum(result$LE_KG_COD, na.rm = TRUE)
+#' sum(eflalo$LE_KG_COD, na.rm = TRUE)
+#' }
+#'
+#' @seealso \code{\link[vmstools]{splitAmongPings}} for the original vmstools implementation
+#' 
+#' @export
+#'
+splitAmongPings2 <- function(tacsatp, eflalo) {
+  require(data.table)
+  
+  t <- data.table(tacsatp)[ SI_STATE == 1]
+  e <- data.table(eflalo)
+  
+  if(any(is.na(t$INTV)))
+    stop("NA values in intervals (INTV) in tacsatp, please add an interval to all pings")
+  
+  e[, SI_DATE := LE_CDAT] 
+  #find all column names with KG or EURO in them
+  kg_euro <- grep("KG|EURO", colnames(e), value = T)
+  
+  ### sum by FT_REF, LE_MET, SI_DATE
+  
+  n1 <- e[FT_REF %in% t$FT_REF,lapply(.SD,sum, na.rm = T),by=.(FT_REF, LE_MET, SI_DATE),
+          .SDcols=kg_euro][, ide1 := 1:.N]
+  
+  setkey(t, FT_REF, LE_MET, SI_DATE)
+  setkey(n1, FT_REF, LE_MET, SI_DATE)
+  
+  ts1 <- merge(t, n1)
+  
+  setkey(ts1, FT_REF, LE_MET, SI_DATE)
+  ts1[,Weight:=INTV/sum(INTV, na.rm = T), by=.(FT_REF, LE_MET, SI_DATE)]
+  ts1[,(kg_euro):= lapply(.SD, function(x) x * Weight), .SDcols=kg_euro]
+  
+  ### sum by FT_REF, LE_MET
+  n2 <- n1[ide1 %!in% ts1$ide1, lapply(.SD,sum, na.rm = T),by=.(FT_REF, LE_MET),
+           .SDcols=kg_euro][, ide2 := 1:.N]
+  
+  setkey(t, FT_REF, LE_MET)
+  setkey(n2, FT_REF, LE_MET)
+  
+  ts2 <- merge(t, n2)
+  
+  setkey(ts2, FT_REF, LE_MET)
+  ts2[,Weight:=INTV/sum(INTV, na.rm = T), by=.(FT_REF, LE_MET)]
+  ts2[,(kg_euro):= lapply(.SD, function(x) x * Weight), .SDcols=kg_euro]
+  
+  
+  ### sum by FT_REF
+  n3 <- n2[ide2 %!in% ts2$ide2, lapply(.SD,sum, na.rm = T),by=.(FT_REF),
+           .SDcols=kg_euro][, ide3 := 1:.N]
+  
+  setkey(t, FT_REF)
+  setkey(n3, FT_REF)
+  
+  ts3 <- merge(t, n3)
+  
+  setkey(ts3, FT_REF)
+  ts3[,Weight:=INTV/sum(INTV, na.rm = T), by=.(FT_REF)]
+  ts3[,(kg_euro):= lapply(.SD, function(x) x * Weight), .SDcols=kg_euro]
+  
+  
+  #Combine all aggregations
+  ts <- rbindlist(list(t, ts1, ts2, ts3), fill = T)
+  ts[ ,`:=`(Weight = NULL, ide1 = NULL, ide2 = NULL, ide3 = NULL)]
+  diffs = setdiff(names(ts), kg_euro)
+  
+  out <- ts[,lapply(.SD,sum, na.rm = T),by=diffs,
+            .SDcols=kg_euro]
+  
+  return(data.frame(out))
+}
+
