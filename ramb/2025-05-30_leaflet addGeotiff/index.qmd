@@ -79,12 +79,12 @@ s <-
        crs = "epsg:4326") |> 
   st_as_stars()
 
-s |> write_stars(here("s.tif"))
+s |> write_stars("s.tif")
 
 leaflet() %>%
   addTiles() %>%
   addGeotiff(
-    file = here("s.tif"),
+    file = "s.tif",
     , opacity = 1
     , colorOptions = colorOptions(
       palette = hcl.colors(256, palette = "inferno")

@@ -10,7 +10,11 @@ website:
       - text: Processing
         menu:
           - qmd/the_fishydata_process.qmd
+          - qmd/fishtrawl-footprint.qmd
           - ices-datacall/2025/ICES_VMS_QC-main/report-QC_format2025editNC.Rmd
+      - text: Slides
+        menu:
+          - slides/fishtrawl-footprint.qmd
       - text: On coding
         menu:
           - qmd/dataflow_dplyr_thenduckdb.qmd

@@ -95,7 +95,7 @@ ggplot(altverse,
   labs(caption = "Specific case: Here remove the violet trip (trip 5)")
 ```
 
-Using the above we would only remove trip 5 (labelled "nest departure before current arrival"). Before adopting this kind of algorithm it would though be of value to check other cases.
+Using the above we would only remove trip 5 (labelled "next departure before current arrival"). Before adopting this kind of algorithm it would though be of value to check other cases.
 
 An alternative would be to try to do some kind of a correction, in this specific case one may think of setting end of trip 5 before start of trip 6.
 

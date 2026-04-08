@@ -2,16 +2,17 @@
 title: "Concept"
 ---
 
-## Data connect
+## Data paths
 
 ```{r}
 library(tidyverse)
 library(patchwork)
-library(arrow)
-library(duckdb)
-library(ocon)
+library(duckdbfs)
+pth <- "/u3/geo/fishydata/data/ais/trail"
+pth_lb <- "/u3/geo/fishydata/data/logbooks/station-for-ais.parquet"
+pth_catch <- "/u3/geo/fishydata/data/logbooks/catch.parquet"
 ais <- 
-  ocon:::con_trail() |> 
+  open_dataset("/u3/geo/fishydata/data/ais/trail") |> 
   # Not in harbour
   filter(.cid > 0,                           # .cid positive -> not in harbour
          (whack == FALSE | is.na(whack))) |> # need to fix this
@@ -184,7 +185,7 @@ tm_shape(s) +
 ## Let's do the whole thing over all in one go, now for longlines
 
 ```{r}
-ocon:::con_trail() |> 
+open_dataset("/u3/geo/fishydata/data/ais/trail") |> 
   # Not in harbour
   filter(.cid > 0,                           # .cid positive -> not in harbour
          (whack == FALSE | is.na(whack))) |> # need to fix this
@@ -210,4 +211,5 @@ ocon:::con_trail() |>
   tm_shape() +
   tm_raster("dt", palette = "-inferno")
 ```
+
 

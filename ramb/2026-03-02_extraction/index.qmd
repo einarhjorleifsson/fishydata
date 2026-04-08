@@ -1,0 +1,125 @@
+---
+title: "Extraction"
+author: Einar Hjörleifsson
+description: ""
+date: "2026-03-02"
+categories: [code, rtip]
+echo: true
+---
+
+Mearl extraction is licenced at 9 sites in 3 fjords in the NW of Iceland, the total area being 6.6 km^2 (reference). Based on AIS data analysis, extraction since 2009 has been limited to 2 areas in Arnarfjörður, the area being a total of 2.2 km^2.
+
+```{r, eval = FALSE}
+library(tidyverse)
+library(duckdbfs)
+library(sf)
+kalk <- 
+  # gisland::gl_os_leyfi() |> # not woking at the moment
+  read_sf(here::here("os2.gpkg")) |> 
+  st_make_valid() |> 
+   filter(vidfangsefni %in% c("Kalkþörungaset"),
+         gistegund_leyfis == "Nýtingarleyfi",
+          sgildi == "Í gildi") |> 
+  arrange(desc(gildir_til)) |>
+  distinct(geom, .keep_all = TRUE) |> 
+  mutate(fjord = c(rep("Ísafjarðardjúp", 2), "Miðfjörður", rep("Arnarfjörður", 6)),
+         area = as.numeric(st_area(geom)) / 1e6) |> 
+  mutate(id = 1:n()) 
+kalk |> 
+  st_drop_geometry() |> 
+  group_by(fjord) |> 
+  summarise(n = n(),
+         area = sum(area)) 
+kalk |> 
+  st_drop_geometry() |> 
+  
+  filter(id %in% 5:6) |> pull(area) |> sum()
+library(mapview)
+mapview(kalk, zcol = "id")
+
+kalk |>  mutate(id = 1:n()) |> select(id, fjord, area) |> write_sf("tmp.gpkg")
+kalk <- open_dataset("tmp.gpkg")
+stk <- open_dataset("/u3/geo/fishydata/data/ais/trail")
+
+
+stk |> 
+  dplyr::mutate(geom = ST_POINT(lon, lat)) |> 
+  duckdbfs::spatial_join(kalk, by = "st_intersects", join = "left") |> 
+  filter(!is.na(id)) |> 
+  collect() ->
+  d
+
+d |> st_drop_geometry() |> count(id)
+
+
+
+d |> 
+  filter(.cid > 0) |> 
+  filter(vid %in% c(1473, 1402, 3031, 1894)) |>
+  filter(!is.na(id)) |> 
+  filter(speed < 0.5) |> 
+  mutate(date = floor_date(time, "month")) |> 
+  group_by(date, vid, id, fjord) |> 
+  summarise(dt = sum(dt, na.rm = TRUE) / 3600) |> 
+  ggplot(aes(date, dt, colour = as.factor(vid))) +
+  geom_point() +
+  facet_wrap(~ id + fjord)
+
+
+stk |> 
+  filter(.cid > 0) |> 
+  filter(vid %in% c(1473, 1402, 3031, 1894)) |> 
+  collect() |> 
+  mutate(speed = ifelse(speed > 15, 15, speed)) |> 
+  ramb::rb_mapdeck(radius = 50)
+
+d |> count(vid) |> arrange(desc(n))
+stk |> 
+  #filter(vid %in% c(1473)) |> #, 1402, 3031, 1894)) |> 
+  filter(vid %in% c(1402)) |> #, 1402, 3031, 1894)) |> 
+  collect() |> 
+  mutate(speed = ifelse(speed > 15, 15, speed)) |> 
+  select(lon, lat, speed) |> 
+  ramb::rb_mapdeck(radius = 50)
+
+
+
+
+os2 <- os |> st_cast("GEOMETRYCOLLECTION")
+os2 |> st_geometry_type(by_geometry = FALSE)
+os2 |> st_geometry_type(by_geometry = FALSE)
+
+os |> glimpse()
+os |> st_cast("GEOMETRYCOLLECTION") |> glimpse()
+os |> 
+  slice(1) |> 
+  st_cast("GEOMETRYCOLLECTION") |> st_cast("POLYGON")
+library(sf)
+st_collection_extract(os, "POLYGON")
+
+
+os_poly <- st_collection_extract(os2, "POLYGON")  # polygonal parts
+# optionally normalize to MULTIPOLYGON
+os_mp   <- st_cast(os_poly, "MULTIPOLYGON")
+
+st_geometry_type(os, by_geometry = FALSE)
+# likely returns "MULTISURFACE"
+
+# Convert MULTISURFACE -> MULTIPOLYGON
+x2 <- st_cast(os, "MULTIPOLYGON", warn = FALSE)
+
+st_geometry_type(x2, by_geometry = FALSE)
+  
+  
+os$geom
+os2 <- os |> st_drop_geometry()
+os |> filter(vidfangsefni == "Kalkþörungaset") |> glimpse()
+os2 |> mutate(landsjor = str_trim(landsjor)) |> 
+  count(landsjor)
+os2 |> 
+  mutate(landsjor = str_trim(landsjor)) |> 
+  filter(landsjor == "Á hafsbotni") |> 
+  count(vidfangsefni, tegundleyfis)
+
+```
+

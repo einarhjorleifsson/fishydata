@@ -1,0 +1,432 @@
+---
+title: "Fishtrawl footprint"
+author: "Einar Hjörleifsson"
+format: revealjs
+echo: false
+warning: false
+message: false
+---
+
+
+```{r data}
+library(sf)
+library(mapdeck)
+library(patchwork)
+library(duckdbfs)
+library(tidyverse)
+ais <- open_dataset("/u3/geo/fishydata/data/ais/trail")
+catch <- open_dataset("/u3/geo/fishydata/data/logbooks/catch-for-ais.parquet")
+species <- 
+  open_dataset("/u3/geo/fishydata/data/auxillary/agf_species.parquet")
+dx <- 0.01
+dy <- dx / 2
+
+
+
+# 4 discrete colours from the turbo palette
+cols <- viridisLite::turbo(4) |> rev()
+cols2 <- c(RColorBrewer::brewer.pal(n = 12, "Paired"), "#63E6FF", "#0077B6", "#FF6FD8", "#A1006B")
+cols2 <- c(RColorBrewer::brewer.pal(n = 12, "Paired"), "#4DDCCB", "#00796B", "#FF5BC8", "#8E005F")
+# n <- 16
+# image(1:n, 1, as.matrix(1:n), col = cols2, 
+#          xlab = paste(cols2), ylab = "", xaxt = "n", yaxt = "n", 
+#          bty = "n")
+
+# Calculate the cumulatives - total catch --------------------------------------
+aisg <- 
+  ais |>
+  filter(.cid > 0,
+         gid_trip == 6,
+         between(speed, s1, s2),
+         between(time, t1, t2),
+         between(lon, -30, -10),
+         between(lat, 62.5, 69),
+         between(year, 2009, 2024)) |>
+  group_by(.sid, lb_base) |>
+  mutate(catch = catch_total / n()) |>
+  ungroup() |>
+  mutate(x = lon%/%dx * dx + dx/2,
+         y = lat%/%dy * dy + dy/2) |>
+  group_by(x, y) |>
+  summarise(catch = sum(catch, na.rm = TRUE),
+            .groups = "drop") |> 
+  filter(catch > 0) |> 
+  collect() |> 
+  arrange(catch) |> 
+  mutate(n = 1:n(),
+         pn = n / max(n, na.rm = TRUE),
+         pc = catch / sum(catch, na.rm = TRUE),
+         pc = cumsum(pc))
+# Calculate the cumulatives - catch by species ---------------------------------
+# Get major species
+SIDS <- c(1:3, 5:9, 13, 14, 19, 22, 23, 24, 25, 61)
+species <- c("Cod", "Haddock", "Saithe", "G. redfish", "Ling", "Blue ling", "Tusk",
+             "Wolffish", "S. wolffish", "Monkfish", "Argentine", "G. halibut", "Plaice",
+             "L. sole", "Witch", "D. redfish")
+species <- 
+  tibble(sid = SIDS) |> 
+  mutate(species = species,
+         hex = cols2)
+res <- list()
+for(i in 1:length(SIDS)) {
+  sid_now <- SIDS[i]
+  res[[i]] <-
+    ais |>
+    filter(.cid > 0,
+         gid_trip == 6,
+         between(speed, s1, s2),
+         between(time, t1, t2),
+         between(lon, -30, -10),
+         between(lat, 62.5, 69),
+         between(year, 2009, 2024)) |>
+    inner_join(catch |>
+                 filter(sid == sid_now),
+               by = join_by(.sid, lb_base)) |>
+    group_by(.sid, lb_base) |>
+    mutate(catch = catch / n()) |>
+    ungroup() |>
+    mutate(x = lon%/%dx * dx + dx/2,
+           y = lat%/%dy * dy + dy/2) |>
+    group_by(x, y) |>
+    summarise(catch = sum(catch, na.rm = TRUE),
+              .groups = "drop") |>
+    collect() |> 
+    filter(catch > 0)
+}
+names(res) <- SIDS
+aisg_species <- 
+  bind_rows(res, .id = "sid") |> 
+  mutate(sid = as.integer(sid)) |> 
+  filter(catch > 0) |> 
+  arrange(sid, catch) |>
+  group_by(sid) |> 
+  mutate(n = 1:n(),
+         pn = n / max(n, na.rm = TRUE),
+         pc = catch / sum(catch, na.rm = TRUE),
+         pc = cumsum(pc)) |> 
+  ungroup()
+```
+
+## Relative catch distribution
+
+```{r relative_catch}
+
+p_total_catch <- 
+  aisg |> 
+  mutate(p = case_when(between(pc, 0, 0.09999) ~ "00-10 %",
+                       between(pc, 0.01, 0.25) ~ "10-25 %",
+                       between(pc, 0.25, 0.50) ~ "25-50 %",
+                       between(pc, 0.50, 1.00) ~ "50+ %",
+                       .default = "something else")) |> 
+  ggplot() +
+  theme_void() +
+  geom_polygon(data = geo::island, aes(lon, lat), fill = "grey") +
+  geom_tile(aes(x, y, fill = p)) +
+  coord_quickmap() +
+  scale_fill_manual(values = cols) +
+  theme(legend.position = c(0.6, 0.45)) +
+  labs(fill = "Percentage of catch")
+p_total_catch_90 <- 
+  aisg |> 
+  mutate(p = case_when(between(pc, 0, 0.09999) ~ "00-10 %",
+                       between(pc, 0.01, 0.25) ~ "10-25 %",
+                       between(pc, 0.25, 0.50) ~ "25-50 %",
+                       between(pc, 0.50, 1.00) ~ "50+ %",
+                       .default = "something else")) |> 
+  ggplot() +
+  theme_void() +
+  geom_polygon(data = geo::island, aes(lon, lat), fill = "grey") +
+  geom_tile(aes(x, y, fill = p)) +
+  coord_quickmap() +
+  scale_fill_manual(values = c("white", cols[2:4])) +
+  labs(fill = "Percentage of catch") +
+  theme(legend.position = "none")
+p_total_catch
+```
+
+## Cumulative catch and footprint
+
+```{r cumulative_catch}
+p_cum <- 
+  aisg |> 
+  ggplot() +
+  theme_bw(base_size = 15) +
+  geom_line(aes(pc * 100, pn * 100),
+            linewidth = 2) +
+  scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+  scale_y_continuous(breaks = seq(0, 100, by = 10)) +
+  labs(x = "Cumulative catch [%]", y = "Cumulative footprint [%]") +
+  annotate("text", x = 2.5, y = 10, label = "Low catch\nin square", hjust = 0, size = 4) +
+  annotate("text", x = 99, y = 10, label = "High catch\nin square", hjust = 1, size = 4)
+p_cum
+```
+
+## Cumulative catch and footprint
+
+```{r cumulative_catch_and_footprint}
+r <- 
+  tribble(~xmin, ~xmax, ~ymin, ~ymax, ~pc,
+          0, 100, 0, 100,  "50+ %",
+          0,  50, 0, 95, "25-50 %",
+          0, 25,  0, 83, "10-25 %",
+          0, 10, 0, 65, "00-10 %")
+p_cum2 <- 
+  aisg |> 
+  ggplot() +
+  theme_bw(base_size = 15) +
+  geom_rect(data = r, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = pc),
+            alpha = 0.75) +
+  geom_line(aes(pc * 100, pn * 100),
+            linewidth = 2) +
+  scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+  scale_y_continuous(breaks = seq(0, 100, by = 10)) +
+  labs(x = "Cumulative catch [%]", y = "Cumulative footprint [%]") +
+  scale_fill_manual(values = cols) +
+  theme(legend.position = "none")
+p_cum2 + p_total_catch
+```
+
+## 90% of total catch 
+
+```{r 90_percent_of_catch}
+p_total_catch + 
+  labs(subtitle = "All catch") +
+  p_total_catch_90 +
+  labs(subtitle = "90% of catch")
+```
+
+## What about CPUE?
+
+```{r cpue}
+cpue <- 
+  ais |>
+  filter(.cid > 0,
+         whack != TRUE,
+         gid_trip == 6,
+         between(speed, s1, s2),
+         between(time, t1, t2),
+         between(lon, -30, -10),
+         between(lat, 62.5, 69),
+         between(year, 2009, 2024)) |>
+  group_by(.sid, lb_base) |>
+  mutate(catch = catch_total / n()) |>
+  ungroup() |>
+  mutate(x = lon%/%dx * dx + dx/2,
+         y = lat%/%dy * dy + dy/2) |>
+  group_by(x, y) |>
+  summarise(catch = sum(catch, na.rm = TRUE) / 1000,
+            effort = sum(dt, na.rm = TRUE) / (60 * 60),
+            .groups = "drop") |> 
+  filter(catch > 0, 
+         effort > 0) |> 
+  collect()
+cpue |>
+  mutate(cpue = catch / effort) |> 
+  #mutate(cpue = ifelse(cpue > 3, 3, cpue)) |> 
+  mutate(cpue = case_when(between(cpue, 0, 0.9) ~ "0000-0900",
+                          #between(cpue, 0.1, 0.5) ~ "0100-0500",
+                          between(cpue, 0.9, 1.5) ~ "0900-1500",
+                          between(cpue, 1.5, 2.5) ~ "1500-2500",
+                          between(cpue, 2.5, Inf) ~ "2500+",
+                          .default = "Something else")) |> 
+  #ggplot() + geom_histogram(aes(effort))
+  ggplot() +
+  theme_void() +
+  geom_polygon(data = geo::island,
+               aes(lon, lat),
+               fill = "grey") +
+  geom_tile(aes(x, y, fill = cpue)) +
+  scale_fill_viridis_d(option = "turbo", direction = -1) +
+  coord_quickmap() +
+  labs(fill = "CPUE [kg/hour]")
+```
+
+
+## 8 species
+
+```{r 8_species}
+p <-
+  aisg_species |>
+  filter(sid %in% c(1, 2, 3, 5, 6, 7, 8, 9)) |> 
+  left_join(species) |> 
+  mutate(sid = paste(str_pad(sid, width = 2, pad = "0"), species)) |> 
+  mutate(p = case_when(between(pc, 0, 0.09999) ~ "00-10 %",
+                       between(pc, 0.01, 0.25) ~ "10-25 %",
+                       between(pc, 0.25, 0.50) ~ "25-50 %",
+                       between(pc, 0.50, 1.00) ~ "50+ %",
+                       .default = "something else")) |> 
+  ggplot() +
+  theme_void() +
+  geom_polygon(data = geo::island, aes(lon, lat), fill = "grey") +
+  geom_tile(aes(x, y, fill = p)) +
+  coord_quickmap() +
+  theme(legend.position = c(0.5, 0.5)) +
+  labs(fill = "Percentage of catch") +
+  facet_wrap(~ sid, ncol = 4)
+p + scale_fill_manual(values = cols)
+```
+
+## 8 species - 90% of catch
+
+```{r}
+p + scale_fill_manual(values = c("white", cols[2:4]))
+```
+
+## 8 species - 90% of catch
+
+```{r}
+aisg_species |>
+  filter(pc >= 0.1) |> 
+  filter(sid %in% c(1, 2, 3, 5, 6, 7, 8, 9)) |> 
+  left_join(species) |> 
+  mutate(sid = paste(str_pad(sid, width = 2, pad = "0"), species)) |> 
+  mutate(p = case_when(between(pc, 0, 0.09999) ~ "00-10 %",
+                       between(pc, 0.01, 0.25) ~ "10-25 %",
+                       between(pc, 0.25, 0.50) ~ "25-50 %",
+                       between(pc, 0.50, 1.00) ~ "50+ %",
+                       .default = "something else")) |> 
+  arrange(desc(pc), sid) |> 
+  group_by(x, y) |> 
+  slice(1) |> 
+  ungroup() |> 
+  ggplot() +
+  theme_void() +
+  geom_polygon(data = geo::island, aes(lon, lat), fill = "grey") +
+  geom_tile(aes(x, y, fill = sid)) +
+  coord_quickmap() +
+  ggmisc::scale_fill_crayola(guide = "legend") +
+  scale_fill_manual(values = cols2) +
+  labs(fill = "Species") +
+  theme(legend.position = c(0.65, 0.45))
+```
+
+## 8 more species
+
+```{r 8_species2}
+p <-
+  aisg_species |>
+  filter(!sid %in% c(1, 2, 3, 5, 6, 7, 8, 9)) |> 
+  left_join(species) |> 
+  mutate(sid = paste(str_pad(sid, width = 2, pad = "0"), species)) |> 
+  mutate(p = case_when(between(pc, 0, 0.09999) ~ "00-10 %",
+                       between(pc, 0.01, 0.25) ~ "10-25 %",
+                       between(pc, 0.25, 0.50) ~ "25-50 %",
+                       between(pc, 0.50, 1.00) ~ "50+ %",
+                       .default = "something else")) |> 
+  ggplot() +
+  theme_void() +
+  geom_polygon(data = geo::island, aes(lon, lat), fill = "grey") +
+  geom_tile(aes(x, y, fill = p)) +
+  coord_quickmap() +
+  theme(legend.position = c(0.5, 0.5)) +
+  labs(fill = "Percentage of catch") +
+  facet_wrap(~ sid, ncol = 4)
+p + scale_fill_manual(values = cols)
+```
+
+## 8 more species - 90% of catch
+
+```{r}
+p + scale_fill_manual(values = c("white", cols[2:4]))
+```
+
+## 8 more species - 90% of catch
+
+```{r}
+aisg_species |>
+  filter(pc >= 0.1) |> 
+  filter(!sid %in% c(1, 2, 3, 5, 6, 7, 8, 9)) |> 
+  left_join(species) |> 
+  mutate(sid = paste(str_pad(sid, width = 2, pad = "0"), species)) |> 
+  mutate(p = case_when(between(pc, 0, 0.09999) ~ "00-10 %",
+                       between(pc, 0.01, 0.25) ~ "10-25 %",
+                       between(pc, 0.25, 0.50) ~ "25-50 %",
+                       between(pc, 0.50, 1.00) ~ "50+ %",
+                       .default = "something else")) |> 
+  arrange(desc(pc), sid) |> 
+  group_by(x, y) |> 
+  slice(1) |> 
+  ungroup() |> 
+  ggplot() +
+  theme_void() +
+  geom_polygon(data = geo::island, aes(lon, lat), fill = "grey") +
+  geom_tile(aes(x, y, fill = sid)) +
+  coord_quickmap() +
+  #ggmisc::scale_fill_crayola(guide = "legend") +
+  scale_fill_manual(values = cols2[9:16]) +
+  labs(fill = "Species") +
+  theme(legend.position = c(0.65, 0.45))
+```
+
+
+## 16 species - 90% of catch
+
+```{r}
+aisg_species |>
+  filter(pc >= 0.1) |> 
+  arrange(desc(pc), sid) |> 
+  group_by(x, y) |> 
+  slice(1) |> 
+  ungroup() |> 
+  left_join(species) |>
+  mutate(sid = paste(str_pad(sid, width = 2, pad = "0"), species)) |> 
+  ggplot() +
+  theme_void() +
+  geom_polygon(data = geo::island, aes(lon, lat), fill = "grey") +
+  geom_tile(data = aisg, aes(x, y), fill = "grey") +
+  geom_tile(aes(x, y, fill = as.factor(sid))) +
+  coord_quickmap() +
+  scale_fill_manual(values = cols2) +
+  labs(fill = "Species")
+```
+
+## 16 species - 90% of catch
+
+```{r}
+m <- 
+  aisg_species |>
+  filter(pc >= 0.1) |> 
+  arrange(desc(pc), sid) |> 
+  group_by(x, y) |> 
+  slice(1) |> 
+  ungroup() |> 
+  left_join(species) |>
+  mutate(sid = paste(str_pad(sid, width = 2, pad = "0"), species)) |> 
+  select(lon = x, lat = y, speed = sid, hex) |> 
+  sf::st_as_sf(coords = c("lon", "lat"), crs = 4326)
+m2 <-
+  m |> 
+  mutate(hex = paste0(hex, "FF"))
+mapdeck(m2, style = mapdeck_style("dark")) |> 
+  mapdeck::add_scatterplot(tooltip = "speed", 
+                           radius = 350,
+                           colour = "hex",
+                           fill_colour = "hex",
+                           layer_id = "points")
+```
+
+
+## Catch 22
+
+
+* Use 0.15 or 0.30 minute interpolation of pings
+* Area of each square is a function of latitude - need to correct for that
+* Check for outliers - cap large catches
+* Think about less confusing statistics
+
+
+Geheimnis:
+
+```{r}
+footprint <- aisg |> select(x, y) |> distinct()
+footprint |>
+  left_join(aisg_species |>
+              ungroup() |> 
+              filter(pc >= 0.1) |> 
+              select(x, y) |> 
+              distinct() |> 
+              mutate(what = "open")) |>
+  mutate(what = replace_na(what, "closed")) |>
+  count(what) |>
+  mutate(p = n / sum(n))
+```
